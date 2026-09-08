@@ -36,6 +36,12 @@ yarn-error.log*
 # vercel
 .vercel
 
-# typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Cloudflare OpenNext & daemon temp
+.open-next/
+daemon/sumatra/
+daemon/temp_prints/
+daemon/.env
+
