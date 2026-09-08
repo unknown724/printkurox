@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
+import { FooterLegal } from "@/components/FooterLegal";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -61,10 +62,8 @@ export default function RootLayout({
           {children}
         </main>
 
-        {/* Footer info */}
-        <footer className="relative z-10 border-t border-white/5 py-4 text-center text-xs text-slate-500">
-          <p>🔒 15-Minute Privacy Policy • Files are automatically deleted after printing</p>
-        </footer>
+        {/* Compliant Footer with Legal Modals */}
+        <FooterLegal />
 
         {/* Razorpay Standard Checkout Script */}
         <Script
