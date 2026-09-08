@@ -9,8 +9,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const fileKey = searchParams.get('key');
 
-  if (!fileKey) {
-    return NextResponse.json({ error: 'Missing file key' }, { status: 400 });
+  if (!fileKey || !fileKey.startsWith('uploads/')) {
+    return NextResponse.json({ error: 'Invalid or missing file key' }, { status: 400 });
   }
 
   try {

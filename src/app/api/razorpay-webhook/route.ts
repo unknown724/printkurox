@@ -20,7 +20,10 @@ export async function POST(req: NextRequest) {
       .update(rawBody)
       .digest('hex');
 
-    if (signature !== expectedSignature) {
+    const sigBuffer = Buffer.from(signature.trim());
+    const expBuffer = Buffer.from(expectedSignature.trim());
+
+    if (sigBuffer.length !== expBuffer.length || !crypto.timingSafeEqual(sigBuffer, expBuffer)) {
       console.warn('Invalid Razorpay webhook signature');
       return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
     }
