@@ -156,28 +156,40 @@ export async function mergeFilesToPdf(
       const srcPdf = await PDFDocument.load(item.buffer, { ignoreEncryption: true });
       const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
       copiedPages.forEach((page) => mergedPdf.addPage(page));
-    } else if (['jpg', 'jpeg', 'png'].includes(ext) || item.mimeType.startsWith('image/')) {
-      let image;
-      if (ext === 'png' || item.mimeType.includes('png')) {
-        image = await mergedPdf.embedPng(item.buffer);
-      } else {
-        image = await mergedPdf.embedJpg(item.buffer);
+    } else if (['jpg', 'jpeg', 'png', 'webp'].includes(ext) || item.mimeType.startsWith('image/')) {
+      try {
+        let image;
+        // Check magic bytes: PNG starts with 0x89 0x50 0x4E 0x47 (\x89PNG)
+        const isPng =
+          item.buffer.length >= 4 &&
+          item.buffer[0] === 0x89 &&
+          item.buffer[1] === 0x50 &&
+          item.buffer[2] === 0x4e &&
+          item.buffer[3] === 0x47;
+
+        if (isPng) {
+          image = await mergedPdf.embedPng(item.buffer);
+        } else {
+          image = await mergedPdf.embedJpg(item.buffer);
+        }
+
+        // Add page with A4 dimensions
+        const page = mergedPdf.addPage([A4_WIDTH, A4_HEIGHT]);
+        const imgDims = image.scaleToFit(A4_WIDTH - 40, A4_HEIGHT - 40); // 20pt margin
+
+        // Center image on page
+        const x = (A4_WIDTH - imgDims.width) / 2;
+        const y = (A4_HEIGHT - imgDims.height) / 2;
+
+        page.drawImage(image, {
+          x,
+          y,
+          width: imgDims.width,
+          height: imgDims.height,
+        });
+      } catch (imgErr) {
+        console.warn(`Failed to embed image ${item.fileName}:`, imgErr);
       }
-
-      // Add page with A4 dimensions
-      const page = mergedPdf.addPage([A4_WIDTH, A4_HEIGHT]);
-      const imgDims = image.scaleToFit(A4_WIDTH - 40, A4_HEIGHT - 40); // 20pt margin
-
-      // Center image on page
-      const x = (A4_WIDTH - imgDims.width) / 2;
-      const y = (A4_HEIGHT - imgDims.height) / 2;
-
-      page.drawImage(image, {
-        x,
-        y,
-        width: imgDims.width,
-        height: imgDims.height,
-      });
     }
   }
 

@@ -81,7 +81,8 @@ async function compressImageFile(file: File): Promise<File> {
       canvas.toBlob(
         (blob) => {
           if (!blob) { resolve(file); return; }
-          const compressed = new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() });
+          const newName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
+          const compressed = new File([blob], newName, { type: 'image/jpeg', lastModified: Date.now() });
           resolve(compressed);
         },
         'image/jpeg',
@@ -458,6 +459,11 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
             </div>
           </>
         )}
+      </div>
+
+      <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 pt-0.5">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <span>256-Bit TLS Secured • Ephemeral Storage (Auto-purged in 15 mins)</span>
       </div>
 
       {errorMessage && (

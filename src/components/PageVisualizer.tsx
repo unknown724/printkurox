@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { PageConfig } from '@/lib/pricing';
 import {
   Sparkles,
@@ -38,12 +38,18 @@ export function PageVisualizer({
   const [thumbnails, setThumbnails] = useState<Record<number, string>>({});
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [zoomPage, setZoomPage] = useState<number | null>(null);
+  const lastSourceSigRef = useRef<string>('');
 
   // Load document and image pages — progressive: each thumbnail appears as soon as it renders
   useEffect(() => {
     let isMounted = true;
-    // Reset thumbnails when source changes
-    setThumbnails({});
+    const sourceSig = `${fileKey || ''}_${downloadUrl || ''}_${totalPages}_${rawFiles?.map((f) => `${f.name}_${f.size}`).join(',') || ''}`;
+    const isNewSource = sourceSig !== lastSourceSigRef.current;
+
+    if (isNewSource) {
+      setThumbnails({});
+      lastSourceSigRef.current = sourceSig;
+    }
 
     async function loadPages() {
       try {
@@ -68,16 +74,18 @@ export function PageVisualizer({
             if (isPdf) {
               try {
                 const arrayBuffer = await file.arrayBuffer();
-                const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+                // Pass slice copy to prevent detachment issues
+                const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
                 const pdf = await loadingTask.promise;
 
                 for (let p = 1; p <= pdf.numPages; p++) {
                   if (currentPageIdx > totalPages) break;
+                  const pageNumber = currentPageIdx; // Capture immutable loop index for async closure
                   const page = await pdf.getPage(p);
                   const unscaled = page.getViewport({ scale: 1.0 });
                   const isNaturalLandscape = unscaled.width > unscaled.height;
 
-                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === currentPageIdx);
+                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === pageNumber);
                   if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
                     updatedConfigs[targetIdx] = {
                       ...updatedConfigs[targetIdx],
@@ -87,7 +95,8 @@ export function PageVisualizer({
                     configsChanged = true;
                   }
 
-                  const viewport = page.getViewport({ scale: 0.4 });
+                  // High quality thumbnail render (0.65 scale = crisp on mobile screens)
+                  const viewport = page.getViewport({ scale: 0.65 });
                   const canvas = document.createElement('canvas');
                   const context = canvas.getContext('2d');
                   canvas.height = viewport.height;
@@ -95,11 +104,11 @@ export function PageVisualizer({
 
                   if (context) {
                     await page.render({ canvasContext: context, viewport }).promise;
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-                    newThumbs[currentPageIdx] = dataUrl;
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    newThumbs[pageNumber] = dataUrl;
                     // Progressive: show each thumbnail immediately as it renders
                     if (isMounted) {
-                      setThumbnails((prev) => ({ ...prev, [currentPageIdx]: dataUrl }));
+                      setThumbnails((prev) => ({ ...prev, [pageNumber]: dataUrl }));
                     }
                   }
                   currentPageIdx++;
@@ -111,13 +120,13 @@ export function PageVisualizer({
             } else {
               // Direct Image file (PNG, JPG, WebP) — show immediately
               if (currentPageIdx <= totalPages) {
+                const pageNumber = currentPageIdx; // Capture immutable loop index
                 const objectUrl = URL.createObjectURL(file);
-                newThumbs[currentPageIdx] = objectUrl;
-                const capturedIdx = currentPageIdx; // capture for async callback
+                newThumbs[pageNumber] = objectUrl;
 
                 // Show image thumbnail immediately (no render needed)
                 if (isMounted) {
-                  setThumbnails((prev) => ({ ...prev, [capturedIdx]: objectUrl }));
+                  setThumbnails((prev) => ({ ...prev, [pageNumber]: objectUrl }));
                 }
 
                 // Detect natural image dimensions asynchronously
@@ -125,7 +134,7 @@ export function PageVisualizer({
                 img.onload = () => {
                   if (!isMounted) return; // guard stale closure
                   const isImgLandscape = img.naturalWidth > img.naturalHeight;
-                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === capturedIdx);
+                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === pageNumber);
                   if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
                     updatedConfigs[targetIdx] = {
                       ...updatedConfigs[targetIdx],
@@ -143,7 +152,7 @@ export function PageVisualizer({
           }
 
           // Wait a tick for any pending img.onload orientation callbacks
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 60));
           if (isMounted && configsChanged) {
             onChange(updatedConfigs);
           }
@@ -159,9 +168,10 @@ export function PageVisualizer({
 
           for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
             if (!isMounted) break;
+            const thisPage = pageNum;
             try {
-              const page = await pdf.getPage(pageNum);
-              const viewport = page.getViewport({ scale: 0.4 });
+              const page = await pdf.getPage(thisPage);
+              const viewport = page.getViewport({ scale: 0.65 });
               const canvas = document.createElement('canvas');
               const context = canvas.getContext('2d');
               canvas.height = viewport.height;
@@ -169,15 +179,15 @@ export function PageVisualizer({
 
               if (context) {
                 await page.render({ canvasContext: context, viewport }).promise;
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-                newThumbs[pageNum] = dataUrl;
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                newThumbs[thisPage] = dataUrl;
                 // Progressive: render each page as it's ready
                 if (isMounted) {
-                  setThumbnails((prev) => ({ ...prev, [pageNum]: dataUrl }));
+                  setThumbnails((prev) => ({ ...prev, [thisPage]: dataUrl }));
                 }
               }
             } catch (err) {
-              console.warn(`Fallback render error for page ${pageNum}:`, err);
+              console.warn(`Fallback render error for page ${thisPage}:`, err);
             }
           }
         }

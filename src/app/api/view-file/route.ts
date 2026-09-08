@@ -14,13 +14,18 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const fileStream = await getFileStreamFromR2(fileKey);
+    const fileBody = await getFileFromR2(fileKey);
+    if (!fileBody) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
+
+    const byteArray = await (fileBody as any).transformToByteArray();
     const headers = new Headers();
     headers.set('Content-Type', 'application/pdf');
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cache-Control', 'public, max-age=900');
 
-    return new Response(fileStream as any, { headers });
+    return new Response(byteArray, { headers });
   } catch (err) {
     console.error('View file error:', err);
     return NextResponse.json({ error: 'Failed to retrieve file stream' }, { status: 500 });
