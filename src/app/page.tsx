@@ -3,13 +3,16 @@
 import React, { useState } from 'react';
 import { FileUpload, UploadedBatchData } from '@/components/FileUpload';
 import { PrintSettings, PrintSettingsState } from '@/components/PrintSettings';
+import { PageVisualizer } from '@/components/PageVisualizer';
 import { CostSummary } from '@/components/CostSummary';
-import { calculatePricing } from '@/lib/pricing';
+import { calculatePricing, PageConfig } from '@/lib/pricing';
 import { parsePageRange } from '@/lib/pdf-utils';
-import { Sparkles, Shield, Zap, HelpCircle } from 'lucide-react';
+import { Sparkles, Shield, Zap, HelpCircle, SlidersHorizontal, MapPin } from 'lucide-react';
 
 export default function Home() {
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
+  const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [settings, setSettings] = useState<PrintSettingsState>({
     colorMode: 'bw',
     isDuplex: false,
@@ -19,44 +22,66 @@ export default function Home() {
   });
   const [showRatesModal, setShowRatesModal] = useState(false);
 
-  // Compute billable pages from the merged master document
-  const totalDocPages = uploadedBatch?.totalPages || 1;
-  const billablePages = settings.pageRangeType === 'all'
-    ? totalDocPages
-    : parsePageRange(settings.customPageRange, totalDocPages).length;
+  // Handle new uploaded batch
+  const handleBatchUploaded = (data: UploadedBatchData | null) => {
+    setUploadedBatch(data);
+    if (data) {
+      const initialConfigs: PageConfig[] = Array.from({ length: data.totalPages }, (_, i) => ({
+        pageNumber: i + 1,
+        colorMode: settings.colorMode === 'color' ? 'color' : 'bw',
+        included: true,
+      }));
+      setPageConfigs(initialConfigs);
+    } else {
+      setPageConfigs([]);
+    }
+  };
 
-  // Real-time pricing
+  // Synchronize settings color mode if user changes it at global level
+  const handleSettingsChange = (newSettings: PrintSettingsState) => {
+    if (newSettings.colorMode !== settings.colorMode) {
+      const updated = pageConfigs.map((p) => ({
+        ...p,
+        colorMode: newSettings.colorMode,
+      }));
+      setPageConfigs(updated);
+    }
+    setSettings(newSettings);
+  };
+
+  // Real-time hybrid pricing
   const pricing = calculatePricing({
-    totalPages: billablePages,
+    totalPages: uploadedBatch?.totalPages || 1,
     colorMode: settings.colorMode,
     isDuplex: settings.isDuplex,
     copies: settings.copies,
+    pageConfigs: pageConfigs.length > 0 ? pageConfigs : undefined,
   });
-
-  const handleReset = () => {
-    setUploadedBatch(null);
-    setSettings({
-      colorMode: 'bw',
-      isDuplex: false,
-      copies: 1,
-      pageRangeType: 'all',
-      customPageRange: 'All',
-    });
-  };
 
   return (
     <div className="space-y-5 pb-10">
+      {/* Pickup Location Reminder Banner */}
+      <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-300">
+        <div className="flex items-center space-x-2">
+          <MapPin className="w-4 h-4 text-indigo-400 shrink-0" />
+          <span>Pickup Location: <strong className="text-white">Block B, Room 29</strong></span>
+        </div>
+        <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wider bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+          Kiosk Active
+        </span>
+      </div>
+
       {/* Kiosk Hero Headline */}
-      <div className="text-center pt-2 pb-1">
+      <div className="text-center pt-1 pb-1">
         <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold mb-2 shadow-sm">
           <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Self-Service Smart Kiosk</span>
+          <span>Smart Self-Service Printing</span>
         </div>
         <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-          Upload & Print in Seconds
+          Upload, Customize & Print
         </h2>
         <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-          No login needed. Upload document, configure layout, pay via UPI, and grab your printout.
+          Preview pages, select custom Color or B&W per page, pay via UPI, and pick up from Block B Room 29.
         </p>
       </div>
 
@@ -65,20 +90,20 @@ export default function Home() {
         <div className="flex items-center justify-between text-xs font-semibold text-slate-300 uppercase tracking-wider px-1">
           <span className="flex items-center gap-1.5">
             <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px] font-bold">1</span>
-            Upload Document
+            Upload Document(s)
           </span>
           <button
             onClick={() => setShowRatesModal(!showRatesModal)}
             className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 normal-case"
           >
             <HelpCircle className="w-3.5 h-3.5" />
-            <span>View Rate Card</span>
+            <span>Rate Card</span>
           </button>
         </div>
 
         <FileUpload
           uploadedBatch={uploadedBatch}
-          onBatchUploaded={(data) => setUploadedBatch(data)}
+          onBatchUploaded={handleBatchUploaded}
         />
       </section>
 
@@ -107,24 +132,46 @@ export default function Home() {
             </div>
           </div>
           <p className="text-[10px] text-slate-500 text-center">
-            *Odd pages on duplex: 1 single sheet charge applies for the final single side.
+            *Per-page hybrid mix supported: choose B&W or Color on each individual page!
           </p>
         </div>
       )}
 
-      {/* Step 2: Settings & Pricing (Revealed once at least 1 file is uploaded) */}
-      {uploadedBatch ? (
+      {/* Step 2: Page Visualizer & Settings (Revealed once files are uploaded) */}
+      {uploadedBatch && (
         <>
+          {/* Live Interactive Page Inspector */}
           <section className="space-y-2">
-            <div className="text-xs font-semibold text-slate-300 uppercase tracking-wider px-1 flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px] font-bold">2</span>
-              Print Preferences
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-300 uppercase tracking-wider px-1">
+              <span className="flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px] font-bold">2</span>
+                Live Page Inspector (Select B&W / Color)
+              </span>
+            </div>
+
+            <PageVisualizer
+              totalPages={uploadedBatch.totalPages}
+              downloadUrl={uploadedBatch.downloadUrl}
+              pageConfigs={pageConfigs}
+              onChange={(updated) => setPageConfigs(updated)}
+              orientation={orientation}
+              onOrientationChange={(orient) => setOrientation(orient)}
+            />
+          </section>
+
+          {/* Print Preferences (Sides, Copies) */}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-300 uppercase tracking-wider px-1">
+              <span className="flex items-center gap-1.5">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+                Print Preferences
+              </span>
             </div>
 
             <PrintSettings
               totalPages={uploadedBatch.totalPages}
               settings={settings}
-              onChange={(newSettings) => setSettings(newSettings)}
+              onChange={handleSettingsChange}
             />
           </section>
 
@@ -132,7 +179,7 @@ export default function Home() {
           <section className="space-y-2 pt-1">
             <div className="text-xs font-semibold text-slate-300 uppercase tracking-wider px-1 flex items-center gap-1.5">
               <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px] font-bold">3</span>
-              Order Breakdown & Pay
+              Checkout & Pay
             </div>
 
             <CostSummary
@@ -141,19 +188,22 @@ export default function Home() {
               fileName={uploadedBatch.fileName}
               totalPages={uploadedBatch.totalPages}
               pageRange={settings.pageRangeType === 'all' ? 'All' : settings.customPageRange}
+              pageConfigs={pageConfigs}
             />
           </section>
         </>
-      ) : (
-        /* Features teaser when no file is uploaded yet */
+      )}
+
+      {/* Features teaser when no file is uploaded yet */}
+      {!uploadedBatch && (
         <div className="grid grid-cols-2 gap-3 pt-2">
           <div className="glass-card rounded-2xl p-3.5 flex items-start space-x-3">
             <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
               <Zap className="w-4 h-4" />
             </div>
             <div>
-              <p className="text-xs font-semibold text-white">Direct UPI Print</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">Pay with GPay, PhonePe, or Paytm QR.</p>
+              <p className="text-xs font-semibold text-white">Hybrid Color Support</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Pay B&W rate for text & Color only for photos.</p>
             </div>
           </div>
 

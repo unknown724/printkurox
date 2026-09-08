@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { IndianRupee, Printer, ArrowRight, Loader2, ShieldCheck, Lock, Check } from 'lucide-react';
-import { PricingResult } from '@/lib/pricing';
+import { PricingResult, PageConfig } from '@/lib/pricing';
 import { useRouter } from 'next/navigation';
 
 // Declare Razorpay on window
@@ -19,6 +19,7 @@ interface CostSummaryProps {
   fileName: string;
   totalPages: number;
   pageRange: string;
+  pageConfigs?: PageConfig[];
 }
 
 export function CostSummary({
@@ -27,6 +28,7 @@ export function CostSummary({
   fileName,
   totalPages,
   pageRange,
+  pageConfigs,
 }: CostSummaryProps) {
   const router = useRouter();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -49,6 +51,7 @@ export function CostSummary({
           colorMode: pricing.colorMode,
           isDuplex: pricing.isDuplex,
           copies: pricing.copies,
+          pageConfigs,
         }),
       });
 

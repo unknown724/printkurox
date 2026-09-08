@@ -20,26 +20,37 @@ export async function POST(req: NextRequest) {
       colorMode = 'bw',
       isDuplex = false,
       copies = 1,
+      pageConfigs,
     } = body;
 
     if (!fileKey || !fileName || !docPages) {
       return NextResponse.json({ error: 'Missing required print parameters' }, { status: 400 });
     }
 
-    // 1. Calculate actual billable pages from page range
-    const selectedPages = parsePageRange(pageRange, docPages);
-    const totalBillablePages = selectedPages.length;
+    // 1. Calculate actual billable pages from page range or pageConfigs
+    let activePagesCount = docPages;
+    let effectivePageRange = pageRange;
 
-    if (totalBillablePages === 0) {
-      return NextResponse.json({ error: 'Invalid page range selected' }, { status: 400 });
+    if (pageConfigs && Array.isArray(pageConfigs) && pageConfigs.length > 0) {
+      const included = pageConfigs.filter((p: { included: boolean }) => p.included);
+      activePagesCount = included.length;
+      effectivePageRange = included.map((p: { pageNumber: number }) => p.pageNumber).join(',');
+    } else {
+      const selectedPages = parsePageRange(pageRange, docPages);
+      activePagesCount = selectedPages.length;
     }
 
-    // 2. Strict Server-Side Pricing Calculation
+    if (activePagesCount === 0) {
+      return NextResponse.json({ error: 'At least one page must be selected' }, { status: 400 });
+    }
+
+    // 2. Strict Server-Side Pricing Calculation (Supports Hybrid)
     const pricing = calculatePricing({
-      totalPages: totalBillablePages,
-      colorMode: colorMode === 'color' ? 'color' : 'bw',
+      totalPages: activePagesCount,
+      colorMode: colorMode,
       isDuplex: Boolean(isDuplex),
       copies: Math.max(1, Math.floor(copies)),
+      pageConfigs: pageConfigs && Array.isArray(pageConfigs) && pageConfigs.length > 0 ? pageConfigs : undefined,
     });
 
     const amountInPaise = Math.round(pricing.totalPrice * 100);
@@ -108,9 +119,9 @@ export async function POST(req: NextRequest) {
         pickupCode,
         fileKey,
         fileName,
-        totalBillablePages,
-        pageRange,
-        pricing.colorMode,
+        activePagesCount,
+        effectivePageRange,
+        pricing.colorPagesCount > 0 ? 'color' : 'bw',
         pricing.isDuplex ? 1 : 0,
         pricing.copies,
         pricing.duplexSheets,

@@ -1,21 +1,3 @@
 name = "printkurox"
-main = ".open-next/worker.js"
+main = "worker.js"
 compatibility_date = "2026-09-08"
-compatibility_flags = ["nodejs_compat"]
-
-[assets]
-directory = ".open-next/assets"
-binding = "ASSETS"
-
-[vars]
-CLOUDFLARE_ACCOUNT_ID = "948fd75d8b84a5cf20559d6aa789d4dd"
-CLOUDFLARE_API_TOKEN = "cfat_anp9h1g8fRES9Euxqup0joShGwK0K31OSDRzFtfafd3b257f"
-CLOUDFLARE_D1_DATABASE_ID = "3f4d4547-e86b-4cdd-a867-9ebba19c12c9"
-R2_ACCESS_KEY_ID = "0f5bb8b4f2d7c00a84da3c20efcc8949"
-R2_SECRET_ACCESS_KEY = "cf9c00b5509a1be636238fab2c332fff210300607e89ab802c86a829c9ddbcda"
-R2_ENDPOINT = "https://948fd75d8b84a5cf20559d6aa789d4dd.r2.cloudflarestorage.com"
-R2_BUCKET_NAME = "kiosk-uploads"
-NEXT_PUBLIC_RAZORPAY_KEY_ID = "rzp_test_TZYPcxpVzrYe4n"
-RAZORPAY_KEY_SECRET = "DHPCuSGUi51k17KYpGNkeOX8"
-RAZORPAY_WEBHOOK_SECRET = "printkurox_secret_2026"
-NEXT_PUBLIC_SHOP_NAME = "PrintKurox"
