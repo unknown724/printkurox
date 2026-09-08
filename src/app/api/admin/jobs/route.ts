@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
-    if (!token || !verifyAdminToken(token)) {
+    if (!token || !(await verifyAdminToken(token))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { FileUpload, UploadedBatchData } from '@/components/FileUpload';
 import { PrintSettings, PrintSettingsState } from '@/components/PrintSettings';
 import { CostSummary } from '@/components/CostSummary';
 import { PageVisualizer } from '@/components/PageVisualizer';
 import { AdvancedSettings, AdvancedPrintOptions } from '@/components/AdvancedSettings';
 import { calculatePricing, PageConfig } from '@/lib/pricing';
-import { SlidersHorizontal, Sparkles, MapPin, HelpCircle, Zap, Shield } from 'lucide-react';
+import { SlidersHorizontal, Sparkles, MapPin, HelpCircle, Zap, Shield, Crown } from 'lucide-react';
 
 export default function HomePage() {
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
@@ -27,6 +28,22 @@ export default function HomePage() {
     collate: true,
   });
   const [showRatesModal, setShowRatesModal] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [deviceName, setDeviceName] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/admin/auth')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.isAdmin) {
+          setIsAdmin(true);
+          if (d.device?.deviceName) {
+            setDeviceName(d.device.deviceName);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Handle new uploaded batch
   const handleBatchUploaded = (data: UploadedBatchData | null) => {
@@ -100,6 +117,24 @@ export default function HomePage() {
           Kiosk Active
         </span>
       </div>
+
+      {/* Admin Device Badge Banner if authenticated */}
+      {isAdmin && (
+        <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500/15 via-purple-500/10 to-indigo-500/15 border border-amber-500/30 text-xs text-amber-200 shadow-md">
+          <div className="flex items-center space-x-2">
+            <Crown className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong className="text-white">Admin Device Verified:</strong> {deviceName || 'Authorized Device'} (1-Click Free Bypass Active)
+            </span>
+          </div>
+          <Link
+            href="/adminkurox"
+            className="text-[10px] font-bold text-amber-300 uppercase tracking-wider bg-amber-500/20 hover:bg-amber-500/30 px-2 py-0.5 rounded border border-amber-500/30 transition-colors"
+          >
+            Operator Console →
+          </Link>
+        </div>
+      )}
 
       {/* Kiosk Hero Headline */}
       <div className="text-center pt-1 pb-1">

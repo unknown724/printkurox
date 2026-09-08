@@ -20,7 +20,9 @@ export interface PageConfig {
   colorMode: 'bw' | 'color';
   included: boolean;
   orientation?: 'portrait' | 'landscape';
+  rotation?: number; // 0, 90, 180, 270
 }
+
 
 export interface PricingInput {
   totalPages: number;

@@ -4,15 +4,16 @@ import { calculatePricing } from '@/lib/pricing';
 import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange } from '@/lib/pdf-utils';
-import { validateAdminPin, verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
+import { validateAdminPin, verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
-    const isDeviceAdmin = Boolean(token && verifyAdminToken(token));
+    const deviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
+    const { isValid: isDeviceAdmin } = await verifyAdminDevice(deviceId || '');
+
 
     const body = await req.json();
     const {

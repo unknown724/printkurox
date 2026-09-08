@@ -404,11 +404,12 @@ export function CostSummary({
 
             <div className="pt-1">
               <a
-                href="/admin"
+                href="/adminkurox"
                 className="text-[11px] text-indigo-400 hover:underline"
               >
-                Authorize this device permanently at /admin ➔
+                Authorize this device permanently at /adminkurox ➔
               </a>
+
             </div>
           </div>
         </div>

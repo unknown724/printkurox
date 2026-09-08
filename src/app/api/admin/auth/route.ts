@@ -1,35 +1,96 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateAdminPin, createAdminToken, verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
+import {
+  validateAdminPin,
+  getAdminDevices,
+  registerAdminDevice,
+  revokeAdminDevice,
+  verifyAdminDevice,
+  ADMIN_COOKIE_NAME,
+  MAX_ADMIN_DEVICES,
+} from '@/lib/admin-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+function getFriendlyDeviceName(ua: string): string {
+  if (!ua) return 'Web Browser';
+  if (/iPhone/i.test(ua)) return 'Apple iPhone';
+  if (/iPad/i.test(ua)) return 'Apple iPad';
+  if (/Android/i.test(ua)) return 'Android Device';
+  if (/Windows/i.test(ua)) return 'Windows Laptop/PC';
+  if (/Macintosh|Mac OS/i.test(ua)) return 'MacBook / Mac';
+  if (/Linux/i.test(ua)) return 'Linux Workstation';
+  return 'Web Client';
+}
+
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
-  const isAdmin = Boolean(token && verifyAdminToken(token));
-  return NextResponse.json({ isAdmin });
+  const { searchParams } = new URL(req.url);
+  const currentDeviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
+
+  const { isValid, device } = await verifyAdminDevice(currentDeviceId || '');
+
+  // If requesting the full list of devices (for /adminkurox page)
+  if (searchParams.get('action') === 'devices') {
+    if (!isValid) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const devices = await getAdminDevices();
+    return NextResponse.json({
+      devices,
+      currentDeviceId,
+      maxDevices: MAX_ADMIN_DEVICES,
+    });
+  }
+
+  return NextResponse.json({
+    isAdmin: isValid,
+    deviceName: device?.device_name,
+    currentDeviceId,
+  });
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { pin } = await req.json();
+    const { pin, customDeviceName } = await req.json();
 
     if (!validateAdminPin(pin)) {
       return NextResponse.json({ error: 'Invalid admin passcode' }, { status: 401 });
     }
 
-    const token = createAdminToken();
+    const ua = req.headers.get('user-agent') || '';
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1';
+    const friendlyName = customDeviceName || getFriendlyDeviceName(ua);
+
+    const currentDeviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
+    if (currentDeviceId) {
+      const existing = await verifyAdminDevice(currentDeviceId);
+      if (existing.isValid) {
+        return NextResponse.json({
+          success: true,
+          message: 'Device already authorized',
+          deviceId: currentDeviceId,
+        });
+      }
+    }
+
+    const regResult = await registerAdminDevice(friendlyName, ua, ip);
+    if (!regResult.success || !regResult.deviceId) {
+      return NextResponse.json({ error: regResult.error || 'Failed to authorize device' }, { status: 403 });
+    }
+
     const res = NextResponse.json({
       success: true,
-      message: 'Device authorized as Admin for 30 days',
+      message: 'Device permanently authorized',
+      deviceId: regResult.deviceId,
     });
 
-    res.cookies.set(ADMIN_COOKIE_NAME, token, {
+    // Permanent cookie (10 years, no expiration)
+    res.cookies.set(ADMIN_COOKIE_NAME, regResult.deviceId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
-      maxAge: 30 * 24 * 60 * 60, // 30 days
+      maxAge: 315360000, // 10 years (Permanent)
     });
 
     return res;
@@ -39,8 +100,24 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function DELETE() {
-  const res = NextResponse.json({ success: true, message: 'Logged out of admin' });
-  res.cookies.delete(ADMIN_COOKIE_NAME);
-  return res;
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const targetId = searchParams.get('deviceId');
+    const currentDeviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
+
+    const deviceIdToRevoke = targetId || currentDeviceId;
+    if (deviceIdToRevoke) {
+      await revokeAdminDevice(deviceIdToRevoke);
+    }
+
+    const res = NextResponse.json({ success: true, message: 'Device disconnected' });
+    if (!targetId || targetId === currentDeviceId) {
+      res.cookies.delete(ADMIN_COOKIE_NAME);
+    }
+    return res;
+  } catch (err) {
+    console.error('Error disconnecting device:', err);
+    return NextResponse.json({ error: 'Failed to disconnect device' }, { status: 500 });
+  }
 }

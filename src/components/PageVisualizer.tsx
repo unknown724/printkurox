@@ -1,18 +1,16 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PageConfig } from '@/lib/pricing';
 import {
-  Palette,
-  Eye,
-  EyeOff,
   Sparkles,
   RotateCw,
   Loader2,
   FileText,
-  Check,
   Maximize2,
   X,
+  Eye,
+  EyeOff,
   Compass,
 } from 'lucide-react';
 
@@ -41,125 +39,127 @@ export function PageVisualizer({
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [zoomPage, setZoomPage] = useState<number | null>(null);
 
-  // Load actual document pages
+  // Load document and image pages
   useEffect(() => {
     let isMounted = true;
 
-    async function loadDocumentPages() {
+    async function loadPages() {
       try {
         setLoadingThumbnails(true);
 
-        // Case 1: Raw files are available in memory (instant, 0 CORS)
+        const newThumbs: Record<number, string> = {};
+        const updatedConfigs = [...pageConfigs];
+        let configsChanged = false;
+
+        // Dynamically import PDF.js with same-origin worker (never blocked by CORS)
+        const pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+
+        // Case A: Raw files provided in memory
         if (rawFiles && rawFiles.length > 0) {
-          const firstFile = rawFiles[0];
-          const isPdf = firstFile.name.toLowerCase().endsWith('.pdf') || firstFile.type.includes('pdf');
+          let currentPageIdx = 1;
 
-          if (isPdf) {
-            const arrayBuffer = await firstFile.arrayBuffer();
-            if (!isMounted) return;
+          for (const file of rawFiles) {
+            if (!isMounted) break;
+            const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type.includes('pdf');
 
-            const pdfjsLib = await import('pdfjs-dist');
-            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '3.11.174'}/pdf.worker.min.js`;
-
-            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-            const pdf = await loadingTask.promise;
-            const pageCount = Math.min(pdf.numPages, totalPages);
-            const newThumbs: Record<number, string> = {};
-            const updatedConfigs = [...pageConfigs];
-            let configsChanged = false;
-
-            for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
-              if (!isMounted) break;
+            if (isPdf) {
               try {
-                const page = await pdf.getPage(pageNum);
-                const unscaledViewport = page.getViewport({ scale: 1.0 });
+                const arrayBuffer = await file.arrayBuffer();
+                const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+                const pdf = await loadingTask.promise;
 
-                // Auto-detect orientation: Landscape if width > height
-                const isLandscape = unscaledViewport.width > unscaledViewport.height;
-                const naturalOrientation = isLandscape ? 'landscape' : 'portrait';
+                for (let p = 1; p <= pdf.numPages; p++) {
+                  if (currentPageIdx > totalPages) break;
+                  const page = await pdf.getPage(p);
+                  const unscaled = page.getViewport({ scale: 1.0 });
+                  const isNaturalLandscape = unscaled.width > unscaled.height;
 
-                // Update config orientation if not already set
-                const targetIdx = updatedConfigs.findIndex((p) => p.pageNumber === pageNum);
-                if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
-                  updatedConfigs[targetIdx] = {
-                    ...updatedConfigs[targetIdx],
-                    orientation: naturalOrientation,
-                  };
-                  configsChanged = true;
+                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === currentPageIdx);
+                  if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
+                    updatedConfigs[targetIdx] = {
+                      ...updatedConfigs[targetIdx],
+                      orientation: isNaturalLandscape ? 'landscape' : 'portrait',
+                      rotation: isNaturalLandscape ? 90 : 0,
+                    };
+                    configsChanged = true;
+                  }
+
+                  const viewport = page.getViewport({ scale: 0.5 });
+                  const canvas = document.createElement('canvas');
+                  const context = canvas.getContext('2d');
+                  canvas.height = viewport.height;
+                  canvas.width = viewport.width;
+
+                  if (context) {
+                    await page.render({ canvasContext: context, viewport }).promise;
+                    newThumbs[currentPageIdx] = canvas.toDataURL('image/jpeg', 0.85);
+                  }
+                  currentPageIdx++;
                 }
+              } catch (err) {
+                console.warn(`PDF parse error for ${file.name}:`, err);
+                currentPageIdx++;
+              }
+            } else {
+              // Direct Image file (PNG, JPG, WebP)
+              if (currentPageIdx <= totalPages) {
+                const objectUrl = URL.createObjectURL(file);
+                newThumbs[currentPageIdx] = objectUrl;
 
-                // Render thumbnail with high clarity
-                const viewport = page.getViewport({ scale: 0.5 });
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
+                // Detect natural image dimensions
+                const img = new Image();
+                img.onload = () => {
+                  const isImgLandscape = img.naturalWidth > img.naturalHeight;
+                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === currentPageIdx);
+                  if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
+                    updatedConfigs[targetIdx] = {
+                      ...updatedConfigs[targetIdx],
+                      orientation: isImgLandscape ? 'landscape' : 'portrait',
+                      rotation: isImgLandscape ? 90 : 0,
+                    };
+                    onChange([...updatedConfigs]);
+                  }
+                };
+                img.src = objectUrl;
 
-                if (context) {
-                  await page.render({
-                    canvasContext: context,
-                    viewport: viewport,
-                  }).promise;
-                  newThumbs[pageNum] = canvas.toDataURL('image/jpeg', 0.85);
-                }
-              } catch (pErr) {
-                console.warn(`Could not render thumbnail for page ${pageNum}`, pErr);
+                currentPageIdx++;
               }
             }
-
-            if (isMounted) {
-              setThumbnails(newThumbs);
-              if (configsChanged) {
-                onChange(updatedConfigs);
-              }
-            }
-            return;
-          } else {
-            // Direct Image Uploads (PNG, JPG, WebP)
-            const newThumbs: Record<number, string> = {};
-            rawFiles.forEach((file, idx) => {
-              const pageNum = idx + 1;
-              if (pageNum <= totalPages) {
-                newThumbs[pageNum] = URL.createObjectURL(file);
-              }
-            });
-            if (isMounted) {
-              setThumbnails(newThumbs);
-            }
-            return;
           }
+
+          if (isMounted) {
+            setThumbnails(newThumbs);
+            if (configsChanged) {
+              onChange(updatedConfigs);
+            }
+          }
+          return;
         }
 
-        // Case 2: Fallback to proxy streaming if rawFiles not passed
+        // Case B: Fallback to /api/view-file if rawFiles not present
         const targetUrl = fileKey ? `/api/view-file?key=${encodeURIComponent(fileKey)}` : downloadUrl;
         if (targetUrl) {
-          const pdfjsLib = await import('pdfjs-dist');
-          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '3.11.174'}/pdf.worker.min.js`;
-
           const loadingTask = pdfjsLib.getDocument(targetUrl);
           const pdf = await loadingTask.promise;
           const pageCount = Math.min(pdf.numPages, totalPages);
-          const newThumbs: Record<number, string> = {};
 
           for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
             if (!isMounted) break;
             try {
               const page = await pdf.getPage(pageNum);
-              const viewport = page.getViewport({ scale: 0.4 });
+              const viewport = page.getViewport({ scale: 0.45 });
               const canvas = document.createElement('canvas');
               const context = canvas.getContext('2d');
               canvas.height = viewport.height;
               canvas.width = viewport.width;
 
               if (context) {
-                await page.render({
-                  canvasContext: context,
-                  viewport: viewport,
-                }).promise;
-                newThumbs[pageNum] = canvas.toDataURL('image/jpeg', 0.8);
+                await page.render({ canvasContext: context, viewport }).promise;
+                newThumbs[pageNum] = canvas.toDataURL('image/jpeg', 0.85);
               }
             } catch (err) {
-              console.warn(`Page ${pageNum} proxy render error:`, err);
+              console.warn(`Fallback render error for page ${pageNum}:`, err);
             }
           }
 
@@ -168,7 +168,7 @@ export function PageVisualizer({
           }
         }
       } catch (err) {
-        console.warn('PDF thumbnail generation warning:', err);
+        console.warn('Page thumbnail error:', err);
       } finally {
         if (isMounted) {
           setLoadingThumbnails(false);
@@ -176,7 +176,7 @@ export function PageVisualizer({
       }
     }
 
-    loadDocumentPages();
+    loadPages();
 
     return () => {
       isMounted = false;
@@ -214,13 +214,17 @@ export function PageVisualizer({
     onChange(updated);
   };
 
-  const togglePageOrientation = (pageNumber: number) => {
+  // Rotate individual page 90 degrees clockwise
+  const rotatePage = (pageNumber: number) => {
     const updated = pageConfigs.map((p) => {
       if (p.pageNumber === pageNumber) {
-        const current = p.orientation || 'portrait';
+        const currentRot = p.rotation || (p.orientation === 'landscape' ? 90 : 0);
+        const nextRot = (currentRot + 90) % 360;
+        const nextOrient = nextRot === 90 || nextRot === 270 ? ('landscape' as const) : ('portrait' as const);
         return {
           ...p,
-          orientation: current === 'portrait' ? ('landscape' as const) : ('portrait' as const),
+          rotation: nextRot,
+          orientation: nextOrient,
         };
       }
       return p;
@@ -228,12 +232,18 @@ export function PageVisualizer({
     onChange(updated);
   };
 
+  // Rotate all pages at once
   const rotateAllPages = () => {
     const nextOrient = orientation === 'portrait' ? 'landscape' : 'portrait';
+    const nextRot = nextOrient === 'landscape' ? 90 : 0;
     if (onOrientationChange) {
       onOrientationChange(nextOrient);
     }
-    const updated = pageConfigs.map((p) => ({ ...p, orientation: nextOrient }));
+    const updated = pageConfigs.map((p) => ({
+      ...p,
+      rotation: nextRot,
+      orientation: nextOrient,
+    }));
     onChange(updated);
   };
 
@@ -243,7 +253,7 @@ export function PageVisualizer({
 
   return (
     <div className="glass-card rounded-2xl p-4 sm:p-5 border-indigo-500/25 space-y-4">
-      {/* Visualizer Header */}
+      {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/5">
         <div>
           <div className="flex items-center space-x-2">
@@ -253,7 +263,7 @@ export function PageVisualizer({
             </h3>
             {loadingThumbnails && (
               <span className="flex items-center gap-1 text-[10px] text-indigo-400 animate-pulse">
-                <Loader2 className="w-3 h-3 animate-spin" /> Rendering live pages...
+                <Loader2 className="w-3 h-3 animate-spin" /> Rendering pages...
               </span>
             )}
           </div>
@@ -269,10 +279,10 @@ export function PageVisualizer({
           type="button"
           onClick={rotateAllPages}
           className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-300 transition-all hover:text-white active:scale-95"
-          title="Toggle Portrait / Landscape orientation for all pages"
+          title="Toggle rotation for all pages"
         >
           <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
-          <span className="capitalize">{orientation}</span>
+          <span className="capitalize">Rotate All ({orientation})</span>
         </button>
       </div>
 
@@ -320,10 +330,11 @@ export function PageVisualizer({
       </div>
 
       {/* Page Thumbnails Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1">
         {pageConfigs.map((config) => {
           const thumb = thumbnails[config.pageNumber];
-          const isLandscape = config.orientation === 'landscape';
+          const rot = config.rotation ?? (config.orientation === 'landscape' ? 90 : 0);
+          const isLandscape = rot === 90 || rot === 270;
 
           return (
             <div
@@ -342,17 +353,15 @@ export function PageVisualizer({
                   <span className="font-mono font-black text-white text-xs">
                     #{config.pageNumber}
                   </span>
+                  {/* Rotate button */}
                   <button
                     type="button"
-                    onClick={() => togglePageOrientation(config.pageNumber)}
-                    className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white transition-colors"
-                    title={`Orientation: ${isLandscape ? 'Landscape' : 'Portrait'} (Click to rotate)`}
+                    onClick={() => rotatePage(config.pageNumber)}
+                    className="px-1.5 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-[10px] font-bold flex items-center gap-1 transition-all"
+                    title={`Click to rotate (Current: ${rot}° ${isLandscape ? 'Landscape' : 'Portrait'})`}
                   >
-                    <Compass
-                      className={`w-3 h-3 text-indigo-400 transition-transform ${
-                        isLandscape ? 'rotate-90 text-pink-400' : ''
-                      }`}
-                    />
+                    <RotateCw className="w-2.5 h-2.5 text-indigo-400" />
+                    <span>{rot}°</span>
                   </button>
                 </div>
 
@@ -371,28 +380,35 @@ export function PageVisualizer({
                 </button>
               </div>
 
-              {/* Real Page Canvas or Image */}
+              {/* Real Page Canvas or Image (Rotated based on orientation) */}
               <div
                 onClick={() => thumb && setZoomPage(config.pageNumber)}
-                className={`p-2 flex items-center justify-center bg-slate-950/40 cursor-zoom-in relative ${
+                className={`p-2.5 flex items-center justify-center bg-slate-950/50 cursor-zoom-in relative overflow-hidden transition-all duration-300 ${
                   isLandscape ? 'aspect-[4/3]' : 'aspect-[3/4]'
                 }`}
                 title="Click to zoom and inspect page details"
               >
                 {thumb ? (
-                  <img
-                    src={thumb}
-                    alt={`Page ${config.pageNumber}`}
-                    className="max-h-full max-w-full object-contain rounded shadow-md border border-white/10 transition-transform group-hover:scale-[1.02]"
-                  />
+                  <div className="w-full h-full flex items-center justify-center overflow-hidden">
+                    <img
+                      src={thumb}
+                      alt={`Page ${config.pageNumber}`}
+                      style={{
+                        transform: `rotate(${rot}deg)`,
+                        maxHeight: isLandscape ? '140%' : '100%',
+                        maxWidth: isLandscape ? '140%' : '100%',
+                      }}
+                      className="object-contain rounded shadow border border-white/10 transition-transform duration-300 group-hover:scale-[1.02]"
+                    />
+                  </div>
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 space-y-1">
-                    <FileText className="w-8 h-8 stroke-1 text-slate-500" />
+                    <FileText className="w-8 h-8 stroke-1 text-slate-500 animate-pulse" />
                     <span className="text-[10px] text-slate-500 font-mono">Page {config.pageNumber}</span>
                   </div>
                 )}
 
-                {/* Subtle zoom indicator on hover */}
+                {/* Zoom indicator on hover */}
                 {thumb && (
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
                     <div className="p-1.5 rounded-full bg-slate-900/80 border border-white/20">
@@ -437,7 +453,7 @@ export function PageVisualizer({
       {zoomPage !== null && thumbnails[zoomPage] && (
         <div
           onClick={() => setZoomPage(null)}
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -452,20 +468,33 @@ export function PageVisualizer({
                   ({pageConfigs.find((p) => p.pageNumber === zoomPage)?.colorMode === 'color' ? 'Color' : 'B&W'})
                 </span>
               </div>
-              <button
-                onClick={() => setZoomPage(null)}
-                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => rotatePage(zoomPage)}
+                  className="px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                  <span>Rotate 90°</span>
+                </button>
+                <button
+                  onClick={() => setZoomPage(null)}
+                  className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
-            <div className="flex-1 overflow-auto flex items-center justify-center p-2 bg-slate-950/80 rounded-2xl">
+            <div className="flex-1 overflow-auto flex items-center justify-center p-3 bg-slate-950/80 rounded-2xl">
               <img
                 src={thumbnails[zoomPage]}
                 alt={`Zoomed Page ${zoomPage}`}
-                className="max-h-[70vh] object-contain rounded-lg shadow-2xl"
-              ></img>
+                style={{
+                  transform: `rotate(${pageConfigs.find((p) => p.pageNumber === zoomPage)?.rotation || 0}deg)`,
+                }}
+                className="max-h-[70vh] object-contain rounded-lg shadow-2xl transition-transform duration-300"
+              />
             </div>
 
             <div className="flex items-center justify-between pt-2">

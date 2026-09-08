@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { FooterLegal } from "@/components/FooterLegal";
+import { AdminBadge } from "@/components/AdminBadge";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -50,9 +51,12 @@ export default function RootLayout({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Printer Online</span>
+            <div className="flex items-center gap-2">
+              <AdminBadge />
+              <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Printer Online</span>
+              </div>
             </div>
           </div>
         </header>
