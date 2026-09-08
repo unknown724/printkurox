@@ -3,7 +3,7 @@
  */
 
 const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || '948fd75d8b84a5cf20559d6aa789d4dd';
-const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || 'cfat_vPZk4k6Wd9t5fhs5vwucMk3aR4IBMx715BnqwnHs648e89eb';
+const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || '';
 const DATABASE_ID = process.env.CLOUDFLARE_D1_DATABASE_ID || '3f4d4547-e86b-4cdd-a867-9ebba19c12c9';
 
 export interface PrintJobRecord {

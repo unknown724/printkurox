@@ -45,3 +45,6 @@ daemon/sumatra/
 daemon/temp_prints/
 daemon/.env
 
+
+.vercel
+.env*
