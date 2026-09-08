@@ -37,122 +37,29 @@ interface FileUploadProps {
   uploadedBatch: UploadedBatchData | null;
 }
 
-// ─── Client-side image compression ───────────────────────────────────────────
-// Downscales large images to max 1920px before upload — cuts mobile upload
-// time by 60-80% for photos with no visible quality loss at print size.
-const MAX_IMAGE_DIMENSION = 1800;
-const IMAGE_COMPRESS_THRESHOLD = 2.5 * 1024 * 1024; // 2.5 MB — skip compression for normal 500KB-2MB files
-
-async function compressImageFile(file: File): Promise<File> {
-  // Only compress images, skip PDFs and docs
-  const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.name);
-  if (!isImage) return file;
-  // Skip if already small enough
-  if (file.size <= IMAGE_COMPRESS_THRESHOLD) return file;
-
-  return new Promise((resolve) => {
-    let resolved = false;
-    let objectUrl = '';
-
-    const finish = (result: File) => {
-      if (!resolved) {
-        resolved = true;
-        if (objectUrl) {
-          try { URL.revokeObjectURL(objectUrl); } catch {}
-        }
-        resolve(result);
-      }
-    };
-
-    // Fast 2.5s safety net
-    const timer = setTimeout(() => {
-      finish(file);
-    }, 2500);
-
-    try {
-      const img = new Image();
-      objectUrl = URL.createObjectURL(file);
-
-      img.onload = () => {
-        try {
-          let { naturalWidth: w, naturalHeight: h } = img;
-          if (!w || !h || (w <= MAX_IMAGE_DIMENSION && h <= MAX_IMAGE_DIMENSION)) {
-            clearTimeout(timer);
-            finish(file);
-            return;
-          }
-
-          // Scale down proportionally
-          if (w > h) {
-            h = Math.round((h * MAX_IMAGE_DIMENSION) / w);
-            w = MAX_IMAGE_DIMENSION;
-          } else {
-            w = Math.round((w * MAX_IMAGE_DIMENSION) / h);
-            h = MAX_IMAGE_DIMENSION;
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            clearTimeout(timer);
-            finish(file);
-            return;
-          }
-
-          ctx.drawImage(img, 0, 0, w, h);
-          canvas.toBlob(
-            (blob) => {
-              clearTimeout(timer);
-              if (!blob) {
-                finish(file);
-                return;
-              }
-              const newName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
-              const compressed = new File([blob], newName, { type: 'image/jpeg', lastModified: Date.now() });
-              finish(compressed);
-            },
-            'image/jpeg',
-            0.82,
-          );
-        } catch {
-          clearTimeout(timer);
-          finish(file);
-        }
-      };
-
-      img.onerror = () => {
-        clearTimeout(timer);
-        finish(file);
-      };
-
-      img.src = objectUrl;
-    } catch {
-      clearTimeout(timer);
-      finish(file);
-    }
-  });
-}
-
-// ─── XHR upload with real progress ───────────────────────────────────────────
+// ─── Direct XHR upload with accurate multi-phase progress ──────────────────
 function xhrUpload(
   formData: FormData,
-  onProgress: (pct: number) => void,
+  onProgress: (pct: number, phase: 'uploading' | 'processing') => void,
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
 
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) {
-        // Map upload phase to 0–80% of the bar
-        const pct = Math.round((e.loaded / e.total) * 80);
-        onProgress(pct);
+        // Map upload bytes to 0–75% of progress
+        const pct = Math.min(75, Math.round((e.loaded / e.total) * 75));
+        onProgress(pct, 'uploading');
       }
     });
 
+    // When all bytes are uploaded from device
+    xhr.upload.addEventListener('load', () => {
+      onProgress(80, 'processing');
+    });
+
     xhr.addEventListener('load', () => {
-      // Convert XHR response to a Response-like object for compatibility
+      onProgress(100, 'processing');
       const response = new Response(xhr.responseText, {
         status: xhr.status,
         statusText: xhr.statusText,
@@ -161,8 +68,10 @@ function xhrUpload(
       resolve(response);
     });
 
-    xhr.addEventListener('error', () => reject(new Error('Network error during upload.')));
+    xhr.addEventListener('error', () => reject(new Error('Network connection error. Please check your internet.')));
     xhr.addEventListener('abort', () => reject(new Error('Upload cancelled.')));
+    xhr.timeout = 45000;
+    xhr.ontimeout = () => reject(new Error('Upload timed out. Please try again.'));
 
     xhr.open('POST', '/api/upload');
     xhr.send(formData);
@@ -175,8 +84,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadPhase, setUploadPhase] = useState<'compressing' | 'uploading' | 'processing' | null>(null);
-  const [compressingStatus, setCompressingStatus] = useState<string>('Optimizing…');
+  const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Local list of staged raw Files
@@ -203,48 +111,20 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
 
     setIsUploading(true);
     setUploadProgress(0);
+    setUploadPhase('uploading');
 
     try {
-      // ── Phase 1: Client-side image compression (Sequential to protect mobile RAM) ──
-      const largeImagesCount = newFileList.filter(
-        (f) => (f.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(f.name)) && f.size > IMAGE_COMPRESS_THRESHOLD
-      ).length;
-
-      let filesToSend: File[] = [];
-      if (largeImagesCount > 0) {
-        setUploadPhase('compressing');
-        let currentImgIdx = 0;
-        for (let i = 0; i < newFileList.length; i++) {
-          const f = newFileList[i];
-          const isLarge = (f.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(f.name)) && f.size > IMAGE_COMPRESS_THRESHOLD;
-          if (isLarge) {
-            currentImgIdx++;
-            setCompressingStatus(`Optimizing photo ${currentImgIdx} of ${largeImagesCount}…`);
-          }
-          const compressed = await compressImageFile(f);
-          filesToSend.push(compressed);
-          // Yield tick to browser event loop
-          await new Promise((r) => setTimeout(r, 25));
-        }
-      } else {
-        filesToSend = newFileList;
-      }
-
-      // ── Phase 2: Upload with real progress ──
-      setUploadPhase('uploading');
+      // Direct stream to server (zero client-side canvas delay / zero mobile RAM crash)
       const formData = new FormData();
-      filesToSend.forEach((f) => formData.append('files', f));
+      newFileList.forEach((f) => formData.append('files', f));
 
-      const res = await xhrUpload(formData, (pct) => {
+      const res = await xhrUpload(formData, (pct, phase) => {
         setUploadProgress(pct);
+        setUploadPhase(phase);
       });
 
-      // ── Phase 3: Server processing (80–95%) ──
-      setUploadPhase('processing');
-      setUploadProgress(85);
-
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || 'Failed to upload documents.');
       }
 
@@ -259,7 +139,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         fileCount: result.fileCount,
         fileItems: result.fileItems || [],
         downloadUrl: result.downloadUrl,
-        rawFiles: newFileList, // keep original (uncompressed) for local thumbnail rendering
+        rawFiles: newFileList, // keep original files for progressive instant thumbnails
       });
 
       setRawFiles(newFileList);
@@ -271,7 +151,6 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
       setIsUploading(false);
       setUploadProgress(0);
       setUploadPhase(null);
-      setCompressingStatus('Optimizing…');
     }
   };
 
@@ -426,7 +305,9 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
           <div className="glass-card rounded-xl p-3 space-y-2">
             <div className="flex items-center space-x-2 text-xs text-indigo-600 dark:text-indigo-300">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-              <span>{phaseLabel}</span>
+              <span className="font-medium">
+                {uploadPhase === 'processing' ? 'Processing & preparing documents…' : `Uploading files… ${uploadProgress}%`}
+              </span>
             </div>
             <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
               <div
@@ -471,18 +352,16 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         />
 
         {isUploading ? (
-          <div className="flex flex-col items-center py-4 space-y-3 w-full max-w-[220px]">
+          <div className="flex flex-col items-center py-4 space-y-3 w-full max-w-[240px]">
             <Loader2 className="w-10 h-10 text-indigo-600 dark:text-indigo-400 animate-spin" />
             <div className="text-center">
-              <p className="text-sm font-medium text-slate-900 dark:text-white">
-                {uploadPhase === 'compressing' ? 'Optimizing…' : uploadPhase === 'processing' ? 'Processing…' : 'Uploading…'}
+              <p className="text-sm font-bold text-slate-900 dark:text-white">
+                {uploadPhase === 'processing' ? 'Processing on Server…' : `Uploading Files… ${uploadProgress}%`}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {uploadPhase === 'compressing'
-                  ? 'Compressing images for faster upload'
-                  : uploadPhase === 'processing'
-                  ? 'Server is preparing your document'
-                  : 'Sending files securely'}
+                {uploadPhase === 'processing'
+                  ? 'Merging documents & generating print layouts'
+                  : 'Sending files securely to kiosk'}
               </p>
             </div>
             <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
@@ -491,7 +370,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
-            <p className="text-[11px] text-slate-500">{uploadProgress}%</p>
+            <p className="text-[11px] font-mono font-semibold text-indigo-600 dark:text-indigo-400">{uploadProgress}%</p>
           </div>
         ) : (
           <>

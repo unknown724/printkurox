@@ -526,8 +526,18 @@ export function PageVisualizer({
                     </div>
                   ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 space-y-1">
-                      <FileText className="w-7 h-7 stroke-1 text-slate-400 animate-pulse" />
-                      <span className="text-[10px] text-slate-500 font-mono font-bold">Page {config.pageNumber}</span>
+                      {loadingThumbnails ? (
+                        <>
+                          <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
+                          <span className="text-[9px] text-slate-500 font-mono font-bold">Rendering #{config.pageNumber}</span>
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="w-7 h-7 stroke-1 text-slate-400" />
+                          <span className="text-[10px] text-slate-600 dark:text-slate-400 font-mono font-bold">Page #{config.pageNumber}</span>
+                          <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider">Ready to Print</span>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
