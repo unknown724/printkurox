@@ -214,6 +214,36 @@ export function PageVisualizer({
     onChange(updated);
   };
 
+  // Change orientation for an individual page
+  const setPageOrientation = (pageNumber: number, orient: 'portrait' | 'landscape') => {
+    const updated = pageConfigs.map((p) => {
+      if (p.pageNumber === pageNumber) {
+        const rot = orient === 'landscape' ? 90 : 0;
+        return {
+          ...p,
+          orientation: orient,
+          rotation: rot,
+        };
+      }
+      return p;
+    });
+    onChange(updated);
+  };
+
+  // Change orientation for all pages at once
+  const setAllOrientation = (orient: 'portrait' | 'landscape') => {
+    if (onOrientationChange) {
+      onOrientationChange(orient);
+    }
+    const rot = orient === 'landscape' ? 90 : 0;
+    const updated = pageConfigs.map((p) => ({
+      ...p,
+      orientation: orient,
+      rotation: rot,
+    }));
+    onChange(updated);
+  };
+
   // Rotate individual page 90 degrees clockwise
   const rotatePage = (pageNumber: number) => {
     const updated = pageConfigs.map((p) => {
@@ -235,16 +265,7 @@ export function PageVisualizer({
   // Rotate all pages at once
   const rotateAllPages = () => {
     const nextOrient = orientation === 'portrait' ? 'landscape' : 'portrait';
-    const nextRot = nextOrient === 'landscape' ? 90 : 0;
-    if (onOrientationChange) {
-      onOrientationChange(nextOrient);
-    }
-    const updated = pageConfigs.map((p) => ({
-      ...p,
-      rotation: nextRot,
-      orientation: nextOrient,
-    }));
-    onChange(updated);
+    setAllOrientation(nextOrient);
   };
 
   const includedPagesCount = pageConfigs.filter((p) => p.included).length;
@@ -274,16 +295,38 @@ export function PageVisualizer({
           </p>
         </div>
 
-        {/* Global Rotate Button */}
-        <button
-          type="button"
-          onClick={rotateAllPages}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-300 transition-all hover:text-white active:scale-95"
-          title="Toggle rotation for all pages"
-        >
-          <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
-          <span className="capitalize">Rotate All ({orientation})</span>
-        </button>
+        {/* Professional Orientation Switcher */}
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-xl bg-slate-900/90 p-1 border border-white/10 text-xs shadow-inner">
+            <button
+              type="button"
+              onClick={() => setAllOrientation('portrait')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                orientation === 'portrait'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Set all pages to standard A4 Portrait"
+            >
+              <span>📄</span>
+              <span>Portrait</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAllOrientation('landscape')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                orientation === 'landscape'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Set all pages to horizontal A4 Landscape"
+            >
+              <span>📜</span>
+              <span>Landscape</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Quick Action Bulk Buttons */}
@@ -345,23 +388,51 @@ export function PageVisualizer({
                     ? 'border-pink-500/60 bg-gradient-to-b from-pink-950/20 to-slate-900 shadow-md shadow-pink-500/10'
                     : 'border-indigo-500/50 bg-gradient-to-b from-indigo-950/20 to-slate-900 shadow-md shadow-indigo-500/10'
                   : 'border-slate-800 bg-slate-950/60 opacity-40 grayscale'
-              }`}
+              } ${isLandscape ? 'sm:col-span-2' : ''}`}
             >
               {/* Header inside thumbnail card */}
-              <div className="p-2.5 flex items-center justify-between border-b border-white/5 bg-black/20">
+              <div className="p-2.5 flex items-center justify-between border-b border-white/5 bg-black/30">
                 <div className="flex items-center space-x-1.5">
-                  <span className="font-mono font-black text-white text-xs">
+                  <span className="font-mono font-black text-white text-xs mr-0.5">
                     #{config.pageNumber}
                   </span>
-                  {/* Rotate button */}
+
+                  {/* Dedicated Port / Land pill */}
+                  <div className="inline-flex rounded-lg bg-black/50 p-0.5 border border-white/10 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setPageOrientation(config.pageNumber, 'portrait')}
+                      className={`px-1.5 py-0.5 rounded font-bold transition-all ${
+                        !isLandscape
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Set page to Portrait"
+                    >
+                      Port
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPageOrientation(config.pageNumber, 'landscape')}
+                      className={`px-1.5 py-0.5 rounded font-bold transition-all ${
+                        isLandscape
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Set page to Landscape"
+                    >
+                      Land
+                    </button>
+                  </div>
+
+                  {/* 90 deg rotate button */}
                   <button
                     type="button"
                     onClick={() => rotatePage(config.pageNumber)}
-                    className="px-1.5 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white text-[10px] font-bold flex items-center gap-1 transition-all"
-                    title={`Click to rotate (Current: ${rot}° ${isLandscape ? 'Landscape' : 'Portrait'})`}
+                    className="p-1 rounded-md bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white transition-colors"
+                    title={`Rotate 90° clockwise (Current: ${rot}°)`}
                   >
-                    <RotateCw className="w-2.5 h-2.5 text-indigo-400" />
-                    <span>{rot}°</span>
+                    <RotateCw className="w-3 h-3" />
                   </button>
                 </div>
 
@@ -380,39 +451,53 @@ export function PageVisualizer({
                 </button>
               </div>
 
-              {/* Real Page Canvas or Image (Rotated based on orientation) */}
+              {/* Professional Physical Paper Sheet Canvas */}
               <div
                 onClick={() => thumb && setZoomPage(config.pageNumber)}
-                className={`p-2.5 flex items-center justify-center bg-slate-950/50 cursor-zoom-in relative overflow-hidden transition-all duration-300 ${
-                  isLandscape ? 'aspect-[4/3]' : 'aspect-[3/4]'
-                }`}
+                className="p-3 flex items-center justify-center bg-[#090d17]/80 min-h-[195px] cursor-zoom-in relative overflow-hidden transition-all duration-300"
                 title="Click to zoom and inspect page details"
               >
-                {thumb ? (
-                  <div className="w-full h-full flex items-center justify-center overflow-hidden">
-                    <img
-                      src={thumb}
-                      alt={`Page ${config.pageNumber}`}
-                      style={{
-                        transform: `rotate(${rot}deg)`,
-                        maxHeight: isLandscape ? '140%' : '100%',
-                        maxWidth: isLandscape ? '140%' : '100%',
-                      }}
-                      className="object-contain rounded shadow border border-white/10 transition-transform duration-300 group-hover:scale-[1.02]"
-                    />
-                  </div>
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 space-y-1">
-                    <FileText className="w-8 h-8 stroke-1 text-slate-500 animate-pulse" />
-                    <span className="text-[10px] text-slate-500 font-mono">Page {config.pageNumber}</span>
-                  </div>
-                )}
+                {/* Physical White Paper Sheet */}
+                <div
+                  className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black/90 rounded-xs border border-slate-300/80 transition-all duration-300 ${
+                    isLandscape
+                      ? 'w-[185px] sm:w-[215px] aspect-[297/210]'
+                      : 'w-[125px] sm:w-[135px] aspect-[210/297]'
+                  }`}
+                >
+                  {/* Subtle 5mm Margin Guideline (Printing margin simulator) */}
+                  <div className="absolute inset-1.5 border border-dashed border-slate-300/80 pointer-events-none rounded-[1px]" />
+
+                  {/* Watermark indicating paper format & dimensions */}
+                  <span className="absolute bottom-1 right-1.5 text-[8px] font-mono font-bold text-slate-400 select-none uppercase tracking-tighter">
+                    {isLandscape ? 'A4 297×210' : 'A4 210×297'}
+                  </span>
+
+                  {thumb ? (
+                    <div className="w-full h-full p-2 flex items-center justify-center overflow-hidden">
+                      <img
+                        src={thumb}
+                        alt={`Page ${config.pageNumber}`}
+                        style={{
+                          transform: isLandscape ? `rotate(${rot}deg) scale(0.707)` : `rotate(${rot}deg)`,
+                          transformOrigin: 'center center',
+                        }}
+                        className="object-contain max-w-full max-h-full transition-transform duration-300 select-none"
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 space-y-1">
+                      <FileText className="w-7 h-7 stroke-1 text-slate-400 animate-pulse" />
+                      <span className="text-[10px] text-slate-500 font-mono font-bold">Page {config.pageNumber}</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Zoom indicator on hover */}
                 {thumb && (
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                    <div className="p-1.5 rounded-full bg-slate-900/80 border border-white/20">
-                      <Maximize2 className="w-3.5 h-3.5 text-indigo-300" />
+                    <div className="p-2 rounded-full bg-slate-900/90 border border-white/20 shadow-lg">
+                      <Maximize2 className="w-4 h-4 text-indigo-300" />
                     </div>
                   </div>
                 )}
@@ -469,6 +554,34 @@ export function PageVisualizer({
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                {/* Modal Orientation Toggle */}
+                {(() => {
+                  const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
+                  const isLand = currConf?.rotation === 90 || currConf?.rotation === 270 || currConf?.orientation === 'landscape';
+                  return (
+                    <div className="inline-flex rounded-xl bg-black/60 p-0.5 border border-white/10 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setPageOrientation(zoomPage, 'portrait')}
+                        className={`px-2 py-1 rounded-lg font-bold transition-all ${
+                          !isLand ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        📄 Portrait
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPageOrientation(zoomPage, 'landscape')}
+                        className={`px-2 py-1 rounded-lg font-bold transition-all ${
+                          isLand ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        📜 Landscape
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 <button
                   type="button"
                   onClick={() => rotatePage(zoomPage)}
@@ -486,15 +599,36 @@ export function PageVisualizer({
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto flex items-center justify-center p-3 bg-slate-950/80 rounded-2xl">
-              <img
-                src={thumbnails[zoomPage]}
-                alt={`Zoomed Page ${zoomPage}`}
-                style={{
-                  transform: `rotate(${pageConfigs.find((p) => p.pageNumber === zoomPage)?.rotation || 0}deg)`,
-                }}
-                className="max-h-[70vh] object-contain rounded-lg shadow-2xl transition-transform duration-300"
-              />
+            <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-[#090d17] rounded-2xl">
+              {(() => {
+                const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
+                const rot = currConf?.rotation ?? (currConf?.orientation === 'landscape' ? 90 : 0);
+                const isLand = rot === 90 || rot === 270;
+                return (
+                  <div
+                    className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black rounded-xs border border-slate-300 transition-all duration-300 ${
+                      isLand ? 'w-[85%] aspect-[297/210] max-h-[65vh]' : 'w-[58%] aspect-[210/297] max-h-[65vh]'
+                    }`}
+                  >
+                    {/* Margin guide */}
+                    <div className="absolute inset-2 border border-dashed border-slate-300 pointer-events-none" />
+                    <span className="absolute bottom-2 right-2 text-[9px] font-mono font-bold text-slate-400 uppercase">
+                      {isLand ? 'A4 Landscape (297×210 mm)' : 'A4 Portrait (210×297 mm)'}
+                    </span>
+                    <div className="w-full h-full p-3 flex items-center justify-center overflow-hidden">
+                      <img
+                        src={thumbnails[zoomPage]}
+                        alt={`Zoomed Page ${zoomPage}`}
+                        style={{
+                          transform: isLand ? `rotate(${rot}deg) scale(0.707)` : `rotate(${rot}deg)`,
+                          transformOrigin: 'center center',
+                        }}
+                        className="max-h-full max-w-full object-contain select-none transition-transform duration-300"
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="flex items-center justify-between pt-2">

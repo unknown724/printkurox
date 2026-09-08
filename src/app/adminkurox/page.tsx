@@ -17,7 +17,11 @@ import {
   Trash2,
   PlusCircle,
   ExternalLink,
+  Eye,
+  EyeOff,
+  ShieldAlert,
 } from 'lucide-react';
+import { getClientDetailedDevice } from '@/lib/device-detection';
 
 interface AdminDevice {
   device_id: string;
@@ -26,27 +30,6 @@ interface AdminDevice {
   user_agent: string;
   created_at: string;
   last_active: string;
-}
-
-function detectDeviceClient(): string {
-  if (typeof window === 'undefined') return 'Web Client';
-  const ua = navigator.userAgent;
-  let os = 'Device';
-  if (/iPhone/i.test(ua)) os = 'Apple iPhone';
-  else if (/iPad/i.test(ua)) os = 'Apple iPad';
-  else if (/Android/i.test(ua)) os = 'Android Phone';
-  else if (/Windows NT 10.0/i.test(ua)) os = 'Windows PC';
-  else if (/Windows/i.test(ua)) os = 'Windows PC';
-  else if (/Macintosh|Mac OS/i.test(ua)) os = 'MacBook';
-  else if (/Linux/i.test(ua)) os = 'Linux Device';
-
-  let browser = '';
-  if (/Firefox\/([0-9]+)/i.test(ua)) browser = ' (Firefox)';
-  else if (/Edg\/([0-9]+)/i.test(ua)) browser = ' (Edge)';
-  else if (/Chrome\/([0-9]+)/i.test(ua)) browser = ' (Chrome)';
-  else if (/Safari\/([0-9]+)/i.test(ua) && !/Chrome/i.test(ua)) browser = ' (Safari)';
-
-  return `${os}${browser}`;
 }
 
 interface Job {
@@ -65,6 +48,7 @@ interface Job {
 
 export default function AdminKuroxPage() {
   const [pin, setPin] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [customDeviceName, setCustomDeviceName] = useState('');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,7 +60,9 @@ export default function AdminKuroxPage() {
   const [loadingJobs, setLoadingJobs] = useState(false);
 
   useEffect(() => {
-    setCustomDeviceName(detectDeviceClient());
+    getClientDetailedDevice().then((name) => {
+      setCustomDeviceName(name);
+    });
     checkAuthAndLoad();
   }, []);
 
@@ -106,7 +92,7 @@ export default function AdminKuroxPage() {
     setSubmitting(true);
 
     try {
-      const devName = customDeviceName.trim() || detectDeviceClient();
+      const devName = customDeviceName.trim() || (await getClientDetailedDevice());
       const res = await fetch('/api/admin/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -236,13 +222,21 @@ export default function AdminKuroxPage() {
             <div className="relative">
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
                 placeholder="Enter Passcode"
                 required
-                className="w-full pl-10 pr-4 py-3 rounded-xl bg-slate-900/90 border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500"
+                className="w-full pl-10 pr-10 py-3 rounded-xl bg-slate-900/90 border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                title={showPassword ? 'Hide passcode' : 'Show passcode'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
 
             <div className="space-y-1 text-left">
@@ -377,14 +371,21 @@ export default function AdminKuroxPage() {
                       <p>Active: <span className="text-slate-300">{new Date(d.last_active).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleRevokeDevice(d.device_id)}
-                      className="w-full py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Disconnect Device</span>
-                    </button>
+                    {isCurrent ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRevokeDevice(d.device_id)}
+                        className="w-full py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Disconnect This Device</span>
+                      </button>
+                    ) : (
+                      <div className="w-full py-1.5 px-2 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-default">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>Hardcore Admin • Unremovable</span>
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -13,6 +13,8 @@ import {
   KeyRound,
   X,
   AlertTriangle,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { useRouter } from 'next/navigation';
@@ -50,6 +52,7 @@ export function CostSummary({
   const [isAdmin, setIsAdmin] = useState(false);
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [staffPin, setStaffPin] = useState('');
+  const [showStaffPin, setShowStaffPin] = useState(false);
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffError, setStaffError] = useState<string | null>(null);
 
@@ -376,15 +379,25 @@ export function CostSummary({
             )}
 
             <form onSubmit={handleStaffSubmit} className="space-y-3">
-              <input
-                type="password"
-                value={staffPin}
-                onChange={(e) => setStaffPin(e.target.value)}
-                placeholder="Enter Staff Passcode"
-                required
-                autoFocus
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-white placeholder-slate-500 text-sm text-center focus:outline-none focus:border-indigo-500"
-              />
+              <div className="relative">
+                <input
+                  type={showStaffPin ? 'text' : 'password'}
+                  value={staffPin}
+                  onChange={(e) => setStaffPin(e.target.value)}
+                  placeholder="Enter Staff Passcode"
+                  required
+                  autoFocus
+                  className="w-full pl-4 pr-10 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-white placeholder-slate-500 text-sm text-center focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowStaffPin(!showStaffPin)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                  title={showStaffPin ? 'Hide passcode' : 'Show passcode'}
+                >
+                  {showStaffPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
 
               <button
                 type="submit"

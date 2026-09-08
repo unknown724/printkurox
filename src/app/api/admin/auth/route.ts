@@ -8,29 +8,10 @@ import {
   ADMIN_COOKIE_NAME,
   MAX_ADMIN_DEVICES,
 } from '@/lib/admin-auth';
+import { parseUserAgentDetails } from '@/lib/device-detection';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-function getFriendlyDeviceName(ua: string): string {
-  if (!ua) return 'Web Browser';
-  let os = 'Device';
-  if (/iPhone/i.test(ua)) os = 'Apple iPhone';
-  else if (/iPad/i.test(ua)) os = 'Apple iPad';
-  else if (/Android/i.test(ua)) os = 'Android Phone';
-  else if (/Windows NT 10.0/i.test(ua)) os = 'Windows PC';
-  else if (/Windows/i.test(ua)) os = 'Windows PC';
-  else if (/Macintosh|Mac OS/i.test(ua)) os = 'MacBook';
-  else if (/Linux/i.test(ua)) os = 'Linux Device';
-
-  let browser = '';
-  if (/Firefox\/([0-9]+)/i.test(ua)) browser = ' (Firefox)';
-  else if (/Edg\/([0-9]+)/i.test(ua)) browser = ' (Edge)';
-  else if (/Chrome\/([0-9]+)/i.test(ua)) browser = ' (Chrome)';
-  else if (/Safari\/([0-9]+)/i.test(ua)) browser = ' (Safari)';
-
-  return `${os}${browser}`;
-}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -68,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const ua = req.headers.get('user-agent') || '';
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1';
-    const friendlyName = customDeviceName || getFriendlyDeviceName(ua);
+    const friendlyName = customDeviceName || parseUserAgentDetails(ua).fullName;
 
     const currentDeviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
     if (currentDeviceId) {
@@ -122,15 +103,22 @@ export async function DELETE(req: NextRequest) {
     const targetId = searchParams.get('deviceId');
     const currentDeviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
 
+    // Hardcore Unremovable Admin Policy:
+    // An admin device can ONLY disconnect itself. No admin can kick out another admin!
+    if (targetId && targetId !== currentDeviceId) {
+      return NextResponse.json(
+        { error: 'Forbidden: Admin devices are permanent and cannot be disconnected by other devices.' },
+        { status: 403 }
+      );
+    }
+
     const deviceIdToRevoke = targetId || currentDeviceId;
     if (deviceIdToRevoke) {
       await revokeAdminDevice(deviceIdToRevoke);
     }
 
     const res = NextResponse.json({ success: true, message: 'Device disconnected' });
-    if (!targetId || targetId === currentDeviceId) {
-      res.cookies.delete(ADMIN_COOKIE_NAME);
-    }
+    res.cookies.delete(ADMIN_COOKIE_NAME);
     return res;
   } catch (err) {
     console.error('Error disconnecting device:', err);

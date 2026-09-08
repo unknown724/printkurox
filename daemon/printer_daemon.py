@@ -127,8 +127,8 @@ def locate_sumatra():
 
 from PIL import Image
 
-def ensure_printable_pdf(file_path):
-    """If file is an image (jpg, png, etc.), convert it to A4 PDF for SumatraPDF."""
+def ensure_printable_pdf(file_path, orientation=None):
+    """If file is an image (jpg, png, etc.), convert it to A4 PDF for SumatraPDF respecting orientation."""
     ext = os.path.splitext(file_path)[1].lower()
     if ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp']:
         pdf_path = os.path.splitext(file_path)[0] + "_converted.pdf"
@@ -136,17 +136,44 @@ def ensure_printable_pdf(file_path):
             image = Image.open(file_path)
             if image.mode in ("RGBA", "P"):
                 image = image.convert("RGB")
-            image.save(pdf_path, "PDF", resolution=100.0)
-            log(f"Converted {os.path.basename(file_path)} to printable PDF: {os.path.basename(pdf_path)}", "INFO")
+
+            # Determine target A4 orientation
+            # A4 at 300 DPI: Portrait 2480x3508, Landscape 3508x2480
+            is_landscape = False
+            if orientation == "landscape":
+                is_landscape = True
+            elif orientation == "portrait":
+                is_landscape = False
+            else:
+                is_landscape = image.width > image.height
+
+            a4_width, a4_height = (3508, 2480) if is_landscape else (2480, 3508)
+            canvas = Image.new("RGB", (a4_width, a4_height), (255, 255, 255))
+
+            # Scale to fit with standard printer margin
+            margin_w = int(a4_width * 0.04)
+            margin_h = int(a4_height * 0.04)
+            max_w = a4_width - (margin_w * 2)
+            max_h = a4_height - (margin_h * 2)
+
+            img_copy = image.copy()
+            img_copy.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+
+            offset_x = (a4_width - img_copy.width) // 2
+            offset_y = (a4_height - img_copy.height) // 2
+            canvas.paste(img_copy, (offset_x, offset_y))
+
+            canvas.save(pdf_path, "PDF", resolution=300.0)
+            log(f"Converted {os.path.basename(file_path)} to professional A4 {'Landscape' if is_landscape else 'Portrait'} PDF", "INFO")
             return pdf_path
         except Exception as e:
             log(f"Image to PDF conversion warning: {e}", "WARN")
             return file_path
     return file_path
 
-def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1):
+def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, orientation=None):
     """
-    Executes SumatraPDF CLI silent print command.
+    Executes SumatraPDF CLI silent print command with professional orientation & fit.
     Documentation: https://www.sumatrapdfreader.org/docs/Command-line-arguments
     """
     sumatra_exe = locate_sumatra()
@@ -165,6 +192,9 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1):
         settings_list.append("color")
     if copies > 1:
         settings_list.append(f"{copies}x")
+    if orientation in ["portrait", "landscape"]:
+        settings_list.append(orientation)
+    settings_list.append("fit") # Fit printable area cleanly
 
     settings_str = ",".join(settings_list)
 
@@ -198,11 +228,15 @@ def process_single_sided_job(job, local_file_path):
     if job.get("page_range") and job["page_range"].lower() != "all":
         page_range = job["page_range"]
 
+    orientation = job.get("orientation") or None
+    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
+
     success = print_file_silent(
-        local_file_path,
+        printable_path,
         page_range=page_range,
         color_mode=job["color_mode"],
-        copies=job["copies"]
+        copies=job["copies"],
+        orientation=orientation
     )
     if success:
         update_job_status(job["id"], "COMPLETED")
@@ -221,6 +255,8 @@ def process_manual_duplex_job(job, local_file_path):
     total_pages = job["total_pages"]
     copies = job["copies"]
     color_mode = job["color_mode"]
+    orientation = job.get("orientation") or None
+    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
     # -------------------------------------------------------------
     # Pass 1: Print Odd Pages
@@ -230,10 +266,11 @@ def process_manual_duplex_job(job, local_file_path):
 
     # SumatraPDF allows odd/even in print-settings
     odd_success = print_file_silent(
-        local_file_path,
+        printable_path,
         page_range="odd",
         color_mode=color_mode,
-        copies=copies
+        copies=copies,
+        orientation=orientation
     )
 
     if not odd_success:
@@ -270,10 +307,11 @@ def process_manual_duplex_job(job, local_file_path):
     log(f"Pass 2: Printing EVEN reverse pages for Job {job['pickup_code']}...", "INFO")
 
     even_success = print_file_silent(
-        local_file_path,
+        printable_path,
         page_range="even,reverse",
         color_mode=color_mode,
-        copies=copies
+        copies=copies,
+        orientation=orientation
     )
 
     if even_success:
