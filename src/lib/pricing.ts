@@ -19,6 +19,7 @@ export interface PageConfig {
   pageNumber: number;
   colorMode: 'bw' | 'color';
   included: boolean;
+  orientation?: 'portrait' | 'landscape';
 }
 
 export interface PricingInput {

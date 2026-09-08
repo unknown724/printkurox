@@ -1,7 +1,19 @@
 'use client';
 
-import React, { useState } from 'react';
-import { IndianRupee, Printer, ArrowRight, Loader2, ShieldCheck, Lock, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import {
+  IndianRupee,
+  Printer,
+  ArrowRight,
+  Loader2,
+  ShieldCheck,
+  Lock,
+  Check,
+  Zap,
+  KeyRound,
+  X,
+  AlertTriangle,
+} from 'lucide-react';
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { useRouter } from 'next/navigation';
 
@@ -33,6 +45,91 @@ export function CostSummary({
   const router = useRouter();
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Admin bypass state
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showStaffModal, setShowStaffModal] = useState(false);
+  const [staffPin, setStaffPin] = useState('');
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState<string | null>(null);
+
+  // Detect if current device is authenticated as Admin
+  useEffect(() => {
+    fetch('/api/admin/auth')
+      .then((r) => r.json())
+      .then((d) => setIsAdmin(Boolean(d.isAdmin)))
+      .catch(() => {});
+  }, []);
+
+  const handleAdminBypass = async (pinOverride?: string) => {
+    setIsProcessing(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch('/api/admin-bypass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileKey,
+          fileName,
+          docPages: totalPages,
+          pageRange,
+          colorMode: pricing.colorMode,
+          isDuplex: pricing.isDuplex,
+          copies: pricing.copies,
+          pageConfigs,
+          pin: pinOverride || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Admin bypass failed');
+      }
+
+      router.push(`/status/${data.jobId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Bypass error';
+      setErrorMessage(msg);
+      setIsProcessing(false);
+    }
+  };
+
+  const handleStaffSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStaffError(null);
+    setStaffLoading(true);
+
+    try {
+      const res = await fetch('/api/admin-bypass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileKey,
+          fileName,
+          docPages: totalPages,
+          pageRange,
+          colorMode: pricing.colorMode,
+          isDuplex: pricing.isDuplex,
+          copies: pricing.copies,
+          pageConfigs,
+          pin: staffPin,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Incorrect staff passcode');
+      }
+
+      setShowStaffModal(false);
+      router.push(`/status/${data.jobId}`);
+    } catch (err: unknown) {
+      setStaffError(err instanceof Error ? err.message : 'Invalid Passcode');
+    } finally {
+      setStaffLoading(false);
+    }
+  };
 
   const handlePayAndPrint = async () => {
     setIsProcessing(true);
@@ -77,9 +174,8 @@ export function CostSummary({
             razorpay_order_id?: string;
             razorpay_signature?: string;
           }) {
-            // Verify payment on server
             try {
-              const verifyRes = await fetch('/api/verify-payment', {
+              await fetch('/api/verify-payment', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -89,12 +185,7 @@ export function CostSummary({
                   razorpay_signature: response.razorpay_signature || 'sig_' + Date.now(),
                 }),
               });
-
-              if (verifyRes.ok) {
-                router.push(`/status/${jobId}`);
-              } else {
-                router.push(`/status/${jobId}`);
-              }
+              router.push(`/status/${jobId}`);
             } catch (vErr) {
               console.error(vErr);
               router.push(`/status/${jobId}`);
@@ -106,7 +197,7 @@ export function CostSummary({
             contact: '9999999999',
           },
           theme: {
-            color: '#6366f1', // Indigo accent
+            color: '#6366f1',
             backdrop_color: 'rgba(9, 13, 22, 0.85)',
           },
           modal: {
@@ -141,8 +232,16 @@ export function CostSummary({
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <span className="text-xs text-slate-300 font-medium">Pages to Print</span>
           <span className="text-xs font-semibold text-white flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${pricing.colorMode === 'bw' ? 'bg-slate-400' : 'bg-pink-500'}`} />
-            {pricing.totalPages} Page{pricing.totalPages > 1 ? 's' : ''} ({pricing.colorMode === 'bw' ? 'B&W' : 'Color'})
+            <span
+              className={`w-2 h-2 rounded-full ${
+                pricing.colorMode === 'bw' ? 'bg-slate-400' : 'bg-pink-500'
+              }`}
+            />
+            {pricing.totalPages} Page{pricing.totalPages > 1 ? 's' : ''} (
+            {pricing.colorMode === 'custom'
+              ? 'Mixed B&W/Color'
+              : pricing.colorMode.toUpperCase()}
+            )
           </span>
         </div>
 
@@ -174,7 +273,20 @@ export function CostSummary({
         </div>
       </div>
 
-      {/* Prominent Checkout Action Button */}
+      {/* Admin Authorized Free Print Button */}
+      {isAdmin && (
+        <button
+          type="button"
+          onClick={() => handleAdminBypass()}
+          disabled={isProcessing}
+          className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-400 text-black font-extrabold shadow-lg shadow-amber-500/25 flex items-center justify-center space-x-2 transition-all active:scale-[0.99]"
+        >
+          <Zap className="w-4 h-4 text-black fill-black" />
+          <span>⚡ Admin Free Print (Device Authorized)</span>
+        </button>
+      )}
+
+      {/* Standard Customer Checkout Button */}
       <button
         type="button"
         onClick={handlePayAndPrint}
@@ -184,7 +296,7 @@ export function CostSummary({
         {isProcessing ? (
           <>
             <Loader2 className="w-5 h-5 animate-spin text-white" />
-            <span className="text-sm font-semibold tracking-wide">Opening Razorpay Secure Gateway...</span>
+            <span className="text-sm font-semibold tracking-wide">Processing...</span>
           </>
         ) : (
           <>
@@ -197,13 +309,18 @@ export function CostSummary({
         )}
       </button>
 
-      {/* Payment methods badges */}
+      {/* Payment methods badges & subtle Staff Trigger */}
       <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5 space-y-2">
         <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setShowStaffModal(true)}
+            className="flex items-center gap-1 hover:text-indigo-300 transition-colors text-left"
+            title="Shop staff passcode access"
+          >
             <Lock className="w-3 h-3 text-emerald-400" />
             <span>100% Encrypted & RBI Compliant</span>
-          </span>
+          </button>
           <span className="text-slate-500">Instant Verification</span>
         </div>
 
@@ -222,6 +339,81 @@ export function CostSummary({
           {errorMessage}
         </div>
       )}
+
+      {/* Discreet Staff Passcode Modal */}
+      {showStaffModal && (
+        <div
+          onClick={() => setShowStaffModal(false)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="glass-card max-w-sm w-full rounded-3xl p-6 border-indigo-500/40 space-y-4 text-center relative"
+          >
+            <div className="flex items-center justify-between pb-1">
+              <div className="flex items-center space-x-2 text-indigo-400">
+                <KeyRound className="w-4 h-4" />
+                <span className="text-xs font-bold uppercase tracking-wider text-white">Staff Print Bypass</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStaffModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Enter your master staff passcode to print without Razorpay checkout.
+            </p>
+
+            {staffError && (
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center justify-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span>{staffError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleStaffSubmit} className="space-y-3">
+              <input
+                type="password"
+                value={staffPin}
+                onChange={(e) => setStaffPin(e.target.value)}
+                placeholder="Enter Staff Passcode"
+                required
+                autoFocus
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-white placeholder-slate-500 text-sm text-center focus:outline-none focus:border-indigo-500"
+              />
+
+              <button
+                type="submit"
+                disabled={staffLoading || !staffPin}
+                className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/30 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {staffLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Authorize & Print</span>
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="pt-1">
+              <a
+                href="/admin"
+                className="text-[11px] text-indigo-400 hover:underline"
+              >
+                Authorize this device permanently at /admin ➔
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

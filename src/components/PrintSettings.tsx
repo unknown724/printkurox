@@ -5,7 +5,7 @@ import { Minus, Plus, Layers, Palette, Copy, FileSpreadsheet } from 'lucide-reac
 import { parsePageRange } from '@/lib/pdf-utils';
 
 export interface PrintSettingsState {
-  colorMode: 'bw' | 'color';
+  colorMode: 'bw' | 'color' | 'custom';
   isDuplex: boolean;
   copies: number;
   pageRangeType: 'all' | 'custom';
@@ -16,9 +16,11 @@ interface PrintSettingsProps {
   totalPages: number;
   settings: PrintSettingsState;
   onChange: (newSettings: PrintSettingsState) => void;
+  bwCount?: number;
+  colorCount?: number;
 }
 
-export function PrintSettings({ totalPages, settings, onChange }: PrintSettingsProps) {
+export function PrintSettings({ totalPages, settings, onChange, bwCount, colorCount }: PrintSettingsProps) {
   const [rangeInput, setRangeInput] = useState(settings.customPageRange);
 
   const update = (partial: Partial<PrintSettingsState>) => {
@@ -39,7 +41,11 @@ export function PrintSettings({ totalPages, settings, onChange }: PrintSettingsP
             <span>Color Mode</span>
           </div>
           <span className="text-[11px] text-slate-400">
-            {settings.colorMode === 'bw' ? '₹4 / ₹6 per sheet' : '₹7 / ₹10 per sheet'}
+            {settings.colorMode === 'custom'
+              ? `${bwCount || 0} B&W (₹4) + ${colorCount || 0} Color (₹7)`
+              : settings.colorMode === 'bw'
+              ? '₹4 / ₹6 per sheet'
+              : '₹7 / ₹10 per sheet'}
           </span>
         </div>
 
@@ -62,7 +68,7 @@ export function PrintSettings({ totalPages, settings, onChange }: PrintSettingsP
             onClick={() => update({ colorMode: 'color' })}
             className={`flex items-center justify-center space-x-2 py-3 px-3 rounded-xl border text-sm font-medium transition-all ${
               settings.colorMode === 'color'
-                ? 'border-indigo-500 bg-indigo-600/20 text-white shadow-sm shadow-indigo-500/20'
+                ? 'border-pink-500 bg-pink-600/20 text-white shadow-sm shadow-pink-500/20'
                 : 'border-white/5 bg-slate-900/40 text-slate-400 hover:text-white hover:border-white/10'
             }`}
           >
@@ -70,7 +76,18 @@ export function PrintSettings({ totalPages, settings, onChange }: PrintSettingsP
             <span>Color Print</span>
           </button>
         </div>
+
+        {/* Custom Mixed Indicator if user has mixed pages */}
+        {settings.colorMode === 'custom' && (
+          <div className="mt-2.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-between text-xs">
+            <span className="text-indigo-300 font-medium">⚡ Mixed Custom Mode Active</span>
+            <span className="text-slate-400 text-[11px]">
+              Tap above to force all B&W or all Color
+            </span>
+          </div>
+        )}
       </div>
+
 
       {/* 2. Print Sides (Single vs Duplex) */}
       <div className="glass-card rounded-2xl p-4">

@@ -42,6 +42,16 @@ export async function getDownloadUrl(key: string, expiresIn = 900) {
   return await getSignedUrl(s3, command, { expiresIn });
 }
 
+export async function getFileFromR2(key: string) {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+  });
+  const res = await s3.send(command);
+  return res.Body;
+}
+
+
 export async function deleteFromR2(key: string) {
   const command = new DeleteObjectCommand({
     Bucket: BUCKET_NAME,

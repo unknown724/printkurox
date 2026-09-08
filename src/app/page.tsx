@@ -3,13 +3,13 @@
 import React, { useState } from 'react';
 import { FileUpload, UploadedBatchData } from '@/components/FileUpload';
 import { PrintSettings, PrintSettingsState } from '@/components/PrintSettings';
-import { PageVisualizer } from '@/components/PageVisualizer';
 import { CostSummary } from '@/components/CostSummary';
+import { PageVisualizer } from '@/components/PageVisualizer';
+import { AdvancedSettings, AdvancedPrintOptions } from '@/components/AdvancedSettings';
 import { calculatePricing, PageConfig } from '@/lib/pricing';
-import { parsePageRange } from '@/lib/pdf-utils';
-import { Sparkles, Shield, Zap, HelpCircle, SlidersHorizontal, MapPin } from 'lucide-react';
+import { SlidersHorizontal, Sparkles, MapPin, HelpCircle, Zap, Shield } from 'lucide-react';
 
-export default function Home() {
+export default function HomePage() {
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
@@ -19,6 +19,12 @@ export default function Home() {
     copies: 1,
     pageRangeType: 'all',
     customPageRange: 'All',
+  });
+  const [advancedOptions, setAdvancedOptions] = useState<AdvancedPrintOptions>({
+    scaling: 'fit',
+    quality: 'standard',
+    margins: 'standard',
+    collate: true,
   });
   const [showRatesModal, setShowRatesModal] = useState(false);
 
@@ -30,6 +36,7 @@ export default function Home() {
         pageNumber: i + 1,
         colorMode: settings.colorMode === 'color' ? 'color' : 'bw',
         included: true,
+        orientation: orientation,
       }));
       setPageConfigs(initialConfigs);
     } else {
@@ -37,12 +44,32 @@ export default function Home() {
     }
   };
 
-  // Synchronize settings color mode if user changes it at global level
+  // Two-way sync: when pages are customized in PageVisualizer
+  const handlePageConfigsChange = (updated: PageConfig[]) => {
+    setPageConfigs(updated);
+
+    const included = updated.filter((p) => p.included);
+    if (included.length > 0) {
+      const allColor = included.every((p) => p.colorMode === 'color');
+      const allBw = included.every((p) => p.colorMode === 'bw');
+
+      if (allColor) {
+        setSettings((prev) => ({ ...prev, colorMode: 'color' }));
+      } else if (allBw) {
+        setSettings((prev) => ({ ...prev, colorMode: 'bw' }));
+      } else {
+        setSettings((prev) => ({ ...prev, colorMode: 'custom' }));
+      }
+    }
+  };
+
+  // Two-way sync: when user clicks global color mode or settings in PrintSettings
   const handleSettingsChange = (newSettings: PrintSettingsState) => {
-    if (newSettings.colorMode !== settings.colorMode) {
+    if (newSettings.colorMode !== settings.colorMode && newSettings.colorMode !== 'custom') {
+      const targetMode = newSettings.colorMode;
       const updated = pageConfigs.map((p) => ({
         ...p,
-        colorMode: newSettings.colorMode,
+        colorMode: targetMode,
       }));
       setPageConfigs(updated);
     }
@@ -57,6 +84,9 @@ export default function Home() {
     copies: settings.copies,
     pageConfigs: pageConfigs.length > 0 ? pageConfigs : undefined,
   });
+
+  const bwCount = pageConfigs.filter((p) => p.included && p.colorMode === 'bw').length;
+  const colorCount = pageConfigs.filter((p) => p.included && p.colorMode === 'color').length;
 
   return (
     <div className="space-y-5 pb-10">
@@ -152,14 +182,16 @@ export default function Home() {
             <PageVisualizer
               totalPages={uploadedBatch.totalPages}
               downloadUrl={uploadedBatch.downloadUrl}
+              fileKey={uploadedBatch.fileKey}
+              rawFiles={uploadedBatch.rawFiles}
               pageConfigs={pageConfigs}
-              onChange={(updated) => setPageConfigs(updated)}
+              onChange={handlePageConfigsChange}
               orientation={orientation}
               onOrientationChange={(orient) => setOrientation(orient)}
             />
           </section>
 
-          {/* Print Preferences (Sides, Copies) */}
+          {/* Print Preferences (Sides, Copies, Color Sync) */}
           <section className="space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-300 uppercase tracking-wider px-1">
               <span className="flex items-center gap-1.5">
@@ -172,6 +204,15 @@ export default function Home() {
               totalPages={uploadedBatch.totalPages}
               settings={settings}
               onChange={handleSettingsChange}
+              bwCount={bwCount}
+              colorCount={colorCount}
+            />
+
+            {/* Advanced Settings Drawer for unique scenarios */}
+            <AdvancedSettings
+              options={advancedOptions}
+              onChange={(opts) => setAdvancedOptions(opts)}
+              copies={settings.copies}
             />
           </section>
 

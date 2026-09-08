@@ -29,6 +29,7 @@ export interface UploadedBatchData {
   fileCount: number;
   fileItems: FileItem[];
   downloadUrl: string;
+  rawFiles?: File[];
 }
 
 interface FileUploadProps {
@@ -96,6 +97,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         fileCount: result.fileCount,
         fileItems: result.fileItems || [],
         downloadUrl: result.downloadUrl,
+        rawFiles: newFileList,
       });
 
       setRawFiles(newFileList);
