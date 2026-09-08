@@ -152,14 +152,16 @@ export default function JobStatusPage({
         };
       case 'PRINTING_ODD':
         return {
-          title: 'Printing Pass 1 (Odd Pages)',
-          description: 'Printing front pages on EPSON L3210. Please stand by...',
+          title: job.isDuplex ? 'Printing Pass 1 (Front Sides)' : 'Printing Document...',
+          description: job.isDuplex
+            ? 'Printing front pages on EPSON L3210. Please stand by...'
+            : 'Printing your document on EPSON L3210. Please stand by...',
           color: 'text-sky-400 border-sky-500/30 bg-sky-500/10',
           step: 2,
         };
       case 'AWAITING_FLIP':
         return {
-          title: 'Manual Duplex in Progress',
+          title: 'Double-Sided in Progress',
           description: 'Operator is flipping the paper stack for reverse side.',
           color: 'text-amber-400 border-amber-500/30 bg-amber-500/10',
           step: 2,
@@ -358,7 +360,7 @@ export default function JobStatusPage({
           <div className="flex justify-between text-slate-400 print:text-slate-600">
             <span>Sheet Layout</span>
             <span className="text-white font-medium print:text-black">
-              {job.isDuplex ? 'Double-Sided (Duplex)' : 'Single-Sided (Simplex)'}
+              {job.isDuplex ? 'Double-Sided' : 'Single-Sided'}
             </span>
           </div>
           <div className="flex justify-between text-slate-400 print:text-slate-600">

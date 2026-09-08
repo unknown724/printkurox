@@ -140,10 +140,10 @@ export function calculatePricing(input: PricingInput): PricingResult {
       }
 
       if (bwDuplexCount > 0) {
-        parts.unshift(`${bwDuplexCount} B&W Duplex Sheet${bwDuplexCount > 1 ? 's' : ''} (₹${RATES.bw.duplex} ea)`);
+        parts.unshift(`${bwDuplexCount} B&W Double-Sided Sheet${bwDuplexCount > 1 ? 's' : ''} (₹${RATES.bw.duplex} ea)`);
       }
       if (colorDuplexCount > 0) {
-        parts.unshift(`${colorDuplexCount} Color Duplex Sheet${colorDuplexCount > 1 ? 's' : ''} (₹${RATES.color.duplex} ea)`);
+        parts.unshift(`${colorDuplexCount} Color Double-Sided Sheet${colorDuplexCount > 1 ? 's' : ''} (₹${RATES.color.duplex} ea)`);
       }
     }
 
@@ -183,7 +183,7 @@ export function calculatePricing(input: PricingInput): PricingResult {
 
     const parts: string[] = [];
     if (duplexSheets > 0) {
-      parts.push(`${duplexSheets} Duplex Sheet${duplexSheets > 1 ? 's' : ''} (₹${rates.duplex} ea)`);
+      parts.push(`${duplexSheets} Double-Sided Sheet${duplexSheets > 1 ? 's' : ''} (₹${rates.duplex} ea)`);
     }
     if (singleSheets > 0) {
       parts.push(`${singleSheets} Single Sheet (₹${rates.single})`);

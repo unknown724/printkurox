@@ -9,6 +9,7 @@ import {
   MAX_ADMIN_DEVICES,
 } from '@/lib/admin-auth';
 import { parseUserAgentDetails } from '@/lib/device-detection';
+import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,14 +42,33 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { pin, customDeviceName } = await req.json();
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
 
-    if (!validateAdminPin(pin)) {
-      return NextResponse.json({ error: 'Invalid admin passcode' }, { status: 401 });
+    // 1. Check rate limit before validating PIN
+    const rateCheck = await checkRateLimit(ip);
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        { error: rateCheck.message },
+        { 
+          status: 429,
+          headers: { 'Retry-After': String(rateCheck.retryAfterSeconds || 900) }
+        }
+      );
     }
 
+    const { pin, customDeviceName } = await req.json();
+
+    // 2. Validate PIN
+    if (!validateAdminPin(pin)) {
+      const failResult = await recordFailedAttempt(ip);
+      const status = failResult.locked ? 429 : 401;
+      return NextResponse.json({ error: failResult.message }, { status });
+    }
+
+    // 3. Reset rate limit counters on successful authentication
+    await resetFailedAttempts(ip);
+
     const ua = req.headers.get('user-agent') || '';
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1';
     const friendlyName = customDeviceName || parseUserAgentDetails(ua).fullName;
 
     const currentDeviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;

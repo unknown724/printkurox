@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
       colorMode = 'bw',
       isDuplex = false,
       copies = 1,
+      orientation = 'portrait',
       pageConfigs,
     } = body;
 
@@ -55,9 +56,9 @@ export async function POST(req: NextRequest) {
 
     const amountInPaise = Math.round(pricing.totalPrice * 100);
 
-    // 3. Generate unique pickup code (guaranteed unique among today's jobs)
+    // 3. Generate unique pickup code (guaranteed unique among active non-completed jobs)
     let pickupCode = generateRandomPickupCode();
-    for (let attempts = 0; attempts < 5; attempts++) {
+    for (let attempts = 0; attempts < 10; attempts++) {
       const existing = await queryD1<{ id: string }>(
         "SELECT id FROM print_jobs WHERE pickup_code = ? AND status != 'COMPLETED' LIMIT 1",
         [pickupCode]
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
             pickupCode,
             file_name: fileName,
             copies: String(copies),
-            pages: String(totalBillablePages),
+            pages: String(activePagesCount),
             is_duplex: String(isDuplex),
           },
         });
@@ -112,8 +113,9 @@ export async function POST(req: NextRequest) {
       `INSERT INTO print_jobs (
         id, pickup_code, file_key, file_name, total_pages, page_range,
         color_mode, is_duplex, copies, duplex_sheets, single_sheets,
-        total_price, order_id, status, created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        total_price, order_id, status, created_at, expires_at,
+        orientation, page_configs
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         jobId,
         pickupCode,
@@ -131,6 +133,8 @@ export async function POST(req: NextRequest) {
         'PENDING_PAYMENT',
         createdAt,
         expiresAt,
+        orientation,
+        pageConfigs ? JSON.stringify(pageConfigs) : null,
       ]
     );
 

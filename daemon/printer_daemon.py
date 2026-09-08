@@ -41,6 +41,7 @@ SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPD
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', '2'))
 TEMP_DIR = os.path.join(os.path.dirname(__file__), 'temp_prints')
 RETENTION_MINUTES = 15
+HEARTBEAT_INTERVAL_SECONDS = 30  # Write heartbeat to D1 this often
 
 # Ensure local temp directory exists
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -129,6 +130,14 @@ from PIL import Image
 
 def ensure_printable_pdf(file_path, orientation=None):
     """If file is an image (jpg, png, etc.), convert it to A4 PDF for SumatraPDF respecting orientation."""
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(5)
+            if header.startswith(b'%PDF'):
+                return file_path
+    except Exception:
+        pass
+
     ext = os.path.splitext(file_path)[1].lower()
     if ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp']:
         pdf_path = os.path.splitext(file_path)[0] + "_converted.pdf"
@@ -240,6 +249,12 @@ def process_single_sided_job(job, local_file_path):
     )
     if success:
         update_job_status(job["id"], "COMPLETED")
+        # Clean up Cloudflare R2 uploaded file to free cloud storage and protect privacy
+        try:
+            s3_client.delete_object(Bucket=R2_BUCKET_NAME, Key=job["file_key"])
+            log(f"Purged remote file from R2: {job['file_key']}", "INFO")
+        except Exception as del_err:
+            log(f"Note: Could not purge {job['file_key']} from R2: {del_err}", "WARN")
     else:
         update_job_status(job["id"], "FAILED")
 
@@ -318,6 +333,11 @@ def process_manual_duplex_job(job, local_file_path):
         update_job_status(job["id"], "COMPLETED")
         log(f"Job {job['pickup_code']} manual duplex finished successfully!", "SUCCESS")
         play_chime()
+        try:
+            s3_client.delete_object(Bucket=R2_BUCKET_NAME, Key=job["file_key"])
+            log(f"Purged remote file from R2: {job['file_key']}", "INFO")
+        except Exception as del_err:
+            log(f"Note: Could not purge {job['file_key']} from R2: {del_err}", "WARN")
     else:
         update_job_status(job["id"], "FAILED")
 
@@ -339,6 +359,28 @@ def purge_old_local_files():
                     log(f"Error purging file {fname}: {e}", "WARN")
 
 # =============================================================================
+# HEARTBEAT — Lets the frontend know the daemon is alive
+# =============================================================================
+def write_heartbeat():
+    """Upsert a single row into daemon_heartbeat with the current UTC timestamp."""
+    try:
+        # Ensure table exists
+        query_d1("""
+            CREATE TABLE IF NOT EXISTS daemon_heartbeat (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        query_d1("""
+            INSERT INTO daemon_heartbeat (id, updated_at)
+            VALUES (1, datetime('now'))
+            ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now')
+        """)
+        log("Heartbeat written to D1", "INFO")
+    except Exception as hb_err:
+        log(f"Heartbeat write failed: {hb_err}", "WARN")
+
+# =============================================================================
 # MAIN DAEMON LOOP
 # =============================================================================
 def main():
@@ -355,6 +397,10 @@ def main():
     else:
         log("SumatraPDF not found in Program Files. (Will run in simulation mode)", "WARN")
     log(f"Polling Cloudflare D1 every {POLL_INTERVAL_SECONDS}s...", "INFO")
+
+    # Write initial heartbeat so the frontend sees us immediately
+    write_heartbeat()
+    last_heartbeat = time.time()
 
     while True:
         try:
@@ -375,8 +421,17 @@ def main():
 
                     log(f"Processing Job {pickup_code} ({file_name}) — {total_pages} pages, Duplex: {is_duplex}")
 
+                    # Atomically mark job as PRINTING_ODD to claim it from PAID queue
+                    try:
+                        update_job_status(job_id, "PRINTING_ODD")
+                    except Exception as claim_err:
+                        log(f"Failed to claim job {job_id[:8]}: {claim_err}", "WARN")
+
                     # 1. Download file from Cloudflare R2
-                    local_filename = f"{pickup_code.replace('#', '')}_{job_id[:6]}_{os.path.basename(file_name)}"
+                    base_name = os.path.basename(file_name)
+                    if file_key.lower().endswith('.pdf') and not base_name.lower().endswith('.pdf'):
+                        base_name += '.pdf'
+                    local_filename = f"{pickup_code.replace('#', '')}_{job_id[:6]}_{base_name}"
                     local_path = os.path.join(TEMP_DIR, local_filename)
 
                     try:
@@ -387,8 +442,9 @@ def main():
                         update_job_status(job_id, "FAILED")
                         continue
 
-                    # Ensure images are converted to PDF for clean printing
-                    printable_path = ensure_printable_pdf(local_path)
+                    # Ensure images are converted to PDF for clean printing respecting orientation
+                    orientation = job.get("orientation") or "portrait"
+                    printable_path = ensure_printable_pdf(local_path, orientation=orientation)
 
                     # 2. Print depending on Duplex mode
                     if is_duplex and total_pages > 1:
@@ -398,6 +454,12 @@ def main():
 
             # Purge local cache periodically
             purge_old_local_files()
+
+            # Write heartbeat every HEARTBEAT_INTERVAL_SECONDS
+            now = time.time()
+            if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                write_heartbeat()
+                last_heartbeat = now
 
         except requests.exceptions.RequestException as net_err:
             log(f"Network error communicating with Cloudflare: {net_err}. Retrying in 5s...", "WARN")

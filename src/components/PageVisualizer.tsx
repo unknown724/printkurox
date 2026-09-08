@@ -39,9 +39,11 @@ export function PageVisualizer({
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [zoomPage, setZoomPage] = useState<number | null>(null);
 
-  // Load document and image pages
+  // Load document and image pages — progressive: each thumbnail appears as soon as it renders
   useEffect(() => {
     let isMounted = true;
+    // Reset thumbnails when source changes
+    setThumbnails({});
 
     async function loadPages() {
       try {
@@ -85,7 +87,7 @@ export function PageVisualizer({
                     configsChanged = true;
                   }
 
-                  const viewport = page.getViewport({ scale: 0.5 });
+                  const viewport = page.getViewport({ scale: 0.4 });
                   const canvas = document.createElement('canvas');
                   const context = canvas.getContext('2d');
                   canvas.height = viewport.height;
@@ -93,7 +95,12 @@ export function PageVisualizer({
 
                   if (context) {
                     await page.render({ canvasContext: context, viewport }).promise;
-                    newThumbs[currentPageIdx] = canvas.toDataURL('image/jpeg', 0.85);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+                    newThumbs[currentPageIdx] = dataUrl;
+                    // Progressive: show each thumbnail immediately as it renders
+                    if (isMounted) {
+                      setThumbnails((prev) => ({ ...prev, [currentPageIdx]: dataUrl }));
+                    }
                   }
                   currentPageIdx++;
                 }
@@ -102,23 +109,30 @@ export function PageVisualizer({
                 currentPageIdx++;
               }
             } else {
-              // Direct Image file (PNG, JPG, WebP)
+              // Direct Image file (PNG, JPG, WebP) — show immediately
               if (currentPageIdx <= totalPages) {
                 const objectUrl = URL.createObjectURL(file);
                 newThumbs[currentPageIdx] = objectUrl;
+                const capturedIdx = currentPageIdx; // capture for async callback
 
-                // Detect natural image dimensions
+                // Show image thumbnail immediately (no render needed)
+                if (isMounted) {
+                  setThumbnails((prev) => ({ ...prev, [capturedIdx]: objectUrl }));
+                }
+
+                // Detect natural image dimensions asynchronously
                 const img = new Image();
                 img.onload = () => {
+                  if (!isMounted) return; // guard stale closure
                   const isImgLandscape = img.naturalWidth > img.naturalHeight;
-                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === currentPageIdx);
+                  const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === capturedIdx);
                   if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
                     updatedConfigs[targetIdx] = {
                       ...updatedConfigs[targetIdx],
                       orientation: isImgLandscape ? 'landscape' : 'portrait',
                       rotation: isImgLandscape ? 90 : 0,
                     };
-                    onChange([...updatedConfigs]);
+                    configsChanged = true;
                   }
                 };
                 img.src = objectUrl;
@@ -128,11 +142,10 @@ export function PageVisualizer({
             }
           }
 
-          if (isMounted) {
-            setThumbnails(newThumbs);
-            if (configsChanged) {
-              onChange(updatedConfigs);
-            }
+          // Wait a tick for any pending img.onload orientation callbacks
+          await new Promise((r) => setTimeout(r, 50));
+          if (isMounted && configsChanged) {
+            onChange(updatedConfigs);
           }
           return;
         }
@@ -148,7 +161,7 @@ export function PageVisualizer({
             if (!isMounted) break;
             try {
               const page = await pdf.getPage(pageNum);
-              const viewport = page.getViewport({ scale: 0.45 });
+              const viewport = page.getViewport({ scale: 0.4 });
               const canvas = document.createElement('canvas');
               const context = canvas.getContext('2d');
               canvas.height = viewport.height;
@@ -156,15 +169,16 @@ export function PageVisualizer({
 
               if (context) {
                 await page.render({ canvasContext: context, viewport }).promise;
-                newThumbs[pageNum] = canvas.toDataURL('image/jpeg', 0.85);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+                newThumbs[pageNum] = dataUrl;
+                // Progressive: render each page as it's ready
+                if (isMounted) {
+                  setThumbnails((prev) => ({ ...prev, [pageNum]: dataUrl }));
+                }
               }
             } catch (err) {
               console.warn(`Fallback render error for page ${pageNum}:`, err);
             }
-          }
-
-          if (isMounted) {
-            setThumbnails(newThumbs);
           }
         }
       } catch (err) {
@@ -459,9 +473,9 @@ export function PageVisualizer({
               >
                 {/* Physical White Paper Sheet */}
                 <div
-                  className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black/90 rounded-xs border border-slate-300/80 transition-all duration-300 ${
+                  className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black/90 rounded-xs border border-slate-300/80 transition-all duration-300 overflow-hidden ${
                     isLandscape
-                      ? 'w-[185px] sm:w-[215px] aspect-[297/210]'
+                      ? 'w-[185px] sm:w-[220px] aspect-[297/210]'
                       : 'w-[125px] sm:w-[135px] aspect-[210/297]'
                   }`}
                 >
@@ -473,17 +487,33 @@ export function PageVisualizer({
                     {isLandscape ? 'A4 297×210' : 'A4 210×297'}
                   </span>
 
+                  {/* B&W or Color Badge on Paper */}
+                  <span className={`absolute top-1 left-1.5 text-[8px] font-mono font-black uppercase tracking-wider px-1 py-0.2 rounded ${
+                    config.colorMode === 'bw' ? 'bg-slate-200 text-slate-700' : 'bg-pink-100 text-pink-700'
+                  }`}>
+                    {config.colorMode === 'bw' ? 'B&W' : 'Color'}
+                  </span>
+
                   {thumb ? (
                     <div className="w-full h-full p-2 flex items-center justify-center overflow-hidden">
-                      <img
-                        src={thumb}
-                        alt={`Page ${config.pageNumber}`}
+                      <div
+                        className="flex items-center justify-center transition-all duration-300"
                         style={{
-                          transform: isLandscape ? `rotate(${rot}deg) scale(0.707)` : `rotate(${rot}deg)`,
+                          width: (rot === 90 || rot === 270) ? 'calc(100% * 210 / 297)' : '100%',
+                          height: (rot === 90 || rot === 270) ? 'calc(100% * 297 / 210)' : '100%',
+                          transform: rot ? `rotate(${rot}deg)` : undefined,
                           transformOrigin: 'center center',
                         }}
-                        className="object-contain max-w-full max-h-full transition-transform duration-300 select-none"
-                      />
+                      >
+                        <img
+                          src={thumb}
+                          alt={`Page ${config.pageNumber}`}
+                          style={{
+                            filter: config.colorMode === 'bw' ? 'grayscale(100%) contrast(110%) brightness(98%)' : 'none',
+                          }}
+                          className="object-contain max-w-full max-h-full select-none transition-all duration-200"
+                        />
+                      </div>
                     </div>
                   ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 space-y-1">
@@ -493,8 +523,27 @@ export function PageVisualizer({
                   )}
                 </div>
 
+                {/* Prominent Excluded Overlay */}
+                {!config.included && (
+                  <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center p-3 text-center">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-rose-400 bg-rose-500/15 border border-rose-500/30 px-2.5 py-1 rounded-lg mb-2 shadow-sm">
+                      🚫 Excluded from Print
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePageInclusion(config.pageNumber);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold shadow-md shadow-indigo-600/30 transition-all active:scale-95"
+                    >
+                      + Include Page
+                    </button>
+                  </div>
+                )}
+
                 {/* Zoom indicator on hover */}
-                {thumb && (
+                {thumb && config.included && (
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
                     <div className="p-2 rounded-full bg-slate-900/90 border border-white/20 shadow-lg">
                       <Maximize2 className="w-4 h-4 text-indigo-300" />
@@ -504,30 +553,40 @@ export function PageVisualizer({
               </div>
 
               {/* Bottom Color Selector Pills */}
-              <div className="p-1.5 bg-black/30 border-t border-white/5 grid grid-cols-2 gap-1">
-                <button
-                  type="button"
-                  onClick={() => setPageColor(config.pageNumber, 'bw')}
-                  className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                    config.colorMode === 'bw'
-                      ? 'bg-slate-700 text-white shadow-sm border border-slate-500/40'
-                      : 'text-slate-400 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  B&W ₹4
-                </button>
+              <div className="p-1.5 bg-black/30 border-t border-white/5">
+                {config.included ? (
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setPageColor(config.pageNumber, 'bw')}
+                      className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${
+                        config.colorMode === 'bw'
+                          ? 'bg-slate-700 text-white shadow-sm border border-slate-500/40'
+                          : 'text-slate-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                      <span>B&W ₹4</span>
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => setPageColor(config.pageNumber, 'color')}
-                  className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                    config.colorMode === 'color'
-                      ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white shadow-sm shadow-pink-600/30'
-                      : 'text-slate-400 hover:text-pink-300 hover:bg-white/5'
-                  }`}
-                >
-                  Color ₹7
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => setPageColor(config.pageNumber, 'color')}
+                      className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${
+                        config.colorMode === 'color'
+                          ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white shadow-sm shadow-pink-600/30'
+                          : 'text-slate-400 hover:text-pink-300 hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-pink-400" />
+                      <span>Color ₹7</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-1 text-center text-[10px] text-slate-500 font-medium">
+                    Skipped • Will not print
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -606,8 +665,8 @@ export function PageVisualizer({
                 const isLand = rot === 90 || rot === 270;
                 return (
                   <div
-                    className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black rounded-xs border border-slate-300 transition-all duration-300 ${
-                      isLand ? 'w-[85%] aspect-[297/210] max-h-[65vh]' : 'w-[58%] aspect-[210/297] max-h-[65vh]'
+                    className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black rounded-xs border border-slate-300 transition-all duration-300 overflow-hidden ${
+                      isLand ? 'w-[88%] aspect-[297/210] max-h-[65vh]' : 'w-[58%] aspect-[210/297] max-h-[65vh]'
                     }`}
                   >
                     {/* Margin guide */}
@@ -615,16 +674,32 @@ export function PageVisualizer({
                     <span className="absolute bottom-2 right-2 text-[9px] font-mono font-bold text-slate-400 uppercase">
                       {isLand ? 'A4 Landscape (297×210 mm)' : 'A4 Portrait (210×297 mm)'}
                     </span>
-                    <div className="w-full h-full p-3 flex items-center justify-center overflow-hidden">
-                      <img
-                        src={thumbnails[zoomPage]}
-                        alt={`Zoomed Page ${zoomPage}`}
+
+                    <span className={`absolute top-2 left-2 text-[10px] font-mono font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-sm ${
+                      currConf?.colorMode === 'bw' ? 'bg-slate-200 text-slate-700' : 'bg-pink-100 text-pink-700'
+                    }`}>
+                      {currConf?.colorMode === 'bw' ? 'Black & White' : 'Full Color'}
+                    </span>
+
+                    <div className="w-full h-full p-4 flex items-center justify-center overflow-hidden">
+                      <div
+                        className="flex items-center justify-center transition-all duration-300"
                         style={{
-                          transform: isLand ? `rotate(${rot}deg) scale(0.707)` : `rotate(${rot}deg)`,
+                          width: (rot === 90 || rot === 270) ? 'calc(100% * 210 / 297)' : '100%',
+                          height: (rot === 90 || rot === 270) ? 'calc(100% * 297 / 210)' : '100%',
+                          transform: rot ? `rotate(${rot}deg)` : undefined,
                           transformOrigin: 'center center',
                         }}
-                        className="max-h-full max-w-full object-contain select-none transition-transform duration-300"
-                      />
+                      >
+                        <img
+                          src={thumbnails[zoomPage]}
+                          alt={`Zoomed Page ${zoomPage}`}
+                          style={{
+                            filter: currConf?.colorMode === 'bw' ? 'grayscale(100%) contrast(110%) brightness(98%)' : 'none',
+                          }}
+                          className="max-h-full max-w-full object-contain select-none transition-all duration-200"
+                        />
+                      </div>
                     </div>
                   </div>
                 );

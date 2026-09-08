@@ -1,0 +1,27 @@
+
++------------------------------------------------------------+
+|             PrintKurox -- Windows Print Daemon             |
+|          Manual Duplex (Scenario B) + Silent Print         |
++------------------------------------------------------------+
+
+[23:04:59] [94m[INFO][0m Printer Target: EPSON L3210 Series
+[23:04:59] [92m[SUCCESS][0m SumatraPDF Engine: C:\Users\Richard Konsam\Desktop\DEVANANDA\autoprint\daemon\sumatra\SumatraPDF-3.5.2-64.exe
+[23:04:59] [94m[INFO][0m Polling Cloudflare D1 every 2s...
+[23:05:00] [94m[INFO][0m Heartbeat written to D1
+[23:05:33] [94m[INFO][0m Heartbeat written to D1
+[23:06:05] [94m[INFO][0m Heartbeat written to D1
+[23:06:35] [94m[INFO][0m Heartbeat written to D1
+[23:07:07] [94m[INFO][0m Heartbeat written to D1
+[23:07:38] [94m[INFO][0m Heartbeat written to D1
+[23:08:09] [94m[INFO][0m Heartbeat written to D1
+[23:08:41] [94m[INFO][0m Heartbeat written to D1
+[23:09:17] [94m[INFO][0m Heartbeat written to D1
+[23:09:48] [94m[INFO][0m Heartbeat written to D1
+[23:10:19] [94m[INFO][0m Heartbeat written to D1
+[23:10:50] [94m[INFO][0m Heartbeat written to D1
+[23:11:21] [94m[INFO][0m Heartbeat written to D1
+[23:11:52] [94m[INFO][0m Heartbeat written to D1
+[23:12:22] [94m[INFO][0m Heartbeat written to D1
+[23:12:53] [94m[INFO][0m Heartbeat written to D1
+[23:13:24] [94m[INFO][0m Heartbeat written to D1
+[23:13:55] [94m[INFO][0m Heartbeat written to D1

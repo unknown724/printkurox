@@ -38,6 +38,93 @@ export function parsePageRange(rangeStr: string, maxPages: number): number[] {
 }
 
 /**
+ * Converts an array of page numbers e.g. [1, 2, 3, 5] to "1-3, 5"
+ */
+export function pagesToRangeString(pages: number[]): string {
+  if (!pages || pages.length === 0) return '';
+  const sorted = Array.from(new Set(pages)).sort((a, b) => a - b);
+  const ranges: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const curr = sorted[i];
+    if (curr === prev + 1) {
+      prev = curr;
+    } else {
+      ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+      start = curr;
+      prev = curr;
+    }
+  }
+  ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+  return ranges.join(', ');
+}
+
+/**
+ * Validates and parses user-entered page range with clear error messages
+ */
+export function validatePageRangeInput(input: string, maxPages: number): {
+  isValid: boolean;
+  pages: number[];
+  error?: string;
+} {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { isValid: false, pages: [], error: 'Please specify pages to print' };
+  }
+  if (trimmed.toLowerCase() === 'all') {
+    return { isValid: true, pages: Array.from({ length: maxPages }, (_, i) => i + 1) };
+  }
+
+  const parts = trimmed.split(',');
+  const pagesSet = new Set<number>();
+
+  for (const part of parts) {
+    const p = part.trim();
+    if (!p) continue;
+    if (p.includes('-')) {
+      const sides = p.split('-');
+      if (sides.length !== 2) {
+        return { isValid: false, pages: [], error: `Invalid range format: "${p}"` };
+      }
+      const start = parseInt(sides[0].trim(), 10);
+      const end = parseInt(sides[1].trim(), 10);
+      if (isNaN(start) || isNaN(end)) {
+        return { isValid: false, pages: [], error: `Invalid numbers in range "${p}"` };
+      }
+      if (start > maxPages || end > maxPages) {
+        return { isValid: false, pages: [], error: `Page number exceeds total pages (${maxPages})` };
+      }
+      if (start < 1 || end < 1) {
+        return { isValid: false, pages: [], error: `Page numbers must be 1 or higher` };
+      }
+      const from = Math.min(start, end);
+      const to = Math.max(start, end);
+      for (let i = from; i <= to; i++) pagesSet.add(i);
+    } else {
+      const pageNum = parseInt(p, 10);
+      if (isNaN(pageNum)) {
+        return { isValid: false, pages: [], error: `"${p}" is not a valid number` };
+      }
+      if (pageNum > maxPages) {
+        return { isValid: false, pages: [], error: `Page ${pageNum} exceeds total pages (${maxPages})` };
+      }
+      if (pageNum < 1) {
+        return { isValid: false, pages: [], error: `Page numbers must be 1 or higher` };
+      }
+      pagesSet.add(pageNum);
+    }
+  }
+
+  const pages = Array.from(pagesSet).sort((a, b) => a - b);
+  if (pages.length === 0) {
+    return { isValid: false, pages: [], error: 'No valid pages selected' };
+  }
+  return { isValid: true, pages };
+}
+
+/**
  * Counts the pages in an ArrayBuffer or Uint8Array of a PDF file using pdf-lib
  */
 export async function getPdfPageCount(buffer: ArrayBuffer | Uint8Array): Promise<number> {

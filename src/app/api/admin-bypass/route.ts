@@ -5,15 +5,16 @@ import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange } from '@/lib/pdf-utils';
 import { validateAdminPin, verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
+import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
     const deviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
     const { isValid: isDeviceAdmin } = await verifyAdminDevice(deviceId || '');
-
 
     const body = await req.json();
     const {
@@ -24,18 +25,34 @@ export async function POST(req: NextRequest) {
       colorMode = 'bw',
       isDuplex = false,
       copies = 1,
+      orientation = 'portrait',
       pageConfigs,
       pin,
     } = body;
 
-    const isPinValid = Boolean(pin && validateAdminPin(pin));
+    // If not already an authorized device, we must validate PIN with rate-limit protection
+    if (!isDeviceAdmin) {
+      // 1. Check rate limit
+      const rateCheck = await checkRateLimit(ip);
+      if (!rateCheck.allowed) {
+        return NextResponse.json(
+          { error: rateCheck.message },
+          { 
+            status: 429,
+            headers: { 'Retry-After': String(rateCheck.retryAfterSeconds || 900) }
+          }
+        );
+      }
 
-    // Must have either authorized device cookie or valid PIN
-    if (!isDeviceAdmin && !isPinValid) {
-      return NextResponse.json(
-        { error: 'Unauthorized. Valid admin credentials required.' },
-        { status: 401 }
-      );
+      // 2. Check PIN
+      if (!pin || !validateAdminPin(pin)) {
+        const failResult = await recordFailedAttempt(ip);
+        const status = failResult.locked ? 429 : 401;
+        return NextResponse.json({ error: failResult.message }, { status });
+      }
+
+      // 3. Reset rate limits on success
+      await resetFailedAttempts(ip);
     }
 
     if (!fileKey || !fileName || !docPages) {
@@ -69,7 +86,7 @@ export async function POST(req: NextRequest) {
 
     // Generate unique pickup code
     let pickupCode = generateRandomPickupCode();
-    for (let attempts = 0; attempts < 5; attempts++) {
+    for (let attempts = 0; attempts < 10; attempts++) {
       const existing = await queryD1<{ id: string }>(
         `SELECT id FROM print_jobs WHERE pickup_code = ? AND created_at >= datetime('now', '-24 hours') LIMIT 1`,
         [pickupCode]
@@ -83,13 +100,14 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
     const adminPaymentId = `ADMIN_BYPASS_${Date.now()}`;
 
-    // Insert directly as PAID into Cloudflare D1
+    // Insert directly as PAID into Cloudflare D1 with orientation and page_configs
     await executeD1(
       `INSERT INTO print_jobs (
         id, pickup_code, file_key, file_name, total_pages, page_range,
         color_mode, is_duplex, copies, duplex_sheets, single_sheets,
-        total_price, status, payment_id, created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        total_price, status, payment_id, created_at, expires_at,
+        orientation, page_configs
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         jobId,
         pickupCode,
@@ -107,6 +125,8 @@ export async function POST(req: NextRequest) {
         adminPaymentId,
         now.toISOString(),
         expiresAt.toISOString(),
+        orientation,
+        pageConfigs ? JSON.stringify(pageConfigs) : null,
       ]
     );
 

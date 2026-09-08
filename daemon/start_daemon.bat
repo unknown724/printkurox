@@ -1,16 +1,6 @@
 @echo off
-title PrintKurox — Windows Print Daemon
-color 0b
-echo ===================================================
-echo        PrintKurox — Shop Laptop Print Daemon
-echo ===================================================
-echo Starting print polling engine...
-echo.
-
-python printer_daemon.py
-
-if errorlevel 1 (
-    echo.
-    echo Daemon stopped with an error. Press any key to restart or close.
-    pause
-)
+cd /d "%~dp0"
+title PrintKurox Daemon
+echo Starting PrintKurox Cloud Printer Daemon...
+python -u printer_daemon.py
+pause
