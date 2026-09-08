@@ -42,6 +42,15 @@ export async function getDownloadUrl(key: string, expiresIn = 900) {
   return await getSignedUrl(s3, command, { expiresIn });
 }
 
+export async function getUploadPresignedUrl(key: string, contentType: string, expiresIn = 900) {
+  const command = new PutObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+    ContentType: contentType,
+  });
+  return await getSignedUrl(s3, command, { expiresIn });
+}
+
 export async function getFileFromR2(key: string) {
   const command = new GetObjectCommand({
     Bucket: BUCKET_NAME,
@@ -49,6 +58,18 @@ export async function getFileFromR2(key: string) {
   });
   const res = await s3.send(command);
   return res.Body;
+}
+
+export async function getFileBufferFromR2(key: string): Promise<Buffer> {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+  });
+  const res = await s3.send(command);
+  if (!res.Body) throw new Error(`Object not found: ${key}`);
+  // @ts-expect-error transformToByteArray exists on AWS SDK S3 stream in Node
+  const bytes = await res.Body.transformToByteArray();
+  return Buffer.from(bytes);
 }
 
 
