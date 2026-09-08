@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     isAdmin: isValid,
     deviceName: device?.device_name,
+    device,
     currentDeviceId,
   });
 }

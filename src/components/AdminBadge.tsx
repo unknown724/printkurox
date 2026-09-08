@@ -14,8 +14,9 @@ export function AdminBadge() {
       .then((d) => {
         if (d.isAdmin) {
           setIsAdmin(true);
-          if (d.device?.deviceName) {
-            setDeviceName(d.device.deviceName);
+          const name = d.deviceName || d.device?.device_name;
+          if (name) {
+            setDeviceName(name);
           }
         }
       })
