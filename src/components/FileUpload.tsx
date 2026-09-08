@@ -45,53 +45,93 @@ const IMAGE_COMPRESS_THRESHOLD = 1.5 * 1024 * 1024; // 1.5 MB
 
 async function compressImageFile(file: File): Promise<File> {
   // Only compress images, skip PDFs and docs
-  if (!file.type.startsWith('image/')) return file;
+  const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.name);
+  if (!isImage) return file;
   // Skip if already small enough
   if (file.size <= IMAGE_COMPRESS_THRESHOLD) return file;
 
   return new Promise((resolve) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
+    let resolved = false;
+    let objectUrl = '';
 
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-
-      let { naturalWidth: w, naturalHeight: h } = img;
-      if (w <= MAX_IMAGE_DIMENSION && h <= MAX_IMAGE_DIMENSION) {
-        resolve(file); // no resize needed
-        return;
+    const finish = (result: File) => {
+      if (!resolved) {
+        resolved = true;
+        if (objectUrl) {
+          try { URL.revokeObjectURL(objectUrl); } catch {}
+        }
+        resolve(result);
       }
-
-      // Scale down proportionally
-      if (w > h) {
-        h = Math.round((h * MAX_IMAGE_DIMENSION) / w);
-        w = MAX_IMAGE_DIMENSION;
-      } else {
-        w = Math.round((w * MAX_IMAGE_DIMENSION) / h);
-        h = MAX_IMAGE_DIMENSION;
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { resolve(file); return; }
-
-      ctx.drawImage(img, 0, 0, w, h);
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) { resolve(file); return; }
-          const newName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
-          const compressed = new File([blob], newName, { type: 'image/jpeg', lastModified: Date.now() });
-          resolve(compressed);
-        },
-        'image/jpeg',
-        0.88, // Quality — excellent for print
-      );
     };
 
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(file); };
-    img.src = objectUrl;
+    // Strict 3.5s timeout safety net — prevents infinite hangs on mobile browsers
+    const timer = setTimeout(() => {
+      finish(file);
+    }, 3500);
+
+    try {
+      const img = new Image();
+      objectUrl = URL.createObjectURL(file);
+
+      img.onload = () => {
+        try {
+          let { naturalWidth: w, naturalHeight: h } = img;
+          if (!w || !h || (w <= MAX_IMAGE_DIMENSION && h <= MAX_IMAGE_DIMENSION)) {
+            clearTimeout(timer);
+            finish(file);
+            return;
+          }
+
+          // Scale down proportionally
+          if (w > h) {
+            h = Math.round((h * MAX_IMAGE_DIMENSION) / w);
+            w = MAX_IMAGE_DIMENSION;
+          } else {
+            w = Math.round((w * MAX_IMAGE_DIMENSION) / h);
+            h = MAX_IMAGE_DIMENSION;
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            clearTimeout(timer);
+            finish(file);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, w, h);
+          canvas.toBlob(
+            (blob) => {
+              clearTimeout(timer);
+              if (!blob) {
+                finish(file);
+                return;
+              }
+              const newName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
+              const compressed = new File([blob], newName, { type: 'image/jpeg', lastModified: Date.now() });
+              finish(compressed);
+            },
+            'image/jpeg',
+            0.85,
+          );
+        } catch {
+          clearTimeout(timer);
+          finish(file);
+        }
+      };
+
+      img.onerror = () => {
+        clearTimeout(timer);
+        finish(file);
+      };
+
+      img.src = objectUrl;
+    } catch {
+      clearTimeout(timer);
+      finish(file);
+    }
   });
 }
 
@@ -136,6 +176,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadPhase, setUploadPhase] = useState<'compressing' | 'uploading' | 'processing' | null>(null);
+  const [compressingStatus, setCompressingStatus] = useState<string>('Optimizing…');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Local list of staged raw Files
@@ -164,15 +205,29 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
     setUploadProgress(0);
 
     try {
-      // ── Phase 1: Client-side image compression ──
-      const hasLargeImages = newFileList.some(
-        (f) => f.type.startsWith('image/') && f.size > IMAGE_COMPRESS_THRESHOLD
-      );
+      // ── Phase 1: Client-side image compression (Sequential to protect mobile RAM) ──
+      const largeImagesCount = newFileList.filter(
+        (f) => (f.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(f.name)) && f.size > IMAGE_COMPRESS_THRESHOLD
+      ).length;
 
-      let filesToSend = newFileList;
-      if (hasLargeImages) {
+      let filesToSend: File[] = [];
+      if (largeImagesCount > 0) {
         setUploadPhase('compressing');
-        filesToSend = await Promise.all(newFileList.map(compressImageFile));
+        let currentImgIdx = 0;
+        for (let i = 0; i < newFileList.length; i++) {
+          const f = newFileList[i];
+          const isLarge = (f.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(f.name)) && f.size > IMAGE_COMPRESS_THRESHOLD;
+          if (isLarge) {
+            currentImgIdx++;
+            setCompressingStatus(`Optimizing photo ${currentImgIdx} of ${largeImagesCount}…`);
+          }
+          const compressed = await compressImageFile(f);
+          filesToSend.push(compressed);
+          // Yield tick to browser event loop
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      } else {
+        filesToSend = newFileList;
       }
 
       // ── Phase 2: Upload with real progress ──
@@ -216,6 +271,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
       setIsUploading(false);
       setUploadProgress(0);
       setUploadPhase(null);
+      setCompressingStatus('Optimizing…');
     }
   };
 
@@ -271,7 +327,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
 
   // Phase label for the upload UI
   const phaseLabel = uploadPhase === 'compressing'
-    ? 'Optimizing images for upload...'
+    ? compressingStatus
     : uploadPhase === 'processing'
     ? 'Processing on server...'
     : `Uploading… ${uploadProgress}%`;
@@ -281,39 +337,39 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
     return (
       <div className="space-y-3">
         {/* Uploaded Files Queue Card */}
-        <div className="glass-card rounded-2xl p-4 border-indigo-500/20 divide-y divide-white/5">
+        <div className="glass-card rounded-2xl p-4 border-indigo-500/20 divide-y divide-slate-200 dark:divide-white/5">
           {/* Queue Header */}
           <div className="flex items-center justify-between pb-3">
             <div className="flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs font-semibold text-white">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
+              <span className="text-xs font-semibold text-slate-900 dark:text-white">
                 {uploadedBatch.fileCount} Document{uploadedBatch.fileCount > 1 ? 's' : ''} Uploaded
               </span>
             </div>
-            <span className="text-xs font-bold text-emerald-300 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+            <span className="text-xs font-bold text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-300/60 dark:border-emerald-500/20">
               Total: {uploadedBatch.totalPages} Page{uploadedBatch.totalPages > 1 ? 's' : ''}
             </span>
           </div>
 
           {/* Files List */}
-          <div className="py-2 space-y-2 max-h-56 overflow-y-auto pr-1">
+          <div className="py-2 space-y-2 max-h-56 overflow-y-auto pr-1 scrollbar-thin">
             {uploadedBatch.fileItems.map((item, idx) => {
               const isImg = item.name.match(/\.(png|jpe?g|webp)$/i);
               return (
                 <div
                   key={item.id || idx}
-                  className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-white/5 hover:border-white/10 transition-colors"
+                  className="flex items-center justify-between p-2.5 rounded-xl bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200/80 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/10 transition-colors"
                 >
                   <div className="flex items-center space-x-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
                       {isImg ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-white truncate max-w-[200px] sm:max-w-[260px]">
+                      <p className="text-xs font-medium text-slate-900 dark:text-white truncate max-w-[200px] sm:max-w-[260px]">
                         {item.name}
                       </p>
-                      <p className="text-[10px] text-slate-400">
-                        <span className="text-indigo-300 font-semibold">{item.pages} page{item.pages > 1 ? 's' : ''}</span> • {(item.size / (1024 * 1024)).toFixed(2)} MB
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        <span className="text-indigo-600 dark:text-indigo-300 font-semibold">{item.pages} page{item.pages > 1 ? 's' : ''}</span> • {(item.size / (1024 * 1024)).toFixed(2)} MB
                       </p>
                     </div>
                   </div>
@@ -321,7 +377,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
                   <button
                     type="button"
                     onClick={() => handleRemoveFile(idx)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                     title="Remove file"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -337,7 +393,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
-              className="inline-flex items-center space-x-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300 py-1.5 px-3 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 transition-all"
+              className="inline-flex items-center space-x-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 py-1.5 px-3 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/20 transition-all"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add More Files</span>
@@ -349,7 +405,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
                 setRawFiles([]);
                 onBatchUploaded(null);
               }}
-              className="text-xs text-slate-400 hover:text-rose-400 transition-colors"
+              className="text-xs text-slate-500 hover:text-rose-500 transition-colors"
             >
               Clear All
             </button>
@@ -368,13 +424,13 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
 
         {isUploading && (
           <div className="glass-card rounded-xl p-3 space-y-2">
-            <div className="flex items-center space-x-2 text-xs text-indigo-300">
+            <div className="flex items-center space-x-2 text-xs text-indigo-600 dark:text-indigo-300">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               <span>{phaseLabel}</span>
             </div>
-            <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+            <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
               <div
-                className="bg-indigo-500 h-1.5 transition-all duration-200 rounded-full"
+                className="bg-indigo-600 dark:bg-indigo-500 h-1.5 transition-all duration-200 rounded-full"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -382,8 +438,8 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         )}
 
         {errorMessage && (
-          <div className="flex items-center gap-2 p-3 text-xs text-rose-300 bg-rose-950/40 border border-rose-800/40 rounded-xl">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+          <div className="flex items-center gap-2 p-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/40 rounded-xl">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 dark:text-rose-400" />
             <span>{errorMessage}</span>
           </div>
         )}
@@ -402,7 +458,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         className={`glass-card glass-card-hover rounded-2xl p-6 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer border-2 border-dashed transition-all relative overflow-hidden ${
           isDragging
             ? 'border-indigo-500 bg-indigo-500/10'
-            : 'border-white/10 hover:border-indigo-500/50 hover:bg-slate-900/50'
+            : 'border-slate-300 hover:border-indigo-500/60 hover:bg-slate-100/50 dark:border-white/10 dark:hover:border-indigo-500/50 dark:hover:bg-slate-900/50'
         }`}
       >
         <input
@@ -416,12 +472,12 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
 
         {isUploading ? (
           <div className="flex flex-col items-center py-4 space-y-3 w-full max-w-[220px]">
-            <Loader2 className="w-10 h-10 text-indigo-400 animate-spin" />
+            <Loader2 className="w-10 h-10 text-indigo-600 dark:text-indigo-400 animate-spin" />
             <div className="text-center">
-              <p className="text-sm font-medium text-white">
+              <p className="text-sm font-medium text-slate-900 dark:text-white">
                 {uploadPhase === 'compressing' ? 'Optimizing…' : uploadPhase === 'processing' ? 'Processing…' : 'Uploading…'}
               </p>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 {uploadPhase === 'compressing'
                   ? 'Compressing images for faster upload'
                   : uploadPhase === 'processing'
@@ -429,9 +485,9 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
                   : 'Sending files securely'}
               </p>
             </div>
-            <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+            <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
               <div
-                className="bg-indigo-500 h-1.5 transition-all duration-200 rounded-full"
+                className="bg-indigo-600 dark:bg-indigo-500 h-1.5 transition-all duration-200 rounded-full"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -439,16 +495,16 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
           </div>
         ) : (
           <>
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 mb-3 shadow-inner">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 mb-3 shadow-inner">
               <UploadCloud className="w-7 h-7" />
             </div>
-            <p className="text-base font-semibold text-white">
+            <p className="text-base font-semibold text-slate-900 dark:text-white">
               Tap to Upload Document(s)
             </p>
-            <p className="text-xs text-slate-400 mt-1">
-              Select one or <span className="text-indigo-400 font-semibold">multiple files</span> at once
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Select one or <span className="text-indigo-600 dark:text-indigo-400 font-semibold">multiple files</span> at once
             </p>
-            <div className="flex items-center gap-1.5 mt-3 text-[11px] text-slate-400 bg-white/5 px-2.5 py-1 rounded-full border border-white/5">
+            <div className="flex items-center gap-1.5 mt-3 text-[11px] text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-white/5 px-2.5 py-1 rounded-full border border-slate-200 dark:border-white/5">
               <span>PDF</span>
               <span>•</span>
               <span>DOCX</span>
@@ -462,13 +518,13 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
       </div>
 
       <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 pt-0.5">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"></span>
         <span>256-Bit TLS Secured • Ephemeral Storage (Auto-purged in 15 mins)</span>
       </div>
 
       {errorMessage && (
-        <div className="flex items-center gap-2 p-3 text-xs text-rose-300 bg-rose-950/40 border border-rose-800/40 rounded-xl">
-          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+        <div className="flex items-center gap-2 p-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/40 rounded-xl">
+          <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 dark:text-rose-400" />
           <span>{errorMessage}</span>
         </div>
       )}

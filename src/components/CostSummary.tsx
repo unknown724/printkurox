@@ -218,23 +218,23 @@ export function CostSummary({
       {/* Itemized Summary Card */}
       <div className="card-premium rounded-2xl border border-indigo-500/20 overflow-hidden">
         {/* Header bar */}
-        <div className="px-4 py-3 bg-gradient-to-r from-indigo-600/10 via-violet-600/8 to-transparent border-b border-white/5">
+        <div className="px-4 py-3 bg-gradient-to-r from-indigo-50 via-violet-50/50 to-transparent dark:from-indigo-600/10 dark:via-violet-600/8 border-b border-slate-200/80 dark:border-white/5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">
               Order Summary
             </span>
-            <div className="flex items-center gap-1.5 text-[11px] text-indigo-300">
-              <Check className="w-3 h-3 text-emerald-400" />
+            <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-300">
+              <Check className="w-3 h-3 text-emerald-500 dark:text-emerald-400" />
               <span>Verified Secure</span>
             </div>
           </div>
         </div>
 
         {/* Line items */}
-        <div className="px-4 py-3 space-y-0 divide-y divide-white/[0.04]">
+        <div className="px-4 py-3 space-y-0 divide-y divide-slate-200/70 dark:divide-white/[0.04]">
           <div className="flex items-center justify-between py-2.5">
-            <span className="text-xs text-slate-400">Pages to Print</span>
-            <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+            <span className="text-xs text-slate-500 dark:text-slate-400">Pages to Print</span>
+            <span className="text-xs font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
               <span
                 className={`w-2 h-2 rounded-full ${
                   pricing.colorMode === 'bw' ? 'bg-slate-400' : 'bg-pink-500'
@@ -249,16 +249,16 @@ export function CostSummary({
           </div>
 
           <div className="flex items-center justify-between py-2.5">
-            <span className="text-xs text-slate-400">Sheet Breakdown</span>
-            <span className="text-xs font-semibold text-indigo-300 text-right">
+            <span className="text-xs text-slate-500 dark:text-slate-400">Sheet Breakdown</span>
+            <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 text-right">
               {pricing.breakdown}
             </span>
           </div>
 
           {pricing.copies > 1 && (
             <div className="flex items-center justify-between py-2.5">
-              <span className="text-xs text-slate-400">Copies</span>
-              <span className="text-xs font-semibold text-white">
+              <span className="text-xs text-slate-500 dark:text-slate-400">Copies</span>
+              <span className="text-xs font-semibold text-slate-900 dark:text-white">
                 {pricing.copies} × ₹{pricing.unitPrice}
               </span>
             </div>
@@ -266,15 +266,15 @@ export function CostSummary({
         </div>
 
         {/* Total */}
-        <div className="px-4 py-4 bg-gradient-to-r from-emerald-950/30 to-transparent border-t border-white/5">
+        <div className="px-4 py-4 bg-gradient-to-r from-emerald-50 to-transparent dark:from-emerald-950/30 border-t border-slate-200/80 dark:border-white/5">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm font-bold text-slate-200">Total Payable</span>
+              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Total Payable</span>
               <p className="text-[10px] text-slate-500 mt-0.5">Includes paper, ink &amp; taxes</p>
             </div>
             <div className="flex items-baseline gap-0.5">
-              <span className="text-lg font-bold text-emerald-400">₹</span>
-              <span className="text-4xl font-black text-emerald-400 tracking-tight tabular-nums">
+              <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400">₹</span>
+              <span className="text-4xl font-black text-emerald-600 dark:text-emerald-400 tracking-tight tabular-nums">
                 {pricing.totalPrice}
               </span>
             </div>
@@ -284,16 +284,16 @@ export function CostSummary({
 
       {/* Printer Offline Warning Banner */}
       {!statusLoading && !printerOnline && (
-        <div className="flex items-start gap-3 p-3.5 rounded-xl bg-amber-500/8 border border-amber-500/25 text-xs animate-scale-in">
-          <WifiOff className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-500/8 border border-amber-200 dark:border-amber-500/25 text-xs animate-scale-in">
+          <WifiOff className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" />
           <div>
-            <p className="font-bold text-amber-300 flex items-center gap-1.5">
+            <p className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
               Printer Currently Offline
             </p>
-            <p className="text-amber-200/70 mt-0.5 leading-relaxed">
-              You can still pay now — your job will be <strong className="text-amber-300">queued</strong> and printed automatically when the printer comes back online.
+            <p className="text-amber-700/80 dark:text-amber-200/70 mt-0.5 leading-relaxed">
+              You can still pay now — your job will be <strong className="text-amber-800 dark:text-amber-300">queued</strong> and printed automatically when the printer comes back online.
             </p>
-            <p className="text-amber-200/50 mt-1 flex items-center gap-1">
+            <p className="text-amber-600/70 dark:text-amber-200/50 mt-1 flex items-center gap-1">
               <Clock className="w-3 h-3" />
               Typically online within minutes.
             </p>
@@ -340,25 +340,25 @@ export function CostSummary({
       </button>
 
       {/* Payment methods + Staff trigger */}
-      <div className="p-3.5 rounded-xl bg-slate-900/60 border border-white/5 space-y-2.5">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
+      <div className="p-3.5 rounded-xl bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200/80 dark:border-white/5 space-y-2.5">
+        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
           <button
             type="button"
             onClick={() => setShowStaffModal(true)}
-            className="flex items-center gap-1.5 hover:text-indigo-300 transition-colors"
+            className="flex items-center gap-1.5 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
             title="Staff passcode access"
           >
-            <Lock className="w-3 h-3 text-emerald-400" />
+            <Lock className="w-3 h-3 text-emerald-500 dark:text-emerald-400" />
             <span>100% Encrypted · RBI Compliant</span>
           </button>
-          <span className="text-slate-600">Instant Verification</span>
+          <span className="text-slate-400 dark:text-slate-600">Instant Verification</span>
         </div>
 
-        <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] font-semibold text-slate-300">
+        <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] font-semibold text-slate-700 dark:text-slate-300">
           {['UPI', 'Google Pay', 'PhonePe', 'Paytm', 'Debit / Credit', 'NetBanking'].map((m) => (
             <span
               key={m}
-              className="px-2 py-0.5 rounded bg-slate-800/80 border border-white/5"
+              className="px-2 py-0.5 rounded bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-white/5 shadow-xs"
             >
               {m}
             </span>
@@ -367,8 +367,8 @@ export function CostSummary({
       </div>
 
       {errorMessage && (
-        <div className="text-xs text-center text-rose-300 bg-rose-950/40 border border-rose-800/40 py-2.5 px-3 rounded-xl flex items-center justify-center gap-2">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+        <div className="text-xs text-center text-rose-700 bg-rose-50 border border-rose-200 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/40 py-2.5 px-3 rounded-xl flex items-center justify-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-500 dark:text-rose-400" />
           <span>{errorMessage}</span>
         </div>
       )}
@@ -377,34 +377,34 @@ export function CostSummary({
       {showStaffModal && (
         <div
           onClick={() => setShowStaffModal(false)}
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in-up"
+          className="fixed inset-0 z-50 bg-black/70 dark:bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in-up"
         >
           <div
             onClick={(e) => e.stopPropagation()}
             className="card-premium max-w-sm w-full rounded-3xl p-6 border border-indigo-500/35 space-y-4 text-center animate-scale-in"
           >
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-indigo-400">
+              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
                 <KeyRound className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-wider text-white">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
                   Staff Print Bypass
                 </span>
               </div>
               <button
                 type="button"
                 onClick={() => setShowStaffModal(false)}
-                className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed">
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
               Enter the master staff passcode to print without Razorpay checkout.
             </p>
 
             {staffError && (
-              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center justify-center gap-1.5">
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs flex items-center justify-center gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                 <span>{staffError}</span>
               </div>
@@ -419,12 +419,12 @@ export function CostSummary({
                   placeholder="Enter Staff Passcode"
                   required
                   autoFocus
-                  className="w-full pl-4 pr-10 py-3 rounded-xl bg-slate-950 border border-white/10 text-white placeholder-slate-500 text-sm text-center focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                  className="w-full pl-4 pr-10 py-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 text-sm text-center focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
                 />
                 <button
                   type="button"
                   onClick={() => setShowStaffPin(!showStaffPin)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"
                 >
                   {showStaffPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -448,7 +448,7 @@ export function CostSummary({
 
             <a
               href="/adminkurox"
-              className="text-[11px] text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
+              className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline transition-colors"
             >
               Authorize this device permanently at /adminkurox →
             </a>

@@ -1,5 +1,5 @@
 {
-  "regions": ["bom1"],
+  "regions": ["bom1", "sin1"],
   "crons": [
     {
       "path": "/api/cron/cleanup",
@@ -7,3 +7,4 @@
     }
   ]
 }
+

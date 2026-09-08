@@ -299,36 +299,36 @@ export function PageVisualizer({
   return (
     <div className="glass-card rounded-2xl p-4 sm:p-5 border-indigo-500/25 space-y-4">
       {/* Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/5">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200/80 dark:border-white/5">
         <div>
           <div className="flex items-center space-x-2">
-            <Sparkles className="w-4 h-4 text-indigo-400" />
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+            <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
               Interactive Page Inspector
             </h3>
             {loadingThumbnails && (
-              <span className="flex items-center gap-1 text-[10px] text-indigo-400 animate-pulse">
+              <span className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 animate-pulse">
                 <Loader2 className="w-3 h-3 animate-spin" /> Rendering pages...
               </span>
             )}
           </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
             {includedPagesCount} of {totalPages} pages selected •{' '}
-            <span className="text-slate-300 font-semibold">{bwPagesCount} B&W</span> (₹4) +{' '}
-            <span className="text-pink-400 font-semibold">{colorPagesCount} Color</span> (₹7)
+            <span className="text-slate-700 dark:text-slate-300 font-semibold">{bwPagesCount} B&W</span> (₹4) +{' '}
+            <span className="text-pink-600 dark:text-pink-400 font-semibold">{colorPagesCount} Color</span> (₹7)
           </p>
         </div>
 
         {/* Professional Orientation Switcher */}
         <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-xl bg-slate-900/90 p-1 border border-white/10 text-xs shadow-inner">
+          <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-900/90 p-1 border border-slate-200 dark:border-white/10 text-xs shadow-inner">
             <button
               type="button"
               onClick={() => setAllOrientation('portrait')}
               className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                 orientation === 'portrait'
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-white'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
               }`}
               title="Set all pages to standard A4 Portrait"
             >
@@ -342,7 +342,7 @@ export function PageVisualizer({
               className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                 orientation === 'landscape'
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-white'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
               }`}
               title="Set all pages to horizontal A4 Landscape"
             >
@@ -355,12 +355,12 @@ export function PageVisualizer({
 
       {/* Quick Action Bulk Buttons */}
       <div className="flex flex-wrap items-center gap-2 pt-0.5">
-        <span className="text-[11px] font-medium text-slate-400 mr-1">Quick Apply:</span>
+        <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mr-1">Quick Apply:</span>
 
         <button
           type="button"
           onClick={() => setAllColor('bw')}
-          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 text-slate-200 transition-all active:scale-95 flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 dark:bg-slate-800/80 dark:hover:bg-slate-700/80 dark:border-slate-700 dark:text-slate-200 transition-all active:scale-95 flex items-center gap-1.5"
         >
           <span className="w-2 h-2 rounded-full bg-slate-400" />
           <span>All B&W (₹4)</span>
@@ -369,19 +369,19 @@ export function PageVisualizer({
         <button
           type="button"
           onClick={() => setAllColor('color')}
-          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-pink-950/40 hover:bg-pink-900/40 border border-pink-500/40 text-pink-300 transition-all active:scale-95 flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-pink-50 hover:bg-pink-100 border border-pink-200 text-pink-800 dark:bg-pink-950/40 dark:hover:bg-pink-900/40 dark:border-pink-500/40 dark:text-pink-300 transition-all active:scale-95 flex items-center gap-1.5"
         >
-          <span className="w-2 h-2 rounded-full bg-pink-400" />
+          <span className="w-2 h-2 rounded-full bg-pink-500" />
           <span>All Color (₹7)</span>
         </button>
 
-        <div className="h-4 w-px bg-white/10 mx-0.5 hidden sm:block" />
+        <div className="h-4 w-px bg-slate-200 dark:bg-white/10 mx-0.5 hidden sm:block" />
 
         {includedPagesCount < totalPages ? (
           <button
             type="button"
             onClick={() => toggleAllInclusion(true)}
-            className="px-3 py-1.5 rounded-xl text-xs font-medium text-indigo-300 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 transition-all"
+            className="px-3 py-1.5 rounded-xl text-xs font-medium text-indigo-600 dark:text-indigo-300 hover:text-indigo-700 dark:hover:text-white bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/30 transition-all"
           >
             Select All
           </button>
@@ -389,7 +389,7 @@ export function PageVisualizer({
           <button
             type="button"
             onClick={() => toggleAllInclusion(false)}
-            className="px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-all"
+            className="px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 transition-all"
           >
             Deselect All
           </button>
@@ -397,7 +397,7 @@ export function PageVisualizer({
       </div>
 
       {/* Page Thumbnails Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
         {pageConfigs.map((config) => {
           const thumb = thumbnails[config.pageNumber];
           const rot = config.rotation ?? (config.orientation === 'landscape' ? 90 : 0);
@@ -409,27 +409,27 @@ export function PageVisualizer({
               className={`rounded-2xl border transition-all duration-200 flex flex-col justify-between overflow-hidden relative group ${
                 config.included
                   ? config.colorMode === 'color'
-                    ? 'border-pink-500/60 bg-gradient-to-b from-pink-950/20 to-slate-900 shadow-md shadow-pink-500/10'
-                    : 'border-indigo-500/50 bg-gradient-to-b from-indigo-950/20 to-slate-900 shadow-md shadow-indigo-500/10'
-                  : 'border-slate-800 bg-slate-950/60 opacity-40 grayscale'
+                    ? 'border-pink-300 dark:border-pink-500/60 bg-gradient-to-b from-pink-50/70 to-white dark:from-pink-950/20 dark:to-slate-900 shadow-sm dark:shadow-md shadow-pink-500/10'
+                    : 'border-indigo-300 dark:border-indigo-500/50 bg-gradient-to-b from-indigo-50/70 to-white dark:from-indigo-950/20 dark:to-slate-900 shadow-sm dark:shadow-md shadow-indigo-500/10'
+                  : 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950/60 opacity-40 grayscale'
               } ${isLandscape ? 'sm:col-span-2' : ''}`}
             >
               {/* Header inside thumbnail card */}
-              <div className="p-2.5 flex items-center justify-between border-b border-white/5 bg-black/30">
+              <div className="p-2.5 flex items-center justify-between border-b border-slate-200/80 dark:border-white/5 bg-slate-100/90 dark:bg-black/30">
                 <div className="flex items-center space-x-1.5">
-                  <span className="font-mono font-black text-white text-xs mr-0.5">
+                  <span className="font-mono font-black text-slate-900 dark:text-white text-xs mr-0.5">
                     #{config.pageNumber}
                   </span>
 
                   {/* Dedicated Port / Land pill */}
-                  <div className="inline-flex rounded-lg bg-black/50 p-0.5 border border-white/10 text-[10px]">
+                  <div className="inline-flex rounded-lg bg-slate-200 dark:bg-black/50 p-0.5 border border-slate-300 dark:border-white/10 text-[10px]">
                     <button
                       type="button"
                       onClick={() => setPageOrientation(config.pageNumber, 'portrait')}
                       className={`px-1.5 py-0.5 rounded font-bold transition-all ${
                         !isLandscape
                           ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'text-slate-400 hover:text-white'
+                          : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
                       }`}
                       title="Set page to Portrait"
                     >
@@ -441,44 +441,43 @@ export function PageVisualizer({
                       className={`px-1.5 py-0.5 rounded font-bold transition-all ${
                         isLandscape
                           ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'text-slate-400 hover:text-white'
+                          : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
                       }`}
                       title="Set page to Landscape"
                     >
                       Land
                     </button>
                   </div>
+                </div>
 
-                  {/* 90 deg rotate button */}
+                <div className="flex items-center space-x-1">
                   <button
                     type="button"
                     onClick={() => rotatePage(config.pageNumber)}
-                    className="p-1 rounded-md bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white transition-colors"
-                    title={`Rotate 90° clockwise (Current: ${rot}°)`}
+                    className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-white/10 transition-colors"
+                    title="Rotate 90° clockwise"
                   >
-                    <RotateCw className="w-3 h-3" />
+                    <RotateCw className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => togglePageInclusion(config.pageNumber)}
+                    className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-white/10 transition-colors"
+                    title={config.included ? 'Exclude this page' : 'Include this page'}
+                  >
+                    {config.included ? (
+                      <Eye className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    ) : (
+                      <EyeOff className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                    )}
                   </button>
                 </div>
-
-                {/* Inclusion toggle */}
-                <button
-                  type="button"
-                  onClick={() => togglePageInclusion(config.pageNumber)}
-                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
-                  title={config.included ? 'Exclude this page' : 'Include this page'}
-                >
-                  {config.included ? (
-                    <Eye className="w-3.5 h-3.5 text-indigo-400" />
-                  ) : (
-                    <EyeOff className="w-3.5 h-3.5 text-slate-500" />
-                  )}
-                </button>
               </div>
 
               {/* Professional Physical Paper Sheet Canvas */}
               <div
                 onClick={() => thumb && setZoomPage(config.pageNumber)}
-                className="p-3 flex items-center justify-center bg-[#090d17]/80 min-h-[195px] cursor-zoom-in relative overflow-hidden transition-all duration-300"
+                className="p-3 flex items-center justify-center bg-slate-200/60 dark:bg-[#090d17]/80 min-h-[195px] cursor-zoom-in relative overflow-hidden transition-all duration-300"
                 title="Click to zoom and inspect page details"
               >
                 {/* Physical White Paper Sheet */}
@@ -563,7 +562,7 @@ export function PageVisualizer({
               </div>
 
               {/* Bottom Color Selector Pills */}
-              <div className="p-1.5 bg-black/30 border-t border-white/5">
+              <div className="p-1.5 bg-slate-100/90 dark:bg-black/30 border-t border-slate-200/80 dark:border-white/5">
                 {config.included ? (
                   <div className="grid grid-cols-2 gap-1">
                     <button
@@ -571,8 +570,8 @@ export function PageVisualizer({
                       onClick={() => setPageColor(config.pageNumber, 'bw')}
                       className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${
                         config.colorMode === 'bw'
-                          ? 'bg-slate-700 text-white shadow-sm border border-slate-500/40'
-                          : 'text-slate-400 hover:text-white hover:bg-white/5'
+                          ? 'bg-slate-800 text-white dark:bg-slate-700 dark:text-white shadow-xs border border-slate-700 dark:border-slate-500/40'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/5'
                       }`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
@@ -584,8 +583,8 @@ export function PageVisualizer({
                       onClick={() => setPageColor(config.pageNumber, 'color')}
                       className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${
                         config.colorMode === 'color'
-                          ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white shadow-sm shadow-pink-600/30'
-                          : 'text-slate-400 hover:text-pink-300 hover:bg-white/5'
+                          ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white shadow-xs shadow-pink-600/30'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-pink-600 dark:hover:text-pink-300 hover:bg-pink-50 dark:hover:bg-white/5'
                       }`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-pink-400" />
@@ -607,18 +606,18 @@ export function PageVisualizer({
       {zoomPage !== null && thumbnails[zoomPage] && (
         <div
           onClick={() => setZoomPage(null)}
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-50 bg-black/80 dark:bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="glass-card max-w-2xl w-full max-h-[90vh] rounded-3xl p-5 border-white/10 flex flex-col space-y-3 relative overflow-hidden"
+            className="glass-card max-w-2xl w-full max-h-[90vh] rounded-3xl p-5 border-slate-200 dark:border-white/10 flex flex-col space-y-3 relative overflow-hidden bg-white/95 dark:bg-slate-900/95 shadow-2xl"
           >
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-white/10">
               <div className="flex items-center space-x-2">
-                <span className="font-mono font-black text-white text-base">
+                <span className="font-mono font-black text-slate-900 dark:text-white text-base">
                   Page #{zoomPage} Preview
                 </span>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
                   ({pageConfigs.find((p) => p.pageNumber === zoomPage)?.colorMode === 'color' ? 'Color' : 'B&W'})
                 </span>
               </div>
@@ -628,12 +627,12 @@ export function PageVisualizer({
                   const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
                   const isLand = currConf?.rotation === 90 || currConf?.rotation === 270 || currConf?.orientation === 'landscape';
                   return (
-                    <div className="inline-flex rounded-xl bg-black/60 p-0.5 border border-white/10 text-xs">
+                    <div className="inline-flex rounded-xl bg-slate-100 dark:bg-black/60 p-0.5 border border-slate-200 dark:border-white/10 text-xs">
                       <button
                         type="button"
                         onClick={() => setPageOrientation(zoomPage, 'portrait')}
                         className={`px-2 py-1 rounded-lg font-bold transition-all ${
-                          !isLand ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                          !isLand ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
                         }`}
                       >
                         📄 Portrait
@@ -642,7 +641,7 @@ export function PageVisualizer({
                         type="button"
                         onClick={() => setPageOrientation(zoomPage, 'landscape')}
                         className={`px-2 py-1 rounded-lg font-bold transition-all ${
-                          isLand ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                          isLand ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
                         }`}
                       >
                         📜 Landscape
@@ -654,28 +653,28 @@ export function PageVisualizer({
                 <button
                   type="button"
                   onClick={() => rotatePage(zoomPage)}
-                  className="px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1"
+                  className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white text-xs font-bold flex items-center gap-1 transition-colors"
                 >
                   <RotateCw className="w-3.5 h-3.5" />
                   <span>Rotate 90°</span>
                 </button>
                 <button
                   onClick={() => setZoomPage(null)}
-                  className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white"
+                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white transition-colors"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-[#090d17] rounded-2xl">
+            <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-slate-200/60 dark:bg-[#090d17] rounded-2xl">
               {(() => {
                 const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
                 const rot = currConf?.rotation ?? (currConf?.orientation === 'landscape' ? 90 : 0);
                 const isLand = rot === 90 || rot === 270;
                 return (
                   <div
-                    className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black rounded-xs border border-slate-300 transition-all duration-300 overflow-hidden ${
+                    className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black/80 rounded-xs border border-slate-300 transition-all duration-300 overflow-hidden ${
                       isLand ? 'w-[88%] aspect-[297/210] max-h-[65vh]' : 'w-[58%] aspect-[210/297] max-h-[65vh]'
                     }`}
                   >
@@ -717,7 +716,7 @@ export function PageVisualizer({
             </div>
 
             <div className="flex items-center justify-between pt-2">
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 Inspect text and graphics to decide if Color (₹7) or B&W (₹4) is required.
               </p>
               <div className="flex gap-2">
@@ -727,7 +726,7 @@ export function PageVisualizer({
                     setPageColor(zoomPage, 'bw');
                     setZoomPage(null);
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-700"
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-700 shadow-sm"
                 >
                   Set B&W (₹4)
                 </button>
