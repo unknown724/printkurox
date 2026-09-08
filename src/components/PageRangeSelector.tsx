@@ -137,26 +137,34 @@ export function PageRangeSelector({
       </div>
 
       {/* Quick Preset Pills */}
-      <div className="flex flex-wrap gap-1.5">
-        {[
-          { label: `All (${totalPages})`, handler: applyPresetAll, active: selectedCount === totalPages },
-          { label: 'Odd Pages', handler: applyPresetOdd, active: false },
-          { label: 'Even Pages', handler: applyPresetEven, active: false },
-        ].map((preset) => (
-          <button
-            key={preset.label}
-            type="button"
-            onClick={preset.handler}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all duration-150 ${
-              preset.active
-                ? 'border-indigo-500 bg-indigo-50 text-indigo-900 shadow-sm dark:border-indigo-400/60 dark:bg-indigo-600/25 dark:text-white dark:shadow-indigo-500/20'
-                : 'border-slate-200 bg-slate-100/80 text-slate-600 hover:border-indigo-400 hover:text-slate-900 dark:border-white/8 dark:bg-slate-900/50 dark:text-slate-400 dark:hover:border-indigo-500/40 dark:hover:text-slate-200 dark:hover:bg-white/5'
-            }`}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
+      {(() => {
+        const isAllSelected = selectedCount === totalPages;
+        const isOddSelected = !isAllSelected && selectedCount === Math.ceil(totalPages / 2) && activePageNumbers.every((p) => p % 2 === 1);
+        const isEvenSelected = !isAllSelected && selectedCount === Math.floor(totalPages / 2) && activePageNumbers.every((p) => p % 2 === 0);
+
+        return (
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { label: `All (${totalPages})`, handler: applyPresetAll, active: isAllSelected },
+              { label: 'Odd Pages', handler: applyPresetOdd, active: isOddSelected },
+              { label: 'Even Pages', handler: applyPresetEven, active: isEvenSelected },
+            ].map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={preset.handler}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all duration-150 ${
+                  preset.active
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-900 shadow-sm dark:border-indigo-400/60 dark:bg-indigo-600/25 dark:text-white dark:shadow-indigo-500/20'
+                    : 'border-slate-200 bg-slate-100/80 text-slate-600 hover:border-indigo-400 hover:text-slate-900 dark:border-white/8 dark:bg-slate-900/50 dark:text-slate-400 dark:hover:border-indigo-500/40 dark:hover:text-slate-200 dark:hover:bg-white/5'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Interactive Page Chip Grid (for docs ≤ 60 pages) */}
       {totalPages <= 60 && (
