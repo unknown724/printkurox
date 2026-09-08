@@ -124,16 +124,17 @@ export function validatePageRangeInput(input: string, maxPages: number): {
   return { isValid: true, pages };
 }
 
-/**
- * Counts the pages in an ArrayBuffer or Uint8Array of a PDF file using pdf-lib
- */
 export async function getPdfPageCount(buffer: ArrayBuffer | Uint8Array): Promise<number> {
   try {
     const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
     return pdfDoc.getPageCount();
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error counting PDF pages:', err);
-    throw new Error('Failed to parse PDF document.');
+    const msg = err instanceof Error ? err.message.toLowerCase() : '';
+    if (msg.includes('encrypt') || msg.includes('password')) {
+      throw new Error('This PDF is password-protected. Please unlock or remove the password before printing.');
+    }
+    throw new Error('Failed to parse PDF document. The file may be corrupt.');
   }
 }
 
@@ -193,10 +194,15 @@ export async function mergeFilesToPdf(
     }
   }
 
+  const totalPages = mergedPdf.getPageCount();
+  if (totalPages === 0) {
+    throw new Error('No valid printable pages could be extracted from the uploaded file(s).');
+  }
+
   const mergedBytes = await mergedPdf.save({ useObjectStreams: false });
   return {
     mergedBuffer: Buffer.from(mergedBytes),
-    totalPages: mergedPdf.getPageCount(),
+    totalPages,
   };
 }
 

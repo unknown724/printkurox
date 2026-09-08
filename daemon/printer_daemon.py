@@ -126,7 +126,7 @@ def locate_sumatra():
             return os.path.abspath(p)
     return None
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 def ensure_printable_pdf(file_path, orientation=None):
     """If file is an image (jpg, png, etc.), convert it to A4 PDF for SumatraPDF respecting orientation."""
@@ -143,6 +143,14 @@ def ensure_printable_pdf(file_path, orientation=None):
         pdf_path = os.path.splitext(file_path)[0] + "_converted.pdf"
         try:
             image = Image.open(file_path)
+            # Correct smartphone camera rotation from EXIF metadata
+            try:
+                transposed = ImageOps.exif_transpose(image)
+                if transposed:
+                    image = transposed
+            except Exception:
+                pass
+
             if image.mode in ("RGBA", "P"):
                 image = image.convert("RGB")
 
