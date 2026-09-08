@@ -11,8 +11,8 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || '948fd75d8b84a5cf20559d6aa789d4dd';
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '0f5bb8b4f2d7c00a84da3c20efcc8949';
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || 'cf9c00b5509a1be636238fab2c332fff210300607e89ab802c86a829c9ddbcda';
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '4a952eb1b22509358c27e7f8dbfc3d83';
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '55b0fbbcbf8ce5bedd4a3e135c652404bf3277c619efa784da8982bd1d7792ef';
 const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'kiosk-uploads';
 
 export const s3 = new S3Client({
