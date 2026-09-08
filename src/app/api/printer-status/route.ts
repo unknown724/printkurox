@@ -36,9 +36,12 @@ async function ensureTable() {
 
 export async function GET() {
   try {
-    await ensureTable();
+    let rows = await queryD1('SELECT updated_at FROM daemon_heartbeat WHERE id = 1');
+    if (rows === null) {
+      await ensureTable();
+      rows = await queryD1('SELECT updated_at FROM daemon_heartbeat WHERE id = 1');
+    }
 
-    const rows = await queryD1('SELECT updated_at FROM daemon_heartbeat WHERE id = 1');
     if (!rows || rows.length === 0) {
       return NextResponse.json({ online: false, lastSeen: null }, { status: 200 });
     }

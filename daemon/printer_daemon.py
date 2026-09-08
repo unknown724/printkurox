@@ -258,13 +258,37 @@ def process_single_sided_job(job, local_file_path):
     else:
         update_job_status(job["id"], "FAILED")
 
+def parse_page_range_list(range_str, total_pages):
+    """Parses range string like '1-3, 5' into sorted list of page numbers."""
+    if not range_str or range_str.lower() == 'all':
+        return list(range(1, total_pages + 1))
+    pages = set()
+    for part in range_str.split(','):
+        part = part.strip()
+        if '-' in part:
+            try:
+                s, e = part.split('-')
+                start = max(1, min(int(s.strip()), int(e.strip())))
+                end = min(total_pages, max(int(s.strip()), int(e.strip())))
+                pages.update(range(start, end + 1))
+            except Exception:
+                pass
+        else:
+            try:
+                p = int(part)
+                if 1 <= p <= total_pages:
+                    pages.add(p)
+            except Exception:
+                pass
+    return sorted(list(pages)) if pages else list(range(1, total_pages + 1))
+
 def process_manual_duplex_job(job, local_file_path):
     """
     Scenario B Manual Duplex Printing:
-    1. Print Odd pages (Pass 1).
+    1. Print Odd / Front pages (Pass 1).
     2. Beep & Prompt Operator with interactive console banner.
     3. Wait for Enter.
-    4. Print Even pages (Pass 2).
+    4. Print Even / Back pages in reverse (Pass 2).
     5. Mark Completed.
     """
     total_pages = job["total_pages"]
@@ -273,16 +297,30 @@ def process_manual_duplex_job(job, local_file_path):
     orientation = job.get("orientation") or None
     printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
+    # Calculate exact page lists for Pass 1 (front) and Pass 2 (back)
+    req_range = job.get("page_range")
+    if req_range and req_range.lower() != "all":
+        selected = parse_page_range_list(req_range, total_pages)
+        # Front pages: 1st, 3rd, 5th in selected sequence
+        odd_list = [str(selected[i]) for i in range(0, len(selected), 2)]
+        # Back pages: 2nd, 4th, 6th in selected sequence, reversed for feeder stack
+        even_list = [str(selected[i]) for i in range(1, len(selected), 2)]
+        even_list.reverse()
+        odd_range_str = ",".join(odd_list) if odd_list else None
+        even_range_str = ",".join(even_list) if even_list else None
+    else:
+        odd_range_str = "odd"
+        even_range_str = "even,reverse"
+
     # -------------------------------------------------------------
     # Pass 1: Print Odd Pages
     # -------------------------------------------------------------
     update_job_status(job["id"], "PRINTING_ODD")
-    log(f"Pass 1: Printing ODD pages for Job {job['pickup_code']}...", "INFO")
+    log(f"Pass 1: Printing Front pages ({odd_range_str}) for Job {job['pickup_code']}...", "INFO")
 
-    # SumatraPDF allows odd/even in print-settings
     odd_success = print_file_silent(
         printable_path,
-        page_range="odd",
+        page_range=odd_range_str,
         color_mode=color_mode,
         copies=copies,
         orientation=orientation
@@ -290,6 +328,11 @@ def process_manual_duplex_job(job, local_file_path):
 
     if not odd_success:
         update_job_status(job["id"], "FAILED")
+        return
+
+    # If there are no even pages (e.g. single page job mistakenly queued as duplex)
+    if not even_range_str:
+        update_job_status(job["id"], "COMPLETED")
         return
 
     # -------------------------------------------------------------
@@ -313,17 +356,18 @@ def process_manual_duplex_job(job, local_file_path):
     try:
         input()
     except EOFError:
-        time.sleep(5)
+        log("Running in non-interactive background mode; waiting 25s for paper flip before Pass 2...", "INFO")
+        time.sleep(25)
 
     # -------------------------------------------------------------
     # Pass 2: Print Even Pages (Reverse sequence)
     # -------------------------------------------------------------
     update_job_status(job["id"], "PRINTING_EVEN")
-    log(f"Pass 2: Printing EVEN reverse pages for Job {job['pickup_code']}...", "INFO")
+    log(f"Pass 2: Printing Reverse pages ({even_range_str}) for Job {job['pickup_code']}...", "INFO")
 
     even_success = print_file_silent(
         printable_path,
-        page_range="even,reverse",
+        page_range=even_range_str,
         color_mode=color_mode,
         copies=copies,
         orientation=orientation

@@ -9,9 +9,11 @@ export async function GET() {
   try {
     const nowIso = new Date().toISOString();
 
-    // 1. Find all expired jobs
+    // 1. Find all expired jobs (strictly exclude PAID, PRINTING, or AWAITING_FLIP jobs)
     const expiredJobs = await queryD1<PrintJobRecord>(
-      'SELECT id, file_key FROM print_jobs WHERE expires_at < ?',
+      `SELECT id, file_key, status FROM print_jobs 
+       WHERE expires_at < ? 
+       AND status IN ('PENDING_PAYMENT', 'COMPLETED', 'FAILED')`,
       [nowIso]
     );
 
@@ -26,13 +28,18 @@ export async function GET() {
       }
     }
 
-    // 3. Purge expired jobs from D1
+    // 3. Purge expired non-active jobs from D1
     if (expiredJobs.length > 0) {
-      await executeD1('DELETE FROM print_jobs WHERE expires_at < ?', [nowIso]);
+      await executeD1(
+        `DELETE FROM print_jobs 
+         WHERE expires_at < ? 
+         AND status IN ('PENDING_PAYMENT', 'COMPLETED', 'FAILED')`,
+        [nowIso]
+      );
     }
 
-    // 4. Also run R2 cleanup sweep
-    await purgeExpiredR2Files(15);
+    // 4. Run R2 cleanup sweep with safe 60-minute window (daemon deletes immediately upon printing)
+    await purgeExpiredR2Files(60);
 
     return NextResponse.json({
       success: true,

@@ -43,6 +43,7 @@ export function PageVisualizer({
   // Load document and image pages — progressive: each thumbnail appears as soon as it renders
   useEffect(() => {
     let isMounted = true;
+    const createdUrls: string[] = [];
     const sourceSig = `${fileKey || ''}_${downloadUrl || ''}_${totalPages}_${rawFiles?.map((f) => `${f.name}_${f.size}`).join(',') || ''}`;
     const isNewSource = sourceSig !== lastSourceSigRef.current;
 
@@ -122,6 +123,7 @@ export function PageVisualizer({
               if (currentPageIdx <= totalPages) {
                 const pageNumber = currentPageIdx; // Capture immutable loop index
                 const objectUrl = URL.createObjectURL(file);
+                createdUrls.push(objectUrl);
                 newThumbs[pageNumber] = objectUrl;
 
                 // Show image thumbnail immediately (no render needed)
@@ -204,6 +206,11 @@ export function PageVisualizer({
 
     return () => {
       isMounted = false;
+      createdUrls.forEach((u) => {
+        try {
+          URL.revokeObjectURL(u);
+        } catch {}
+      });
     };
   }, [rawFiles, downloadUrl, fileKey, totalPages]);
 
