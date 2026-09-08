@@ -28,6 +28,27 @@ interface AdminDevice {
   last_active: string;
 }
 
+function detectDeviceClient(): string {
+  if (typeof window === 'undefined') return 'Web Client';
+  const ua = navigator.userAgent;
+  let os = 'Device';
+  if (/iPhone/i.test(ua)) os = 'Apple iPhone';
+  else if (/iPad/i.test(ua)) os = 'Apple iPad';
+  else if (/Android/i.test(ua)) os = 'Android Phone';
+  else if (/Windows NT 10.0/i.test(ua)) os = 'Windows PC';
+  else if (/Windows/i.test(ua)) os = 'Windows PC';
+  else if (/Macintosh|Mac OS/i.test(ua)) os = 'MacBook';
+  else if (/Linux/i.test(ua)) os = 'Linux Device';
+
+  let browser = '';
+  if (/Firefox\/([0-9]+)/i.test(ua)) browser = ' (Firefox)';
+  else if (/Edg\/([0-9]+)/i.test(ua)) browser = ' (Edge)';
+  else if (/Chrome\/([0-9]+)/i.test(ua)) browser = ' (Chrome)';
+  else if (/Safari\/([0-9]+)/i.test(ua) && !/Chrome/i.test(ua)) browser = ' (Safari)';
+
+  return `${os}${browser}`;
+}
+
 interface Job {
   id: string;
   pickup_code: string;
@@ -38,7 +59,7 @@ interface Job {
   copies: number;
   total_price: number;
   status: string;
-  payment_id: string;
+  payment_id: string | null;
   created_at: string;
 }
 
@@ -55,6 +76,7 @@ export default function AdminKuroxPage() {
   const [loadingJobs, setLoadingJobs] = useState(false);
 
   useEffect(() => {
+    setCustomDeviceName(detectDeviceClient());
     checkAuthAndLoad();
   }, []);
 
@@ -84,10 +106,11 @@ export default function AdminKuroxPage() {
     setSubmitting(true);
 
     try {
+      const devName = customDeviceName.trim() || detectDeviceClient();
       const res = await fetch('/api/admin/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin, customDeviceName: customDeviceName.trim() || undefined }),
+        body: JSON.stringify({ pin, customDeviceName: devName }),
       });
 
       const data = await res.json();
@@ -95,10 +118,18 @@ export default function AdminKuroxPage() {
         throw new Error(data.error || 'Authentication failed');
       }
 
+      // Fast transition without waiting for another roundtrip
       setIsAdmin(true);
+      if (data.devices) {
+        setDevices(data.devices);
+      }
+      if (data.currentDeviceId) {
+        setCurrentDeviceId(data.currentDeviceId);
+      }
       setPin('');
-      setCustomDeviceName('');
-      checkAuthAndLoad();
+
+      // Background load jobs without blocking UI
+      fetchRecentJobs();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid Passcode');
     } finally {
@@ -186,6 +217,22 @@ export default function AdminKuroxPage() {
           )}
 
           <form onSubmit={handleLogin} className="space-y-3.5 max-w-sm mx-auto">
+            {/* Auto-detected Device Indicator */}
+            <div className="flex items-center justify-between p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-left">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                  <Laptop className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Auto-Detected Device</span>
+                  <span className="text-xs font-bold text-white">{customDeviceName || 'Detecting device...'}</span>
+                </div>
+              </div>
+              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                Recognized
+              </span>
+            </div>
+
             <div className="relative">
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
@@ -198,13 +245,19 @@ export default function AdminKuroxPage() {
               />
             </div>
 
-            <input
-              type="text"
-              value={customDeviceName}
-              onChange={(e) => setCustomDeviceName(e.target.value)}
-              placeholder="Device Label (e.g. Richard's iPhone / Shop PC)"
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-900/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-indigo-500"
-            />
+            <div className="space-y-1 text-left">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 font-medium">
+                <span>Device Label (Auto-detected)</span>
+                <span className="text-slate-500">Editable if needed</span>
+              </div>
+              <input
+                type="text"
+                value={customDeviceName}
+                onChange={(e) => setCustomDeviceName(e.target.value)}
+                placeholder="Auto-detected Device"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-indigo-500"
+              />
+            </div>
 
             <button
               type="submit"
@@ -390,7 +443,12 @@ export default function AdminKuroxPage() {
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-400">
-                        {j.total_pages} pages • {j.color_mode.toUpperCase()} • ₹{j.total_price} • {j.payment_id.startsWith('ADMIN_') ? '👑 Admin Free' : 'Razorpay'}
+                        {j.total_pages} pages • {j.color_mode?.toUpperCase() || 'B&W'} • ₹{j.total_price} •{' '}
+                        {j.payment_id?.startsWith('ADMIN_')
+                          ? '👑 Admin Free'
+                          : j.payment_id
+                          ? 'Razorpay'
+                          : 'Pending'}
                       </p>
                     </div>
 

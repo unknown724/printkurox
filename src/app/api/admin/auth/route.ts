@@ -14,13 +14,22 @@ export const dynamic = 'force-dynamic';
 
 function getFriendlyDeviceName(ua: string): string {
   if (!ua) return 'Web Browser';
-  if (/iPhone/i.test(ua)) return 'Apple iPhone';
-  if (/iPad/i.test(ua)) return 'Apple iPad';
-  if (/Android/i.test(ua)) return 'Android Device';
-  if (/Windows/i.test(ua)) return 'Windows Laptop/PC';
-  if (/Macintosh|Mac OS/i.test(ua)) return 'MacBook / Mac';
-  if (/Linux/i.test(ua)) return 'Linux Workstation';
-  return 'Web Client';
+  let os = 'Device';
+  if (/iPhone/i.test(ua)) os = 'Apple iPhone';
+  else if (/iPad/i.test(ua)) os = 'Apple iPad';
+  else if (/Android/i.test(ua)) os = 'Android Phone';
+  else if (/Windows NT 10.0/i.test(ua)) os = 'Windows PC';
+  else if (/Windows/i.test(ua)) os = 'Windows PC';
+  else if (/Macintosh|Mac OS/i.test(ua)) os = 'MacBook';
+  else if (/Linux/i.test(ua)) os = 'Linux Device';
+
+  let browser = '';
+  if (/Firefox\/([0-9]+)/i.test(ua)) browser = ' (Firefox)';
+  else if (/Edg\/([0-9]+)/i.test(ua)) browser = ' (Edge)';
+  else if (/Chrome\/([0-9]+)/i.test(ua)) browser = ' (Chrome)';
+  else if (/Safari\/([0-9]+)/i.test(ua)) browser = ' (Safari)';
+
+  return `${os}${browser}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -65,10 +74,13 @@ export async function POST(req: NextRequest) {
     if (currentDeviceId) {
       const existing = await verifyAdminDevice(currentDeviceId);
       if (existing.isValid) {
+        const allDevices = await getAdminDevices();
         return NextResponse.json({
           success: true,
           message: 'Device already authorized',
           deviceId: currentDeviceId,
+          devices: allDevices,
+          currentDeviceId,
         });
       }
     }
@@ -78,10 +90,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: regResult.error || 'Failed to authorize device' }, { status: 403 });
     }
 
+    const allDevices = await getAdminDevices();
+
     const res = NextResponse.json({
       success: true,
       message: 'Device permanently authorized',
       deviceId: regResult.deviceId,
+      devices: allDevices,
+      currentDeviceId: regResult.deviceId,
     });
 
     // Permanent cookie (10 years, no expiration)
