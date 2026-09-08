@@ -137,7 +137,7 @@ def create_poster():
     )
     draw.text((card1_x0 + 60, y_cursor + 45), "BLACK & WHITE (B&W)", fill=(15, 23, 42), font=font_price_title)
     draw.text((card1_x0 + 60, y_cursor + 135), "₹4", fill=(15, 23, 42), font=font_price_num)
-    draw.text((card1_x0 + 220, y_cursor + 165), "/ page (₹3 duplex)", fill=(100, 116, 139), font=get_font(48, bold=True))
+    draw.text((card1_x0 + 220, y_cursor + 165), "/ sheet (₹6 duplex)", fill=(100, 116, 139), font=get_font(48, bold=True))
     draw.text((card1_x0 + 60, y_cursor + 245), "• Laser-sharp academic print", fill=(71, 85, 105), font=get_font(42))
 
     # Card 2: Color Pricing
@@ -151,7 +151,7 @@ def create_poster():
     )
     draw.text((card2_x0 + 60, y_cursor + 45), "FULL VIBRANT COLOR", fill=(190, 24, 93), font=font_price_title)
     draw.text((card2_x0 + 60, y_cursor + 135), "₹7", fill=(190, 24, 93), font=font_price_num)
-    draw.text((card2_x0 + 220, y_cursor + 165), "/ page (₹6 duplex)", fill=(100, 116, 139), font=get_font(48, bold=True))
+    draw.text((card2_x0 + 220, y_cursor + 165), "/ sheet (₹10 duplex)", fill=(100, 116, 139), font=get_font(48, bold=True))
     draw.text((card2_x0 + 60, y_cursor + 245), "• Vivid photo & chart output", fill=(71, 85, 105), font=get_font(42))
 
     # 9. Pickup Location Banner
