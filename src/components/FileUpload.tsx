@@ -347,6 +347,14 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
           usedR2Direct = true;
         }
       } catch (directErr) {
+        if (
+          directErr instanceof Error &&
+          (directErr.message.toLowerCase().includes('password-protected') ||
+           directErr.message.toLowerCase().includes('unsupported') ||
+           directErr.message.toLowerCase().includes('corrupted'))
+        ) {
+          throw directErr;
+        }
         console.warn('Direct R2 upload bypassed or failed; falling back to direct server route:', directErr);
       }
 

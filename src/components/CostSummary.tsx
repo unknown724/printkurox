@@ -160,7 +160,32 @@ export function CostSummary({
 
       const { jobId, orderId, amount, currency, keyId, pickupCode } = await orderRes.json();
 
-      if (typeof window !== 'undefined' && window.Razorpay) {
+      if (typeof window !== 'undefined') {
+        if (!window.Razorpay) {
+          await new Promise<void>((resolve, reject) => {
+            const existingScript = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+            if (existingScript) {
+              existingScript.addEventListener('load', () => resolve());
+              existingScript.addEventListener('error', () => reject(new Error('Failed to load payment gateway.')));
+              setTimeout(() => {
+                if (window.Razorpay) resolve();
+                else reject(new Error('Payment gateway load timed out. Check your internet connection.'));
+              }, 4000);
+            } else {
+              const script = document.createElement('script');
+              script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+              script.async = true;
+              script.onload = () => resolve();
+              script.onerror = () => reject(new Error('Failed to load payment gateway.'));
+              document.body.appendChild(script);
+            }
+          });
+        }
+
+        if (!window.Razorpay) {
+          throw new Error('Payment gateway loading. Check your internet and retry.');
+        }
+
         const options = {
           key: keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
           amount,
@@ -204,8 +229,6 @@ export function CostSummary({
           setIsProcessing(false);
         });
         rzp.open();
-      } else {
-        throw new Error('Payment gateway loading. Check your internet and retry.');
       }
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : 'Error initiating payment.');

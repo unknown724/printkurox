@@ -63,6 +63,11 @@ export default function JobStatusPage({
         const data: JobStatusData = await res.json();
         setJob(data);
 
+        // Stop polling when job reaches terminal state
+        if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+          if (intervalId) clearInterval(intervalId);
+        }
+
         // Trigger celebratory confetti once on completion or initial paid
         if (!hasCelebrated && (data.status === 'PAID' || data.status === 'COMPLETED')) {
           confetti({
@@ -84,7 +89,9 @@ export default function JobStatusPage({
     fetchStatus();
     intervalId = setInterval(fetchStatus, 2000);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [jobId, hasCelebrated]);
 
   const handleShareOrCopy = async () => {

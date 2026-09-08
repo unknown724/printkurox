@@ -306,52 +306,52 @@ def process_manual_duplex_job(job, local_file_path):
     printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
     # Calculate exact page lists for Pass 1 (front) and Pass 2 (back)
-    req_range = job.get("page_range")
-    if req_range and req_range.lower() != "all":
-        selected = parse_page_range_list(req_range, total_pages)
-        # Front pages: 1st, 3rd, 5th in selected sequence
-        odd_list = [str(selected[i]) for i in range(0, len(selected), 2)]
-        # Back pages: 2nd, 4th, 6th in selected sequence, reversed for feeder stack
-        even_list = [str(selected[i]) for i in range(1, len(selected), 2)]
-        even_list.reverse()
-        odd_range_str = ",".join(odd_list) if odd_list else None
-        even_range_str = ",".join(even_list) if even_list else None
-    else:
-        odd_range_str = "odd"
-        even_range_str = "even,reverse"
+    req_range = job.get("page_range") or "all"
+    selected = parse_page_range_list(req_range, total_pages)
 
-    # -------------------------------------------------------------
-    # Pass 1: Print Odd Pages
-    # -------------------------------------------------------------
-    update_job_status(job["id"], "PRINTING_ODD")
-    log(f"Pass 1: Printing Front pages ({odd_range_str}) for Job {job['pickup_code']}...", "INFO")
+    # Front pages: 1st, 3rd, 5th in selected sequence
+    odd_list = [str(selected[i]) for i in range(0, len(selected), 2)]
+    # Back pages: 2nd, 4th, 6th in selected sequence, reversed for feeder stack
+    even_list = [str(selected[i]) for i in range(1, len(selected), 2)]
+    even_list.reverse()
+    odd_range_str = ",".join(odd_list) if odd_list else None
+    even_range_str = ",".join(even_list) if even_list else None
 
-    odd_success = print_file_silent(
-        printable_path,
-        page_range=odd_range_str,
-        color_mode=color_mode,
-        copies=copies,
-        orientation=orientation
-    )
+    # Print copy-by-copy so front & back pages stay grouped and aligned per copy
+    for copy_idx in range(1, copies + 1):
+        copy_suffix = f" (Copy {copy_idx}/{copies})" if copies > 1 else ""
 
-    if not odd_success:
-        update_job_status(job["id"], "FAILED")
-        return
+        # -------------------------------------------------------------
+        # Pass 1: Print Odd Pages
+        # -------------------------------------------------------------
+        update_job_status(job["id"], "PRINTING_ODD")
+        log(f"Pass 1: Printing Front pages ({odd_range_str}) for Job {job['pickup_code']}{copy_suffix}...", "INFO")
 
-    # If there are no even pages (e.g. single page job mistakenly queued as duplex)
-    if not even_range_str:
-        update_job_status(job["id"], "COMPLETED")
-        return
+        odd_success = print_file_silent(
+            printable_path,
+            page_range=odd_range_str,
+            color_mode=color_mode,
+            copies=1,
+            orientation=orientation
+        )
 
-    # -------------------------------------------------------------
-    # Operator Flip Alert & Prompt
-    # -------------------------------------------------------------
-    update_job_status(job["id"], "AWAITING_FLIP")
-    play_chime()
+        if not odd_success:
+            update_job_status(job["id"], "FAILED")
+            return
 
-    banner = f"""
+        # If there are no even pages (e.g. single page job mistakenly queued as duplex)
+        if not even_range_str:
+            continue
+
+        # -------------------------------------------------------------
+        # Operator Flip Alert & Prompt
+        # -------------------------------------------------------------
+        update_job_status(job["id"], "AWAITING_FLIP")
+        play_chime()
+
+        banner = f"""
 ========================================================================
-[ACTION REQUIRED] FLIP PAPER STACK -- JOB {job['pickup_code']} ({job['copies']} copy/copies)
+[ACTION REQUIRED] FLIP PAPER STACK -- JOB {job['pickup_code']}{copy_suffix}
 ------------------------------------------------------------------------
 1. Take the printed front pages from the printer's OUTPUT tray.
 2. Place them back into the INPUT feeder without rotating orientation.
@@ -360,28 +360,32 @@ def process_manual_duplex_job(job, local_file_path):
 > Press [ENTER] when ready to print the reverse sides (Pass 2)...
 ========================================================================
 """
-    print(banner)
-    try:
-        input()
-    except EOFError:
-        log("Running in non-interactive background mode; waiting 25s for paper flip before Pass 2...", "INFO")
-        time.sleep(25)
+        print(banner)
+        try:
+            input()
+        except EOFError:
+            log("Running in non-interactive background mode; waiting 25s for paper flip before Pass 2...", "INFO")
+            time.sleep(25)
 
-    # -------------------------------------------------------------
-    # Pass 2: Print Even Pages (Reverse sequence)
-    # -------------------------------------------------------------
-    update_job_status(job["id"], "PRINTING_EVEN")
-    log(f"Pass 2: Printing Reverse pages ({even_range_str}) for Job {job['pickup_code']}...", "INFO")
+        # -------------------------------------------------------------
+        # Pass 2: Print Even Pages (Reverse sequence)
+        # -------------------------------------------------------------
+        update_job_status(job["id"], "PRINTING_EVEN")
+        log(f"Pass 2: Printing Reverse pages ({even_range_str}) for Job {job['pickup_code']}{copy_suffix}...", "INFO")
 
-    even_success = print_file_silent(
-        printable_path,
-        page_range=even_range_str,
-        color_mode=color_mode,
-        copies=copies,
-        orientation=orientation
-    )
+        even_success = print_file_silent(
+            printable_path,
+            page_range=even_range_str,
+            color_mode=color_mode,
+            copies=1,
+            orientation=orientation
+        )
 
-    if even_success:
+        if not even_success:
+            update_job_status(job["id"], "FAILED")
+            return
+
+    if True:
         update_job_status(job["id"], "COMPLETED")
         log(f"Job {job['pickup_code']} manual duplex finished successfully!", "SUCCESS")
         play_chime()

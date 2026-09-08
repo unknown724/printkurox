@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
         fileName,
         activePagesCount,
         effectivePageRange,
-        pricing.colorMode,
+        pricing.colorPagesCount > 0 ? 'color' : 'bw',
         pricing.isDuplex ? 1 : 0,
         pricing.copies,
         pricing.duplexSheets,
