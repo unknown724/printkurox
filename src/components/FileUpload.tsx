@@ -40,8 +40,8 @@ interface FileUploadProps {
 // ─── Client-side image compression ───────────────────────────────────────────
 // Downscales large images to max 1920px before upload — cuts mobile upload
 // time by 60-80% for photos with no visible quality loss at print size.
-const MAX_IMAGE_DIMENSION = 1920;
-const IMAGE_COMPRESS_THRESHOLD = 1.5 * 1024 * 1024; // 1.5 MB
+const MAX_IMAGE_DIMENSION = 1800;
+const IMAGE_COMPRESS_THRESHOLD = 2.5 * 1024 * 1024; // 2.5 MB — skip compression for normal 500KB-2MB files
 
 async function compressImageFile(file: File): Promise<File> {
   // Only compress images, skip PDFs and docs
@@ -64,10 +64,10 @@ async function compressImageFile(file: File): Promise<File> {
       }
     };
 
-    // Strict 3.5s timeout safety net — prevents infinite hangs on mobile browsers
+    // Fast 2.5s safety net
     const timer = setTimeout(() => {
       finish(file);
-    }, 3500);
+    }, 2500);
 
     try {
       const img = new Image();
@@ -114,7 +114,7 @@ async function compressImageFile(file: File): Promise<File> {
               finish(compressed);
             },
             'image/jpeg',
-            0.85,
+            0.82,
           );
         } catch {
           clearTimeout(timer);

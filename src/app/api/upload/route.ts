@@ -32,41 +32,46 @@ export async function POST(req: NextRequest) {
     }
 
     let totalSize = 0;
-    const fileItems: UploadedFileItem[] = [];
-    const filesToMerge: Array<{ buffer: Buffer; fileName: string; mimeType: string }> = [];
-
-    for (const file of fileList) {
-      totalSize += file.size;
-      if (totalSize > 35 * 1024 * 1024) {
-        return NextResponse.json({ error: 'Total upload size exceeds 35 MB' }, { status: 400 });
-      }
-
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      const fileName = file.name;
-      const mimeType = file.type || '';
-
-      let pageCount = 1;
-      if (fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf')) {
-        try {
-          pageCount = await getPdfPageCount(arrayBuffer);
-        } catch {
-          pageCount = 1;
-        }
-      } else {
-        pageCount = 1; // 1 sheet per image
-      }
-
-      fileItems.push({
-        id: crypto.randomUUID(),
-        name: fileName,
-        size: file.size,
-        pages: pageCount,
-        type: mimeType,
-      });
-
-      filesToMerge.push({ buffer, fileName, mimeType });
+    for (const f of fileList) {
+      totalSize += f.size;
     }
+    if (totalSize > 35 * 1024 * 1024) {
+      return NextResponse.json({ error: 'Total upload size exceeds 35 MB' }, { status: 400 });
+    }
+
+    // Process all incoming file buffers and page counts in parallel
+    const processedFiles = await Promise.all(
+      fileList.map(async (file) => {
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const fileName = file.name;
+        const mimeType = file.type || '';
+
+        let pageCount = 1;
+        if (fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf')) {
+          try {
+            pageCount = await getPdfPageCount(arrayBuffer);
+          } catch {
+            pageCount = 1;
+          }
+        }
+
+        const item: UploadedFileItem = {
+          id: crypto.randomUUID(),
+          name: fileName,
+          size: file.size,
+          pages: pageCount,
+          type: mimeType,
+        };
+
+        const toMerge = { buffer, fileName, mimeType };
+
+        return { item, toMerge };
+      })
+    );
+
+    const fileItems = processedFiles.map((p) => p.item);
+    const filesToMerge = processedFiles.map((p) => p.toMerge);
 
     let finalBuffer: Buffer;
     let finalTotalPages = 0;
@@ -89,11 +94,11 @@ export async function POST(req: NextRequest) {
     const sanitizedName = fileList[0].name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const fileKey = `uploads/${uniqueId}-${sanitizedName}.pdf`;
 
-    // Upload merged master PDF to Cloudflare R2
-    await uploadToR2(fileKey, finalBuffer, 'application/pdf');
-
-    // Generate 15-min signed download URL
-    const downloadUrl = await getDownloadUrl(fileKey, 900);
+    // Concurrently upload to Cloudflare R2 and generate presigned download URL
+    const [downloadUrl] = await Promise.all([
+      getDownloadUrl(fileKey, 900),
+      uploadToR2(fileKey, finalBuffer, 'application/pdf'),
+    ]);
 
     return NextResponse.json({
       success: true,

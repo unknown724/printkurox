@@ -193,7 +193,7 @@ export async function mergeFilesToPdf(
     }
   }
 
-  const mergedBytes = await mergedPdf.save();
+  const mergedBytes = await mergedPdf.save({ useObjectStreams: false });
   return {
     mergedBuffer: Buffer.from(mergedBytes),
     totalPages: mergedPdf.getPageCount(),
