@@ -20,6 +20,7 @@ import {
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
 import { useRouter } from 'next/navigation';
+import { FloatingCheckoutDock } from '@/components/ui/FloatingCheckoutDock';
 
 declare global {
   interface Window {
@@ -487,6 +488,17 @@ export function CostSummary({
           </div>
         </div>
       )}
+
+      {/* Persistent Floating Glass Checkout Dock on Mobile & Desktop */}
+      <FloatingCheckoutDock
+        pricing={pricing}
+        printerOnline={printerOnline}
+        isAdmin={isAdmin}
+        isProcessing={isProcessing}
+        errorMessage={errorMessage}
+        onPayAndPrint={handlePayAndPrint}
+        onAdminBypass={handleAdminBypass}
+      />
     </div>
   );
 }

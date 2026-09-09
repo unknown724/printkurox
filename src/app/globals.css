@@ -265,10 +265,98 @@ body {
 .animate-offline { animation: offline-pulse 1.5s ease-in-out infinite; }
 
 /* =========================================================
-   AMBIENT BACKGROUND PARTICLES
+   AMBIENT BACKGROUND PARTICLES & DOT GRID
    ========================================================= */
 .ambient-orb {
   filter: blur(80px);
   border-radius: 50%;
   pointer-events: none;
+}
+
+/* Linear / Aceternity style subtle dot grid background */
+.bg-dot-grid {
+  background-image: radial-gradient(rgba(148, 163, 184, 0.15) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.dark .bg-dot-grid {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Masked dot grid with smooth radial falloff */
+.bg-dot-grid-masked {
+  background-image: radial-gradient(rgba(148, 163, 184, 0.20) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 15%, black 40%, transparent 95%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 15%, black 40%, transparent 95%);
+}
+
+.dark .bg-dot-grid-masked {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.10) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 15%, black 40%, transparent 95%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 15%, black 40%, transparent 95%);
+}
+
+/* =========================================================
+   FLOATING GLASS CHECKOUT DOCK
+   ========================================================= */
+.glass-dock {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 
+    0 -4px 24px -2px rgba(0, 0, 0, 0.08),
+    0 12px 40px -4px rgba(99, 102, 241, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+.dark .glass-dock {
+  background: rgba(10, 15, 29, 0.85);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 
+    0 -4px 32px -2px rgba(0, 0, 0, 0.5),
+    0 16px 48px -4px rgba(99, 102, 241, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Bento card modern styling */
+.glass-bento {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 2px 12px -2px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dark .glass-bento {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+}
+
+.glass-bento:hover {
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 8px 24px -4px rgba(99, 102, 241, 0.12);
+}
+
+.dark .glass-bento:hover {
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 8px 30px -4px rgba(99, 102, 241, 0.25);
+}
+
+/* Glowing border shimmer */
+.border-glow-indigo {
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.3), 0 4px 20px -2px rgba(99, 102, 241, 0.25);
+}
+
+.border-glow-emerald {
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.3), 0 4px 20px -2px rgba(16, 185, 129, 0.25);
 }

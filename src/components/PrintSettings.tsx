@@ -3,6 +3,7 @@
 import React from 'react';
 import { Minus, Plus, Layers, Palette, Copy } from 'lucide-react';
 import { PageConfig } from '@/lib/pricing';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 
 export interface PrintSettingsState {
   colorMode: 'bw' | 'color' | 'custom';
@@ -35,8 +36,8 @@ export function PrintSettings({
   return (
     <div className="space-y-3">
       {/* 1. Color Mode */}
-      <div className="card-premium rounded-2xl p-4 border border-slate-200/80 dark:border-white/8">
-        <div className="flex items-center justify-between mb-3">
+      <div className="card-premium rounded-2xl p-4 border border-slate-200/80 dark:border-white/8 space-y-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
             <div className="w-6 h-6 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center">
               <Palette className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
@@ -52,53 +53,38 @@ export function PrintSettings({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => update({ colorMode: 'bw' })}
-            className={`relative flex items-center justify-center gap-2.5 py-3.5 px-3 rounded-xl border text-sm font-semibold transition-all duration-200 overflow-hidden ${
-              settings.colorMode === 'bw'
-                ? 'border-slate-400/80 bg-slate-200/80 text-slate-900 shadow-sm dark:border-slate-400/60 dark:bg-slate-700/40 dark:text-white shadow-slate-400/10'
-                : 'border-slate-200 bg-slate-50/80 text-slate-600 hover:text-slate-900 hover:border-slate-300 dark:border-white/6 dark:bg-slate-900/40 dark:text-slate-400 dark:hover:text-white dark:hover:border-white/15 dark:hover:bg-white/3'
-            }`}
-          >
-            {settings.colorMode === 'bw' && (
-              <div className="absolute inset-0 bg-gradient-to-br from-slate-200/40 to-slate-300/20 dark:from-slate-700/20 dark:to-slate-800/20 pointer-events-none" />
-            )}
-            <span className="w-4 h-4 rounded-full bg-gradient-to-br from-slate-300 to-slate-600 border-2 border-slate-400/50 shrink-0" />
-            <span>Black & White</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => update({ colorMode: 'color' })}
-            className={`relative flex items-center justify-center gap-2.5 py-3.5 px-3 rounded-xl border text-sm font-semibold transition-all duration-200 overflow-hidden ${
-              settings.colorMode === 'color'
-                ? 'border-pink-500/60 bg-pink-50 text-pink-900 shadow-sm dark:border-pink-500/60 dark:bg-pink-600/15 dark:text-white shadow-pink-500/15'
-                : 'border-slate-200 bg-slate-50/80 text-slate-600 hover:text-slate-900 hover:border-slate-300 dark:border-white/6 dark:bg-slate-900/40 dark:text-slate-400 dark:hover:text-white dark:hover:border-white/15 dark:hover:bg-white/3'
-            }`}
-          >
-            {settings.colorMode === 'color' && (
-              <div className="absolute inset-0 bg-gradient-to-br from-pink-500/10 to-violet-500/10 dark:from-pink-600/10 dark:to-violet-600/10 pointer-events-none" />
-            )}
-            <span className="w-4 h-4 rounded-full bg-gradient-to-br from-pink-500 via-violet-500 to-amber-400 shadow-sm shadow-pink-500/40 shrink-0" />
-            <span>Full Color</span>
-          </button>
-        </div>
+        <SegmentedControl
+          value={settings.colorMode === 'custom' ? 'bw' : settings.colorMode}
+          onChange={(val) => update({ colorMode: val as 'bw' | 'color' })}
+          options={[
+            {
+              value: 'bw',
+              label: 'Black & White',
+              badge: '₹4/pg',
+              icon: <span className="w-2.5 h-2.5 rounded-full bg-slate-500 shrink-0" />,
+            },
+            {
+              value: 'color',
+              label: 'Full Color',
+              badge: '₹7/pg',
+              icon: <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-pink-500 to-violet-500 shadow-sm shadow-pink-500/50 shrink-0" />,
+            },
+          ]}
+        />
 
         {settings.colorMode === 'custom' && (
-          <div className="mt-2.5 px-3 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-500/8 border border-indigo-200 dark:border-indigo-500/20 flex items-center justify-between text-xs">
+          <div className="px-3 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-500/8 border border-indigo-200 dark:border-indigo-500/20 flex items-center justify-between text-xs">
             <span className="text-indigo-700 dark:text-indigo-300 font-semibold">⚡ Hybrid Mixed Mode</span>
             <span className="text-slate-500 dark:text-slate-400 text-[11px]">
-              Select above to force all pages one mode
+              Tap above to apply across all pages
             </span>
           </div>
         )}
       </div>
 
       {/* 2. Sides */}
-      <div className="card-premium rounded-2xl p-4 border border-slate-200/80 dark:border-white/8">
-        <div className="flex items-center justify-between mb-3">
+      <div className="card-premium rounded-2xl p-4 border border-slate-200/80 dark:border-white/8 space-y-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
             <div className="w-6 h-6 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center">
               <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
@@ -110,33 +96,23 @@ export function PrintSettings({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => update({ isDuplex: false })}
-            className={`flex flex-col items-center justify-center py-3.5 px-2 rounded-xl border transition-all duration-200 ${
-              !settings.isDuplex
-                ? 'border-indigo-500/60 bg-indigo-50 text-indigo-900 shadow-sm dark:border-indigo-500/60 dark:bg-indigo-600/15 dark:text-white shadow-indigo-500/15'
-                : 'border-slate-200 bg-slate-50/80 text-slate-600 hover:text-slate-900 hover:border-slate-300 dark:border-white/6 dark:bg-slate-900/40 dark:text-slate-400 dark:hover:text-white dark:hover:border-white/15'
-            }`}
-          >
-            <span className="text-sm font-semibold">Single-Sided</span>
-            <span className="text-[11px] opacity-75 mt-0.5">1 page per sheet</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => update({ isDuplex: true })}
-            className={`flex flex-col items-center justify-center py-3.5 px-2 rounded-xl border transition-all duration-200 ${
-              settings.isDuplex
-                ? 'border-indigo-500/60 bg-indigo-50 text-indigo-900 shadow-sm dark:border-indigo-500/60 dark:bg-indigo-600/15 dark:text-white shadow-indigo-500/15'
-                : 'border-slate-200 bg-slate-50/80 text-slate-600 hover:text-slate-900 hover:border-slate-300 dark:border-white/6 dark:bg-slate-900/40 dark:text-slate-400 dark:hover:text-white dark:hover:border-white/15'
-            }`}
-          >
-            <span className="text-sm font-semibold">Double-Sided</span>
-            <span className="text-[11px] opacity-75 mt-0.5">Front & Back (Save Paper)</span>
-          </button>
-        </div>
+        <SegmentedControl
+          value={settings.isDuplex ? 'duplex' : 'single'}
+          onChange={(val) => update({ isDuplex: val === 'duplex' })}
+          options={[
+            {
+              value: 'single',
+              label: 'Single-Sided',
+              sublabel: '1 pg/sheet',
+            },
+            {
+              value: 'duplex',
+              label: 'Double-Sided',
+              badge: 'Save ₹',
+              sublabel: '2 pgs/sheet',
+            },
+          ]}
+        />
       </div>
 
       {/* 3. Copies */}
