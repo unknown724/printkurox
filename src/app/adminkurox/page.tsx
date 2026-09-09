@@ -55,6 +55,7 @@ export default function AdminKuroxPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<AdminDevice[]>([]);
+  const [maxDevices, setMaxDevices] = useState<number>(4);
   const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -74,6 +75,7 @@ export default function AdminKuroxPage() {
         const data = await res.json();
         setIsAdmin(true);
         setDevices(data.devices || []);
+        if (data.maxDevices) setMaxDevices(data.maxDevices);
         setCurrentDeviceId(data.currentDeviceId || null);
         fetchRecentJobs();
       } else {
@@ -108,6 +110,9 @@ export default function AdminKuroxPage() {
       setIsAdmin(true);
       if (data.devices) {
         setDevices(data.devices);
+      }
+      if (data.maxDevices) {
+        setMaxDevices(data.maxDevices);
       }
       if (data.currentDeviceId) {
         setCurrentDeviceId(data.currentDeviceId);
@@ -273,7 +278,7 @@ export default function AdminKuroxPage() {
           </form>
 
           <p className="text-[11px] text-slate-500">
-            🔒 Maximum 3 devices. Devices never expire until disconnected.
+            🔒 Maximum {maxDevices} devices. Devices never expire until disconnected.
           </p>
         </div>
       ) : (
@@ -307,7 +312,7 @@ export default function AdminKuroxPage() {
             </Link>
           </div>
 
-          {/* Connected Devices (Max 3 Devices Management) */}
+          {/* Connected Devices (Max 4 Devices Management) */}
           <div className="glass-card rounded-2xl p-5 space-y-4 border-slate-700/60">
             <div className="flex items-center justify-between pb-2 border-b border-white/5">
               <div>
@@ -315,24 +320,24 @@ export default function AdminKuroxPage() {
                   <Laptop className="w-4 h-4 text-indigo-400" />
                   <span>Authorized Devices</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                    {devices.length} / 3 Connected
+                    {devices.length} / {maxDevices} Connected
                   </span>
                 </span>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Permanent device recognition (no expiration). Maximum 3 slots.
+                  Permanent device recognition (no expiration). Maximum {maxDevices} slots.
                 </p>
               </div>
 
-              {devices.length < 3 && (
+              {devices.length < maxDevices && (
                 <span className="text-[11px] text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
                   <PlusCircle className="w-3 h-3" />
-                  {3 - devices.length} slot available
+                  {maxDevices - devices.length} slot available
                 </span>
               )}
             </div>
 
             {/* Devices List */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {devices.map((d, index) => {
                 const isCurrent = d.device_id === currentDeviceId;
                 const isPhone = /iPhone|Android|iPad/i.test(d.user_agent);
@@ -391,7 +396,7 @@ export default function AdminKuroxPage() {
               })}
 
               {/* Empty slot placeholder */}
-              {Array.from({ length: Math.max(0, 3 - devices.length) }).map((_, i) => (
+              {Array.from({ length: Math.max(0, maxDevices - devices.length) }).map((_, i) => (
                 <div
                   key={i}
                   className="p-4 rounded-xl border border-dashed border-white/10 flex flex-col items-center justify-center text-center space-y-1 bg-slate-950/30 min-h-[140px]"

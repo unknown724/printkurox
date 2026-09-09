@@ -3,7 +3,7 @@ import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY || 'Kurox725#29';
 export const ADMIN_COOKIE_NAME = 'printkurox_admin_device_id';
-export const MAX_ADMIN_DEVICES = 3;
+export const MAX_ADMIN_DEVICES = 4;
 
 export interface AdminDevice {
   device_id: string;
