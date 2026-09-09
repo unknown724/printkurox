@@ -454,6 +454,9 @@ export function PageVisualizer({
                   {/* Subtle Margin Guideline */}
                   <div className="absolute inset-1.5 border border-dashed border-zinc-300 pointer-events-none rounded-[1px]" />
 
+                  {/* Interactive Laser Scanline effect on hover */}
+                  <div className="absolute inset-x-0 h-[2px] bg-gradient-to-r from-transparent via-blue-500/80 to-transparent pointer-events-none opacity-0 group-hover:opacity-100 group-hover:animate-scanline z-10 shadow-[0_0_8px_rgba(66,133,244,0.7)]" />
+
                   {/* Watermark indicating paper format & dimensions */}
                   <span className="absolute bottom-1 right-1.5 text-[8px] font-mono font-bold text-zinc-400 select-none uppercase tracking-tighter">
                     {isLandscape ? 'A4 297×210' : 'A4 210×297'}

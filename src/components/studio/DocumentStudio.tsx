@@ -126,10 +126,11 @@ export function DocumentStudio({
               <button
                 type="button"
                 onClick={() => goToStep(2)}
-                className="h-9 px-4 rounded-lg bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 font-medium text-xs flex items-center gap-1.5 shrink-0 shadow-xs transition-colors"
+                className="relative overflow-hidden group h-9 px-4 rounded-lg bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950 font-medium text-xs flex items-center gap-1.5 shrink-0 shadow-xs transition-all active:scale-[0.98]"
               >
+                <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/20 dark:via-zinc-900/10 to-transparent animate-shimmer-sheen pointer-events-none" />
                 <span>Customize Pages</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
               </button>
             </div>
           )}
@@ -241,10 +242,11 @@ export function DocumentStudio({
             <button
               type="button"
               onClick={() => goToStep(3)}
-              className="h-9 px-4 rounded-lg bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-medium flex items-center gap-1.5 shadow-xs transition-colors"
+              className="relative overflow-hidden group h-9 px-4 rounded-lg bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950 text-xs font-medium flex items-center gap-1.5 shadow-xs transition-all active:scale-[0.98]"
             >
+              <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/20 dark:via-zinc-900/10 to-transparent animate-shimmer-sheen pointer-events-none" />
               <span>Continue to Checkout (₹{pricing.totalPrice})</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </button>
           </div>
         </div>

@@ -349,20 +349,22 @@ export function CostSummary({
           type="button"
           onClick={handleAdminBypass}
           disabled={isProcessing}
-          className="w-full h-11 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors disabled:opacity-50"
+          className="relative overflow-hidden w-full h-11 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.99] disabled:opacity-50"
         >
-          <Zap className="w-4 h-4 fill-black" />
-          <span>⚡ Admin Free Print Bypass</span>
+          <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer-sheen pointer-events-none" />
+          <Zap className="w-4 h-4 fill-zinc-950" />
+          <span>Admin Free Print Active (Bypass)</span>
         </button>
       )}
 
-      {/* Primary Pay Button (shadcn button) */}
+      {/* Primary Pay Button (with live shimmer sheen) */}
       <button
         type="button"
         onClick={handlePayAndPrint}
         disabled={isProcessing}
-        className="w-full h-12 rounded-lg bg-zinc-900 text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 font-semibold text-sm flex items-center justify-center gap-2.5 shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="relative overflow-hidden group w-full h-12 rounded-xl bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-white font-semibold text-sm flex items-center justify-center gap-2.5 shadow-xs transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
       >
+        <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/15 dark:via-zinc-900/10 to-transparent animate-shimmer-sheen pointer-events-none" />
         {isProcessing ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -374,7 +376,7 @@ export function CostSummary({
             <span>
               {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} & Queue`}
             </span>
-            <ArrowRight className="w-4 h-4 opacity-70" />
+            <ArrowRight className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 transition-transform" />
           </>
         )}
       </button>

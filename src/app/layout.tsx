@@ -39,15 +39,15 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased bg-white text-zinc-900 dark:bg-[#131314] dark:text-[#e3e3e3] flex flex-col min-h-screen selection:bg-blue-500/30 selection:text-white transition-colors duration-200">
-        {/* Subtle Gemini ambient gradient (clean, calm, no rainbow orbs) */}
+        {/* Subtle Gemini living ambient gradient */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-blue-500/[0.04] via-purple-500/[0.02] to-transparent dark:from-blue-500/[0.06] dark:via-purple-500/[0.03] dark:to-transparent blur-3xl opacity-70" />
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[360px] bg-gradient-to-b from-blue-500/[0.06] via-purple-500/[0.04] to-transparent dark:from-blue-500/[0.09] dark:via-purple-500/[0.05] dark:to-transparent blur-3xl opacity-75 animate-living-glow" />
         </div>
 
         {/* ── Google Gemini-styled Minimal Header ── */}
         <header className="relative z-20 border-b border-zinc-200/80 dark:border-[#282a2c] bg-white/90 dark:bg-[#131314]/90 backdrop-blur-xl sticky top-0 transition-colors duration-200">
           <div className="max-w-xl mx-auto px-4 h-14 flex items-center justify-between">
-            {/* Brand Mark - Google Gemini Sparkle */}
+            {/* Brand Mark - Printer Logo with Google Gemini Gradient Colors */}
             <div className="flex items-center space-x-2.5">
               <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-[#1e1f20] border border-zinc-200/80 dark:border-[#282a2c] flex items-center justify-center shrink-0 shadow-xs">
                 <svg
@@ -57,15 +57,40 @@ export default function RootLayout({
                   xmlns="http://www.w3.org/2000/svg"
                 >
                   <defs>
-                    <linearGradient id="gemini-sparkle-logo" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <linearGradient id="gemini-printer-logo" x1="0%" y1="0%" x2="100%" y2="100%">
                       <stop offset="0%" stopColor="#4285F4" />
                       <stop offset="50%" stopColor="#9B72CF" />
                       <stop offset="100%" stopColor="#D96570" />
                     </linearGradient>
                   </defs>
+                  {/* Top Paper Infeed */}
                   <path
-                    d="M12 2C12 7.52285 7.52285 12 2 12C7.52285 12 12 16.4771 12 22C12 16.4771 16.4771 12 22 12C16.4771 12 12 7.52285 12 2Z"
-                    fill="url(#gemini-sparkle-logo)"
+                    d="M7 2.5H17V7.5H7V2.5Z"
+                    fill="url(#gemini-printer-logo)"
+                    opacity="0.85"
+                  />
+                  {/* Printer Main Chassis */}
+                  <rect
+                    x="3"
+                    y="7"
+                    width="18"
+                    height="10"
+                    rx="2.5"
+                    fill="url(#gemini-printer-logo)"
+                  />
+                  {/* Paper Output Sheet */}
+                  <path
+                    d="M6 14H18V19.5C18 20.0523 17.5523 20.5 17 20.5H7C6.44772 20.5 6 20.0523 6 19.5V14Z"
+                    fill="#ffffff"
+                  />
+                  {/* Paper print line */}
+                  <path d="M8.5 17H15.5" stroke="#131314" strokeWidth="1.2" strokeLinecap="round" />
+                  {/* Power status indicator */}
+                  <circle cx="17.5" cy="10" r="0.9" fill="#ffffff" />
+                  {/* Mini Gemini sparkle star accent at top right */}
+                  <path
+                    d="M20 1C20 2.2 18.8 3.2 17.5 3.2C18.8 3.2 20 4.2 20 5.4C20 4.2 21.2 3.2 22.5 3.2C21.2 3.2 20 2.2 20 1Z"
+                    fill="url(#gemini-printer-logo)"
                   />
                 </svg>
               </div>

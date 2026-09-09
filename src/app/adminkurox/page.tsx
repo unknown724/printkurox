@@ -167,44 +167,44 @@ export default function AdminKuroxPage() {
   if (loading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center py-24 space-y-4">
-        <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-        <p className="text-xs text-slate-400 font-medium">Verifying admin session...</p>
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">Verifying admin session...</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-3xl mx-auto w-full space-y-6 pb-14">
+    <div className="max-w-3xl mx-auto w-full space-y-6 pb-14 px-3 sm:px-0">
       {/* Header Navigation */}
       <div className="flex items-center justify-between">
         <Link
           href="/"
-          className="inline-flex items-center space-x-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+          className="inline-flex items-center space-x-1.5 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Go to Kiosk Web App</span>
+          <span>Back to Kiosk</span>
         </Link>
-        <span className="text-[11px] font-mono text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30 flex items-center gap-1.5 font-bold">
-          👑 ADMINKUROX PORTAL
+        <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30 flex items-center gap-1.5 font-bold">
+          ADMIN PORTAL
         </span>
       </div>
 
       {!isAdmin ? (
         /* Login Card */
-        <div className="glass-card rounded-3xl p-6 sm:p-8 border-indigo-500/30 space-y-5 text-center relative overflow-hidden">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500/20 to-indigo-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
-            <Lock className="w-7 h-7" />
+        <div className="rounded-2xl p-6 sm:p-8 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-5 text-center relative overflow-hidden shadow-2xs">
+          <div className="w-12 h-12 rounded-full bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] flex items-center justify-center text-zinc-700 dark:text-zinc-300 mx-auto">
+            <Lock className="w-5 h-5" />
           </div>
 
           <div>
-            <h2 className="text-xl font-black text-white">PrintKurox Master Authorization</h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-              Authorize this phone or laptop to print for free on the Epson L3210 printer without Razorpay checkout.
+            <h2 className="text-lg font-bold text-zinc-900 dark:text-white">PrintKurox Master Authorization</h2>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-sm mx-auto">
+              Authorize this phone or laptop to print for free on the Epson L3210 printer without payment checkout.
             </p>
           </div>
 
           {error && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center justify-center gap-2">
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs flex items-center justify-center gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
@@ -212,35 +212,35 @@ export default function AdminKuroxPage() {
 
           <form onSubmit={handleLogin} className="space-y-3.5 max-w-sm mx-auto">
             {/* Auto-detected Device Indicator */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-left">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-left">
               <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-600 dark:text-zinc-300">
                   <Laptop className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Auto-Detected Device</span>
-                  <span className="text-xs font-bold text-white">{customDeviceName || 'Detecting device...'}</span>
+                  <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider block">Auto-Detected Device</span>
+                  <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">{customDeviceName || 'Detecting device...'}</span>
                 </div>
               </div>
-              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                 Recognized
               </span>
             </div>
 
             <div className="relative">
-              <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <KeyRound className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
                 placeholder="Enter Passcode"
                 required
-                className="w-full pl-10 pr-10 py-3 rounded-xl bg-slate-900/90 border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500"
+                className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-zinc-900 dark:text-white placeholder-zinc-400 text-sm focus:outline-none focus:border-blue-500 transition-colors"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors"
                 title={showPassword ? 'Hide passcode' : 'Show passcode'}
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -248,24 +248,25 @@ export default function AdminKuroxPage() {
             </div>
 
             <div className="space-y-1 text-left">
-              <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 font-medium">
-                <span>Device Label (Auto-detected)</span>
-                <span className="text-slate-500">Editable if needed</span>
+              <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1 font-medium">
+                <span>Device Label</span>
+                <span className="text-zinc-400">Auto-detected</span>
               </div>
               <input
                 type="text"
                 value={customDeviceName}
                 onChange={(e) => setCustomDeviceName(e.target.value)}
                 placeholder="Auto-detected Device"
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-900/60 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-indigo-500"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-zinc-900 dark:text-white placeholder-zinc-400 text-xs focus:outline-none focus:border-blue-500 transition-colors"
               />
             </div>
 
             <button
               type="submit"
               disabled={submitting || !pin}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-indigo-600 to-violet-600 hover:from-amber-400 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-500/25 disabled:opacity-50 flex items-center justify-center gap-2"
+              className="relative overflow-hidden w-full py-2.5 px-4 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-950 text-xs font-semibold hover:bg-zinc-800 dark:hover:bg-white transition-all shadow-xs disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]"
             >
+              <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/15 dark:via-zinc-900/10 to-transparent animate-shimmer-sheen pointer-events-none" />
               {submitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -274,43 +275,44 @@ export default function AdminKuroxPage() {
               ) : (
                 <>
                   <ShieldCheck className="w-4 h-4" />
-                  <span>Authorize This Device (Permanent)</span>
+                  <span>Authorize This Device</span>
                 </>
               )}
             </button>
           </form>
 
-          <p className="text-[11px] text-slate-500">
-            🔒 Maximum {maxDevices} devices. Devices never expire until disconnected.
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            Maximum {maxDevices} devices. Devices never expire until disconnected.
           </p>
         </div>
       ) : (
         /* Authenticated Dashboard */
         <div className="space-y-6">
           {/* Active Admin Status Banner */}
-          <div className="rounded-2xl p-5 border-2 border-amber-500/40 bg-gradient-to-r from-amber-950/40 via-slate-900 to-indigo-950/40 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center space-x-3.5">
-              <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
-                <ShieldCheck className="w-7 h-7" />
+          <div className="rounded-2xl p-4 sm:p-5 border border-amber-500/30 bg-amber-500/[0.04] dark:bg-[#1e1f20] flex flex-wrap items-center justify-between gap-4 shadow-2xs">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 shrink-0">
+                <ShieldCheck className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-[10px] uppercase font-black tracking-widest text-amber-400">
-                  👑 Active Admin Device Recognized
+                <span className="text-[10px] uppercase font-bold tracking-wider text-amber-600 dark:text-amber-400">
+                  Active Admin Recognized
                 </span>
-                <h3 className="text-lg font-black text-white">
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
                   Admin Free Print Mode Enabled
                 </h3>
-                <p className="text-xs text-slate-300">
-                  This device is registered and authorized with zero expiration.
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  This device is authorized to print directly without Razorpay payment.
                 </p>
               </div>
             </div>
 
             <Link
               href="/"
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black text-xs font-extrabold transition-all shadow-lg shadow-amber-500/25 flex items-center gap-1.5"
+              className="relative overflow-hidden px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 active:scale-[0.98]"
             >
-              <span>Open Kiosk (Admin Badge)</span>
+              <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer-sheen pointer-events-none" />
+              <span>Open Kiosk</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </Link>
           </div>
@@ -318,88 +320,88 @@ export default function AdminKuroxPage() {
           {/* Bento KPI Telemetry Grid */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {/* Card 1: Queue Activity */}
-            <div className="glass-bento rounded-2xl p-4 border border-indigo-500/20 flex flex-col justify-between space-y-2">
+            <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Live Queue</span>
-                <div className="w-7 h-7 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Live Queue</span>
+                <div className="w-7 h-7 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-500">
                   <Activity className="w-3.5 h-3.5 animate-pulse" />
                 </div>
               </div>
               <div>
-                <span className="text-2xl font-black text-white font-mono">
+                <span className="text-2xl font-bold text-zinc-900 dark:text-white font-mono">
                   {jobs.filter(j => j.status === 'PAID' || j.status.startsWith('PRINTING')).length}
                 </span>
-                <p className="text-[11px] text-indigo-300">Printing / Queued</p>
+                <p className="text-[11px] text-zinc-500">Printing / Queued</p>
               </div>
             </div>
 
             {/* Card 2: Completed Jobs */}
-            <div className="glass-bento rounded-2xl p-4 border border-emerald-500/20 flex flex-col justify-between space-y-2">
+            <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Printed</span>
-                <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Total Printed</span>
+                <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500">
                   <CheckCircle2 className="w-3.5 h-3.5" />
                 </div>
               </div>
               <div>
-                <span className="text-2xl font-black text-emerald-400 font-mono">
+                <span className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
                   {jobs.filter(j => j.status === 'COMPLETED').length}
                 </span>
-                <p className="text-[11px] text-slate-400">of {jobs.length} jobs in queue</p>
+                <p className="text-[11px] text-zinc-500">of {jobs.length} total jobs</p>
               </div>
             </div>
 
             {/* Card 3: Razorpay Revenue */}
-            <div className="glass-bento rounded-2xl p-4 border border-amber-500/20 flex flex-col justify-between space-y-2">
+            <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Gross Revenue</span>
-                <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Gross Revenue</span>
+                <div className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500">
                   <IndianRupee className="w-3.5 h-3.5" />
                 </div>
               </div>
               <div>
-                <span className="text-2xl font-black text-amber-300 font-mono">
+                <span className="text-2xl font-bold text-amber-600 dark:text-amber-400 font-mono">
                   ₹{jobs.reduce((sum, j) => (j.status === 'COMPLETED' || j.status === 'PAID') && !j.payment_id?.startsWith('ADMIN_') ? sum + (j.total_price || 0) : sum, 0)}
                 </span>
-                <p className="text-[11px] text-slate-400">Online UPI & Cards</p>
+                <p className="text-[11px] text-zinc-500">Online UPI & Cards</p>
               </div>
             </div>
 
             {/* Card 4: Admin Slots */}
-            <div className="glass-bento rounded-2xl p-4 border border-violet-500/20 flex flex-col justify-between space-y-2">
+            <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Admin Devices</span>
-                <div className="w-7 h-7 rounded-lg bg-violet-500/15 border border-violet-500/30 flex items-center justify-center text-violet-400">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Admin Devices</span>
+                <div className="w-7 h-7 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-500">
                   <Laptop className="w-3.5 h-3.5" />
                 </div>
               </div>
               <div>
-                <span className="text-2xl font-black text-violet-300 font-mono">
+                <span className="text-2xl font-bold text-purple-600 dark:text-purple-400 font-mono">
                   {devices.length} / {maxDevices}
                 </span>
-                <p className="text-[11px] text-slate-400">{Math.max(0, maxDevices - devices.length)} slots remaining</p>
+                <p className="text-[11px] text-zinc-500">{Math.max(0, maxDevices - devices.length)} slots left</p>
               </div>
             </div>
           </div>
 
           {/* Connected Devices (Max 4 Devices Management) */}
-          <div className="glass-card rounded-2xl p-5 space-y-4 border-slate-700/60">
-            <div className="flex items-center justify-between pb-2 border-b border-white/5">
+          <div className="rounded-2xl p-5 space-y-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] shadow-2xs">
+            <div className="flex items-center justify-between pb-2.5 border-b border-zinc-100 dark:border-[#282a2c]">
               <div>
-                <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                  <Laptop className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                  <Laptop className="w-4 h-4 text-blue-500" />
                   <span>Authorized Devices</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-100 dark:bg-[#131314] text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-[#282a2c]">
                     {devices.length} / {maxDevices} Connected
                   </span>
                 </span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Permanent device recognition (no expiration). Maximum {maxDevices} slots.
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Permanent device authorization. Maximum {maxDevices} active devices.
                 </p>
               </div>
 
               {devices.length < maxDevices && (
-                <span className="text-[11px] text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20 font-medium">
                   <PlusCircle className="w-3 h-3" />
                   {maxDevices - devices.length} slot available
                 </span>
@@ -417,48 +419,48 @@ export default function AdminKuroxPage() {
                     key={d.device_id}
                     className={`p-3.5 rounded-xl border flex flex-col justify-between space-y-2 relative transition-all ${
                       isCurrent
-                        ? 'border-amber-500/50 bg-gradient-to-b from-amber-950/20 to-slate-900 shadow-md shadow-amber-500/10'
-                        : 'border-white/5 bg-slate-900/60'
+                        ? 'border-amber-500/40 bg-amber-500/[0.03] dark:bg-[#131314]'
+                        : 'border-zinc-200 dark:border-[#282a2c] bg-zinc-50/50 dark:bg-[#131314]/60'
                     }`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex items-center space-x-2">
-                        <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                        <div className="w-7 h-7 rounded-full bg-zinc-100 dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-600 dark:text-zinc-300">
                           {isPhone ? <Smartphone className="w-3.5 h-3.5" /> : <Laptop className="w-3.5 h-3.5" />}
                         </div>
                         <div>
-                          <p className="font-bold text-white text-xs truncate max-w-[130px]">
+                          <p className="font-bold text-zinc-900 dark:text-white text-xs truncate max-w-[130px]">
                             {d.device_name}
                           </p>
-                          <span className="text-[10px] text-slate-400">Slot #{index + 1}</span>
+                          <span className="text-[10px] text-zinc-500">Slot #{index + 1}</span>
                         </div>
                       </div>
 
                       {isCurrent && (
-                        <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
                           This Device
                         </span>
                       )}
                     </div>
 
-                    <div className="space-y-1 text-[10px] text-slate-400 border-t border-white/5 pt-2">
-                      <p>IP: <span className="font-mono text-slate-300">{d.ip_address}</span></p>
-                      <p>Active: <span className="text-slate-300">{new Date(d.last_active).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></p>
+                    <div className="space-y-1 text-[10px] text-zinc-500 border-t border-zinc-100 dark:border-[#282a2c] pt-2">
+                      <p>IP: <span className="font-mono text-zinc-700 dark:text-zinc-300">{d.ip_address}</span></p>
+                      <p>Active: <span className="text-zinc-700 dark:text-zinc-300">{new Date(d.last_active).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></p>
                     </div>
 
                     {isCurrent ? (
                       <button
                         type="button"
                         onClick={() => handleRevokeDevice(d.device_id)}
-                        className="w-full py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5"
+                        className="w-full py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-[11px] font-medium transition-all flex items-center justify-center gap-1.5"
                       >
                         <Trash2 className="w-3 h-3" />
-                        <span>Disconnect This Device</span>
+                        <span>Disconnect</span>
                       </button>
                     ) : (
-                      <div className="w-full py-1.5 px-2 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-default">
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span>Hardcore Admin • Unremovable</span>
+                      <div className="w-full py-1.5 px-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-medium flex items-center justify-center gap-1.5 cursor-default">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span>Admin Device</span>
                       </div>
                     )}
                   </div>
@@ -469,26 +471,26 @@ export default function AdminKuroxPage() {
               {Array.from({ length: Math.max(0, maxDevices - devices.length) }).map((_, i) => (
                 <div
                   key={i}
-                  className="p-4 rounded-xl border border-dashed border-white/10 flex flex-col items-center justify-center text-center space-y-1 bg-slate-950/30 min-h-[140px]"
+                  className="p-4 rounded-xl border border-dashed border-zinc-200 dark:border-[#282a2c] flex flex-col items-center justify-center text-center space-y-1 bg-zinc-50/50 dark:bg-[#131314]/30 min-h-[130px]"
                 >
-                  <PlusCircle className="w-5 h-5 text-slate-600" />
-                  <p className="text-xs font-medium text-slate-500">Available Device Slot</p>
-                  <p className="text-[10px] text-slate-600">Open /adminkurox on another device to connect</p>
+                  <PlusCircle className="w-5 h-5 text-zinc-400 dark:text-zinc-600" />
+                  <p className="text-xs font-medium text-zinc-500">Available Slot</p>
+                  <p className="text-[10px] text-zinc-400">Open portal on another device</p>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Recent D1 Print Queue */}
-          <div className="glass-card rounded-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-white/5">
-              <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-indigo-400" />
+          <div className="rounded-2xl p-5 space-y-3 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] shadow-2xs">
+            <div className="flex items-center justify-between pb-2.5 border-b border-zinc-100 dark:border-[#282a2c]">
+              <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-blue-500" />
                 Live Print Queue
               </span>
               <button
                 onClick={fetchRecentJobs}
-                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white flex items-center gap-1 transition-colors"
               >
                 <RotateCcw className={`w-3 h-3 ${loadingJobs ? 'animate-spin' : ''}`} />
                 <span>Refresh</span>
@@ -496,29 +498,29 @@ export default function AdminKuroxPage() {
             </div>
 
             {loadingJobs ? (
-              <div className="py-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+              <div className="py-8 text-center text-xs text-zinc-500 flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
                 <span>Syncing queue...</span>
               </div>
             ) : jobs.length === 0 ? (
-              <p className="py-6 text-center text-xs text-slate-500">No print jobs in queue.</p>
+              <p className="py-6 text-center text-xs text-zinc-500">No print jobs in queue.</p>
             ) : (
               <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
                 {jobs.map((j) => (
                   <div
                     key={j.id}
-                    className="p-3 rounded-xl bg-slate-900/60 border border-white/5 flex items-center justify-between text-xs"
+                    className="p-3 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200/80 dark:border-[#282a2c] flex items-center justify-between text-xs"
                   >
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-white text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 text-xs px-2 py-0.5 rounded-full bg-zinc-200/60 dark:bg-[#282a2c] border border-zinc-300 dark:border-zinc-700">
                           {j.pickup_code}
                         </span>
-                        <span className="font-medium text-slate-200 truncate max-w-[200px]">
+                        <span className="font-semibold text-zinc-900 dark:text-zinc-200 truncate max-w-[200px]">
                           {j.file_name}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                         {j.total_pages} pages • {j.color_mode?.toUpperCase() || 'B&W'} • ₹{j.total_price} •{' '}
                         {j.payment_id?.startsWith('ADMIN_')
                           ? '👑 Admin Free'
@@ -529,12 +531,12 @@ export default function AdminKuroxPage() {
                     </div>
 
                     <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                         j.status === 'COMPLETED'
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
                           : j.status === 'PAID'
-                          ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                          : 'bg-slate-800 text-slate-400'
+                          ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30'
+                          : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
                       }`}
                     >
                       {j.status}
