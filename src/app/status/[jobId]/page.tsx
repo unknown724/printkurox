@@ -16,6 +16,8 @@ import {
   Share2,
   ShieldCheck,
   Building2,
+  MessageCircle,
+  PackageCheck,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -116,6 +118,13 @@ export default function JobStatusPage({
 
   const handlePrintReceipt = () => {
     window.print();
+  };
+
+  const handleWhatsAppShare = () => {
+    if (!job) return;
+    const text = `🖨️ *PrintKurox Boarding Pass #${job.pickupCode}*\n📄 *File:* ${job.fileName}\n💰 *Paid:* ₹${job.totalPrice}\n📍 *Pickup:* Block B, Room 29 (Tray Code: *${job.pickupCode}*)\n🔗 *Live Track:* ${typeof window !== 'undefined' ? window.location.href : ''}`;
+    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
   };
 
   if (loading) {
@@ -227,24 +236,52 @@ export default function JobStatusPage({
         </span>
       </div>
 
-      {/* Hero Pickup Code Card */}
-      <div className="glass-card rounded-3xl p-6 text-center border-indigo-500/40 relative overflow-hidden shadow-2xl shadow-indigo-950/40 print:border-black print:bg-white print:text-black">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none print:hidden" />
+      {/* Apple Wallet / Boarding Pass Digital Ticket */}
+      <div className="glass-card rounded-3xl p-6 sm:p-7 text-center border-indigo-500/40 relative overflow-hidden shadow-2xl shadow-indigo-950/40 print:border-black print:bg-white print:text-black">
+        {/* Ambient Top Glow */}
+        <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-24 bg-indigo-500/20 rounded-full blur-2xl pointer-events-none print:hidden" />
 
-        <p className="text-xs font-bold uppercase tracking-widest text-indigo-400 mb-1 print:text-slate-600">
-          Your Pickup Code
+        <div className="flex items-center justify-between pb-3 border-b border-slate-200/60 dark:border-white/10 text-xs">
+          <span className="font-extrabold tracking-widest text-indigo-600 dark:text-indigo-400 uppercase text-[10px]">
+            PrintKurox Boarding Pass
+          </span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+            Confirmed #{job.id.slice(0, 8)}
+          </span>
+        </div>
+
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mt-4 mb-1">
+          Your Output Tray Pickup Code
         </p>
 
-        {/* Large Pickup Code Badge */}
-        <div className="inline-block my-2 py-3.5 px-8 rounded-2xl bg-gradient-to-tr from-indigo-950/90 to-slate-900 border-2 border-indigo-500/70 shadow-xl shadow-indigo-500/20 print:bg-slate-100 print:border-black">
-          <span className="text-5xl sm:text-6xl font-black tracking-wider text-white font-mono-code print:text-black">
+        {/* Large High-Contrast Pickup Code with Glowing Border */}
+        <div className="inline-block my-2 py-4 px-10 rounded-2xl bg-gradient-to-b from-indigo-950/80 via-slate-900 to-indigo-950/90 border-2 border-indigo-500 shadow-2xl shadow-indigo-500/30 print:bg-slate-100 print:border-black">
+          <span className="text-5xl sm:text-6xl font-black tracking-widest text-white font-mono-code print:text-black select-all">
             {job.pickupCode}
           </span>
         </div>
 
-        <p className="text-xs text-slate-300 mt-2 max-w-sm mx-auto print:text-slate-700">
-          Show this 4-digit code to collect your physical document from the tray.
+        <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 max-w-sm mx-auto leading-relaxed">
+          Show this code to collect your prints directly from the output tray.
         </p>
+
+        {/* Ticket Perforation Tear Effect */}
+        <div className="relative my-5">
+          <div className="absolute -left-9 -top-3 w-6 h-6 rounded-full bg-slate-900 dark:bg-[#070b14] border-r border-indigo-500/40" />
+          <div className="border-t-2 border-dashed border-slate-300 dark:border-white/15" />
+          <div className="absolute -right-9 -top-3 w-6 h-6 rounded-full bg-slate-900 dark:bg-[#070b14] border-l border-indigo-500/40" />
+        </div>
+
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-1">
+          <div className="text-left">
+            <span className="text-[10px] uppercase font-bold text-slate-400">Document</span>
+            <p className="font-semibold text-slate-900 dark:text-slate-200 truncate max-w-[150px]">{job.fileName}</p>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] uppercase font-bold text-slate-400">Paid Total</span>
+            <p className="font-black text-emerald-600 dark:text-emerald-400 text-base">₹{job.totalPrice}</p>
+          </div>
+        </div>
       </div>
 
       {/* Prominent Collection Point Banner */}
@@ -273,7 +310,7 @@ export default function JobStatusPage({
       </div>
 
       {/* Realtime Status Indicator Card (Hidden in printed receipt) */}
-      <div className="glass-card rounded-2xl p-5 space-y-4 print:hidden">
+      <div className="glass-card rounded-2xl p-5 space-y-4 print:hidden border-indigo-500/20">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
             Live Printing Progress
@@ -288,15 +325,43 @@ export default function JobStatusPage({
           </div>
         </div>
 
-        <p className="text-xs text-slate-300">
+        <p className="text-xs text-slate-300 leading-relaxed">
           {statusInfo.description}
         </p>
 
-        {/* Progress steps */}
-        <div className="grid grid-cols-3 gap-2 pt-2">
-          <div className={`h-1.5 rounded-full ${statusInfo.step >= 1 ? 'bg-indigo-500' : 'bg-slate-800'}`} />
-          <div className={`h-1.5 rounded-full ${statusInfo.step >= 2 ? 'bg-indigo-500' : 'bg-slate-800'}`} />
-          <div className={`h-1.5 rounded-full ${statusInfo.step >= 3 ? 'bg-emerald-500' : 'bg-slate-800'}`} />
+        {/* 3-Milestone Visual Stepper */}
+        <div className="pt-2">
+          <div className="grid grid-cols-3 gap-2">
+            {/* Milestone 1: Payment */}
+            <div className={`p-2.5 rounded-xl border flex flex-col items-center text-center space-y-1 transition-all ${
+              statusInfo.step >= 1 
+                ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300' 
+                : 'border-white/5 bg-slate-900/40 text-slate-500'
+            }`}>
+              <ShieldCheck className={`w-4 h-4 ${statusInfo.step >= 1 ? 'text-indigo-400' : 'text-slate-600'}`} />
+              <span className="text-[10px] font-bold">1. Confirmed</span>
+            </div>
+
+            {/* Milestone 2: Printing */}
+            <div className={`p-2.5 rounded-xl border flex flex-col items-center text-center space-y-1 transition-all ${
+              statusInfo.step >= 2 
+                ? 'border-sky-500/50 bg-sky-500/10 text-sky-300' 
+                : 'border-white/5 bg-slate-900/40 text-slate-500'
+            }`}>
+              <Printer className={`w-4 h-4 ${statusInfo.step === 2 ? 'animate-pulse text-sky-400' : statusInfo.step > 2 ? 'text-emerald-400' : 'text-slate-600'}`} />
+              <span className="text-[10px] font-bold">2. Printing</span>
+            </div>
+
+            {/* Milestone 3: Ready */}
+            <div className={`p-2.5 rounded-xl border flex flex-col items-center text-center space-y-1 transition-all ${
+              statusInfo.step >= 3 
+                ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300 shadow-sm shadow-emerald-500/20' 
+                : 'border-white/5 bg-slate-900/40 text-slate-500'
+            }`}>
+              <PackageCheck className={`w-4 h-4 ${statusInfo.step >= 3 ? 'text-emerald-400 animate-bounce' : 'text-slate-600'}`} />
+              <span className="text-[10px] font-bold">3. In Tray</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -389,20 +454,27 @@ export default function JobStatusPage({
         </div>
 
         {/* Action Buttons for Receipt (Hidden during print) */}
-        <div className="grid grid-cols-2 gap-2.5 pt-2 print:hidden">
+        <div className="grid grid-cols-3 gap-2 pt-2 print:hidden">
           <button
             onClick={handlePrintReceipt}
-            className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-semibold transition-all hover:border-white/20 active:scale-[0.98]"
+            className="flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-semibold transition-all hover:border-white/20 active:scale-[0.98]"
           >
             <Download className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Print Receipt</span>
+            <span className="truncate">Print Receipt</span>
+          </button>
+          <button
+            onClick={handleWhatsAppShare}
+            className="flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 hover:text-white text-xs font-semibold transition-all active:scale-[0.98]"
+          >
+            <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="truncate">WhatsApp</span>
           </button>
           <button
             onClick={handleShareOrCopy}
-            className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 hover:text-white text-xs font-semibold transition-all active:scale-[0.98]"
+            className="flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 hover:text-white text-xs font-semibold transition-all active:scale-[0.98]"
           >
             <Share2 className="w-3.5 h-3.5" />
-            <span>{copied ? 'Copied!' : 'Share Slip'}</span>
+            <span className="truncate">{copied ? 'Copied!' : 'Copy Link'}</span>
           </button>
         </div>
       </div>

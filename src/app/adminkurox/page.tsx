@@ -20,6 +20,9 @@ import {
   Eye,
   EyeOff,
   ShieldAlert,
+  Activity,
+  CheckCircle2,
+  IndianRupee,
 } from 'lucide-react';
 import { getClientDetailedDevice } from '@/lib/device-detection';
 
@@ -310,6 +313,73 @@ export default function AdminKuroxPage() {
               <span>Open Kiosk (Admin Badge)</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </Link>
+          </div>
+
+          {/* Bento KPI Telemetry Grid */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Card 1: Queue Activity */}
+            <div className="glass-bento rounded-2xl p-4 border border-indigo-500/20 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Live Queue</span>
+                <div className="w-7 h-7 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                  <Activity className="w-3.5 h-3.5 animate-pulse" />
+                </div>
+              </div>
+              <div>
+                <span className="text-2xl font-black text-white font-mono">
+                  {jobs.filter(j => j.status === 'PAID' || j.status.startsWith('PRINTING')).length}
+                </span>
+                <p className="text-[11px] text-indigo-300">Printing / Queued</p>
+              </div>
+            </div>
+
+            {/* Card 2: Completed Jobs */}
+            <div className="glass-bento rounded-2xl p-4 border border-emerald-500/20 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Printed</span>
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                </div>
+              </div>
+              <div>
+                <span className="text-2xl font-black text-emerald-400 font-mono">
+                  {jobs.filter(j => j.status === 'COMPLETED').length}
+                </span>
+                <p className="text-[11px] text-slate-400">of {jobs.length} jobs in queue</p>
+              </div>
+            </div>
+
+            {/* Card 3: Razorpay Revenue */}
+            <div className="glass-bento rounded-2xl p-4 border border-amber-500/20 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Gross Revenue</span>
+                <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <IndianRupee className="w-3.5 h-3.5" />
+                </div>
+              </div>
+              <div>
+                <span className="text-2xl font-black text-amber-300 font-mono">
+                  ₹{jobs.reduce((sum, j) => (j.status === 'COMPLETED' || j.status === 'PAID') && !j.payment_id?.startsWith('ADMIN_') ? sum + (j.total_price || 0) : sum, 0)}
+                </span>
+                <p className="text-[11px] text-slate-400">Online UPI & Cards</p>
+              </div>
+            </div>
+
+            {/* Card 4: Admin Slots */}
+            <div className="glass-bento rounded-2xl p-4 border border-violet-500/20 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Admin Devices</span>
+                <div className="w-7 h-7 rounded-lg bg-violet-500/15 border border-violet-500/30 flex items-center justify-center text-violet-400">
+                  <Laptop className="w-3.5 h-3.5" />
+                </div>
+              </div>
+              <div>
+                <span className="text-2xl font-black text-violet-300 font-mono">
+                  {devices.length} / {maxDevices}
+                </span>
+                <p className="text-[11px] text-slate-400">{Math.max(0, maxDevices - devices.length)} slots remaining</p>
+              </div>
+            </div>
           </div>
 
           {/* Connected Devices (Max 4 Devices Management) */}

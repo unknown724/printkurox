@@ -128,7 +128,7 @@ export default function HomePage() {
   const colorCount = pageConfigs.filter((p) => p.included && p.colorMode === 'color').length;
 
   return (
-    <div className="space-y-5 pb-12">
+    <div className="space-y-5 pb-36 sm:pb-16">
       {/* Pickup Banner */}
       <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-indigo-50/90 border border-indigo-200/80 text-xs text-indigo-700 dark:bg-indigo-500/8 dark:border-indigo-500/18 dark:text-indigo-300 animate-fade-in-up">
         <div className="flex items-center space-x-2">
