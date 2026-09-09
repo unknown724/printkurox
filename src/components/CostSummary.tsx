@@ -302,10 +302,28 @@ export function CostSummary({
         <div className="px-4 py-4 bg-gradient-to-r from-emerald-50 to-transparent dark:from-emerald-950/30 border-t border-slate-200/80 dark:border-white/5">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Total Payable</span>
-              <p className="text-[10px] text-slate-500 mt-0.5">Includes paper, ink &amp; taxes</p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Total Payable</span>
+                {pricing.savings > 0 && (
+                  <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">
+                    Saved ₹{pricing.savings}
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                {pricing.savings > 0 ? (
+                  <span className="text-emerald-400 font-semibold">{pricing.tierName} Applied</span>
+                ) : (
+                  'Includes paper, ink & taxes'
+                )}
+              </p>
             </div>
-            <div className="flex items-baseline gap-0.5">
+            <div className="flex items-baseline gap-1.5">
+              {pricing.savings > 0 && (
+                <span className="text-base font-semibold line-through text-slate-500 tabular-nums">
+                  ₹{pricing.originalPrice}
+                </span>
+              )}
               <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400">₹</span>
               <span className="text-4xl font-black text-emerald-600 dark:text-emerald-400 tracking-tight tabular-nums">
                 {pricing.totalPrice}

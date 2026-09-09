@@ -1,4 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
+import { convertDocxToPdf } from './docx-converter';
 
 /**
  * Parses custom page range string like "1-3, 5, 8-10"
@@ -190,6 +191,15 @@ export async function mergeFilesToPdf(
         });
       } catch (imgErr) {
         console.warn(`Failed to embed image ${item.fileName}:`, imgErr);
+      }
+    } else if (ext === 'docx' || ext === 'doc' || item.mimeType.includes('word') || item.mimeType.includes('officedocument')) {
+      try {
+        const { pdfBuffer } = await convertDocxToPdf(item.buffer);
+        const docxPdf = await PDFDocument.load(pdfBuffer);
+        const copiedPages = await mergedPdf.copyPages(docxPdf, docxPdf.getPageIndices());
+        copiedPages.forEach((page) => mergedPdf.addPage(page));
+      } catch (docxErr) {
+        console.warn(`Failed to convert docx ${item.fileName}:`, docxErr);
       }
     }
   }

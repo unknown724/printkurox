@@ -6,6 +6,7 @@ import {
   deleteFromR2,
 } from '@/lib/cloudflare-r2';
 import { getPdfPageCount, mergeFilesToPdf } from '@/lib/pdf-utils';
+import { getDocxMetadata } from '@/lib/docx-converter';
 import crypto from 'crypto';
 
 export const runtime = 'nodejs';
@@ -71,6 +72,13 @@ export async function POST(req: NextRequest) {
         if (fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf')) {
           try {
             pageCount = await getPdfPageCount(buffer);
+          } catch {
+            pageCount = 1;
+          }
+        } else if (fileName.toLowerCase().endsWith('.docx') || fileName.toLowerCase().endsWith('.doc') || mimeType.includes('word')) {
+          try {
+            const meta = await getDocxMetadata(buffer);
+            pageCount = meta.pageCount || 1;
           } catch {
             pageCount = 1;
           }
