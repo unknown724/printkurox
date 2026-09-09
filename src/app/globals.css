@@ -5,21 +5,21 @@
 
 @layer base {
   :root {
-    --background: #f8fafc;
-    --foreground: #0f172a;
-    --card-bg: rgba(255, 255, 255, 0.90);
+    --background: #f9f9fa;
+    --foreground: #1f1f1f;
+    --card-bg: rgba(255, 255, 255, 0.95);
     --border-subtle: rgba(0, 0, 0, 0.08);
-    --glow-indigo: rgba(99, 102, 241, 0.25);
-    --glow-emerald: rgba(16, 185, 129, 0.25);
+    --glow-indigo: rgba(66, 133, 244, 0.15);
+    --glow-emerald: rgba(16, 185, 129, 0.15);
   }
 
   .dark {
-    --background: #070b14;
-    --foreground: #f1f5f9;
-    --card-bg: rgba(13, 19, 35, 0.85);
-    --border-subtle: rgba(255, 255, 255, 0.07);
-    --glow-indigo: rgba(99, 102, 241, 0.45);
-    --glow-emerald: rgba(16, 185, 129, 0.45);
+    --background: #131314;
+    --foreground: #e3e3e3;
+    --card-bg: #1e1f20;
+    --border-subtle: #282a2c;
+    --glow-indigo: rgba(66, 133, 244, 0.15);
+    --glow-emerald: rgba(16, 185, 129, 0.15);
   }
 }
 
@@ -54,24 +54,24 @@ body {
 }
 
 .dark .glass-card {
-  background: rgba(13, 19, 35, 0.80);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: #1e1f20;
+  border: 1px solid #282a2c;
+  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.25);
 }
 
 .glass-card-hover {
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s ease;
 }
 
 .glass-card-hover:hover {
-  border-color: rgba(99, 102, 241, 0.4);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.07), 0 0 0 1px rgba(99, 102, 241, 0.2);
+  border-color: rgba(66, 133, 244, 0.4);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.06);
 }
 
 .dark .glass-card-hover:hover {
-  border-color: rgba(99, 102, 241, 0.35);
-  box-shadow: 0 16px 48px 0 rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.15);
+  border-color: #3c4043;
+  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.35);
 }
 
 /* Premium card variant - richer gradient bg */
