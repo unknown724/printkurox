@@ -103,6 +103,10 @@ export async function POST(req: NextRequest) {
     // Merge into single A4 PDF
     const { mergedBuffer, totalPages } = await mergeFilesToPdf(toMerge);
 
+    if (fileItems.length === 1) {
+      fileItems[0].pages = totalPages;
+    }
+
     const uniqueId = crypto.randomUUID();
     const sanitizedName = files[0].name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const finalKey = `uploads/${uniqueId}-${sanitizedName}.pdf`;

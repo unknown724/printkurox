@@ -87,6 +87,9 @@ export async function POST(req: NextRequest) {
       const mergeResult = await mergeFilesToPdf(filesToMerge);
       finalBuffer = mergeResult.mergedBuffer;
       finalTotalPages = mergeResult.totalPages;
+      if (fileItems.length === 1) {
+        fileItems[0].pages = finalTotalPages;
+      }
     }
 
     // Generate unique storage key

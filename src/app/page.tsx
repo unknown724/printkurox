@@ -8,7 +8,7 @@ import { AdvancedPrintOptions } from '@/components/AdvancedSettings';
 import { calculatePricing, PageConfig } from '@/lib/pricing';
 import { pagesToRangeString } from '@/lib/pdf-utils';
 import { DocumentStudio } from '@/components/studio/DocumentStudio';
-import { MapPin, Crown, ChevronRight } from 'lucide-react';
+import { Crown, ChevronRight } from 'lucide-react';
 
 export default function HomePage() {
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
@@ -104,34 +104,19 @@ export default function HomePage() {
   const colorCount = pageConfigs.filter((p) => p.included && p.colorMode === 'color').length;
 
   return (
-    <div className="space-y-4 pb-36 sm:pb-16">
-      {/* Pickup Banner */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-indigo-50/90 border border-indigo-200/80 text-xs text-indigo-700 dark:bg-indigo-500/8 dark:border-indigo-500/18 dark:text-indigo-300 animate-fade-in-up">
-        <div className="flex items-center space-x-2">
-          <MapPin className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-          <span>
-            Pickup:{' '}
-            <strong className="text-slate-900 dark:text-white font-semibold">Block B, Room 29</strong>
-          </span>
-        </div>
-        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-500/20">
-          Kiosk Active
-        </span>
-      </div>
-
-      {/* Admin Banner */}
+    <div className="space-y-4 pb-8 sm:pb-12">
+      {/* Admin Verified Banner (Compact shadcn Alert) */}
       {isAdmin && (
-        <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/12 via-orange-500/8 to-amber-500/12 border border-amber-500/25 text-xs text-amber-800 dark:text-amber-200 shadow-md shadow-amber-500/5 animate-scale-in">
-          <div className="flex items-center space-x-2">
-            <Crown className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
-            <span>
-              <strong className="text-slate-900 dark:text-white">Admin Verified:</strong>{' '}
-              {deviceName || 'Authorized Device'} · Free Print Active
+        <div className="flex items-center justify-between px-3.5 py-2 rounded-lg border border-amber-500/25 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-200">
+          <div className="flex items-center space-x-2 min-w-0">
+            <Crown className="w-4 h-4 text-amber-500 shrink-0" />
+            <span className="truncate">
+              <strong>Admin Verified:</strong> {deviceName || 'Authorized Device'} · Free Print Active
             </span>
           </div>
           <Link
             href="/adminkurox"
-            className="flex items-center gap-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider bg-amber-100 dark:bg-amber-500/15 hover:bg-amber-200 dark:hover:bg-amber-500/25 px-2 py-0.5 rounded-lg border border-amber-300 dark:border-amber-500/30 transition-colors"
+            className="flex items-center gap-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300 hover:underline shrink-0 ml-2"
           >
             Console <ChevronRight className="w-3 h-3" />
           </Link>

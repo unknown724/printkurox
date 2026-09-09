@@ -114,24 +114,24 @@ export function PageRangeSelector({
   };
 
   return (
-    <div className="card-premium rounded-2xl p-4 border border-slate-200/80 dark:border-white/8 space-y-3.5">
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xs space-y-3.5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2 text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-          <div className="w-6 h-6 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center">
-            <ListFilter className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+        <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+          <div className="w-6 h-6 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-600 dark:text-zinc-300">
+            <ListFilter className="w-3.5 h-3.5" />
           </div>
           <span>Pages to Print</span>
         </div>
         <div className="flex items-center gap-2">
           <span
-            className={`text-[11px] font-bold px-2.5 py-1 rounded-full border transition-all ${
+            className={`text-[11px] font-medium px-2 py-0.5 rounded-md border transition-all ${
               selectedCount === totalPages
-                ? 'text-emerald-700 bg-emerald-50 border-emerald-300 dark:text-emerald-300 dark:bg-emerald-500/10 dark:border-emerald-500/25'
-                : 'text-amber-700 bg-amber-50 border-amber-300 dark:text-amber-300 dark:bg-amber-500/10 dark:border-amber-500/25'
+                ? 'text-emerald-600 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-950/30 dark:border-emerald-800/50'
+                : 'text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-950/30 dark:border-amber-800/50'
             }`}
           >
-            {selectedCount} / {totalPages} pages
+            {selectedCount} of {totalPages} pages selected
           </span>
         </div>
       </div>
@@ -153,10 +153,10 @@ export function PageRangeSelector({
                 key={preset.label}
                 type="button"
                 onClick={preset.handler}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all duration-150 ${
+                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all ${
                   preset.active
-                    ? 'border-indigo-500 bg-indigo-50 text-indigo-900 shadow-sm dark:border-indigo-400/60 dark:bg-indigo-600/25 dark:text-white dark:shadow-indigo-500/20'
-                    : 'border-slate-200 bg-slate-100/80 text-slate-600 hover:border-indigo-400 hover:text-slate-900 dark:border-white/8 dark:bg-slate-900/50 dark:text-slate-400 dark:hover:border-indigo-500/40 dark:hover:text-slate-200 dark:hover:bg-white/5'
+                    ? 'border-zinc-900 bg-zinc-900 text-zinc-50 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900 shadow-xs'
+                    : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800'
                 }`}
               >
                 {preset.label}
@@ -169,20 +169,20 @@ export function PageRangeSelector({
       {/* Interactive Page Chip Grid (for docs ≤ 60 pages) */}
       {totalPages <= 60 && (
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-0.5">
-            <span>Tap a page chip to include or exclude it:</span>
+          <div className="flex items-center justify-between text-[11px] text-zinc-500 px-0.5">
+            <span>Tap a page to include or exclude:</span>
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={applyPresetAll}
-                className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-semibold transition-colors"
+                className="text-zinc-700 dark:text-zinc-300 hover:underline font-medium transition-colors"
               >
                 Select All
               </button>
               <button
                 type="button"
                 onClick={() => applyPages([1])}
-                className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 font-semibold transition-colors"
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
               >
                 Only P1
               </button>
@@ -202,10 +202,10 @@ export function PageRangeSelector({
                       ? `Page ${pageNum} included — click to exclude`
                       : `Page ${pageNum} excluded — click to include`
                   }
-                  className={`h-7 min-w-[30px] px-2 rounded-lg text-xs font-mono font-bold transition-all duration-100 flex items-center justify-center gap-0.5 select-none ${
+                  className={`h-7 min-w-[30px] px-2 rounded-md text-xs font-mono font-medium transition-all duration-100 flex items-center justify-center gap-0.5 select-none ${
                     isSelected
-                      ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/40 border border-indigo-400/50 scale-105'
-                      : 'bg-slate-100 text-slate-400 border border-slate-200 hover:border-slate-300 hover:text-slate-700 line-through dark:bg-slate-900/70 dark:text-slate-500 dark:border-white/5 dark:hover:border-white/20 dark:hover:text-slate-300 decoration-slate-400 dark:decoration-slate-600'
+                      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-xs'
+                      : 'bg-zinc-100 text-zinc-400 border border-zinc-200 hover:bg-zinc-200 line-through dark:bg-zinc-800 dark:text-zinc-500 dark:border-zinc-700 dark:hover:bg-zinc-700'
                   }`}
                 >
                   <span>{pageNum}</span>
@@ -219,9 +219,9 @@ export function PageRangeSelector({
 
       {/* Text Range Input */}
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-0.5">
+        <div className="flex items-center justify-between text-[11px] text-zinc-500 px-0.5">
           <span>Or type a custom range:</span>
-          <span className="text-slate-400 dark:text-slate-500 font-mono text-[10px]">e.g. 1-3, 5, 8-10</span>
+          <span className="text-zinc-400 font-mono text-[10px]">e.g. 1-3, 5, 8-10</span>
         </div>
 
         <div className="relative">
@@ -230,17 +230,17 @@ export function PageRangeSelector({
             placeholder="e.g. 1-3, 5"
             value={rangeInput}
             onChange={(e) => handleRangeInputChange(e.target.value)}
-            className={`w-full bg-slate-50 dark:bg-slate-950/80 border rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 font-mono focus:outline-none transition-all pr-8 ${
+            className={`w-full bg-zinc-50 dark:bg-zinc-900/80 border rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 font-mono focus:outline-none transition-all pr-8 ${
               !validationResult.isValid
-                ? 'border-rose-400 focus:border-rose-500 bg-rose-50/50 dark:border-rose-500/80 dark:bg-rose-950/10'
-                : 'border-slate-300 dark:border-white/10 focus:border-indigo-500 focus:bg-white dark:focus:bg-slate-950'
+                ? 'border-rose-400 focus:border-rose-500 bg-rose-50/50 dark:border-rose-800/80 dark:bg-rose-950/10'
+                : 'border-zinc-200 dark:border-zinc-800 focus:border-zinc-400 dark:focus:border-zinc-600 focus:bg-white dark:focus:bg-zinc-900'
             }`}
           />
           {rangeInput && rangeInput.toLowerCase() !== 'all' && (
             <button
               type="button"
               onClick={applyPresetAll}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white p-0.5 transition-colors"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 p-0.5 transition-colors"
               title="Reset to All pages"
             >
               <X className="w-3.5 h-3.5" />

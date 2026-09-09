@@ -42,7 +42,7 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       role="radiogroup"
-      className={`relative inline-flex items-center rounded-xl bg-slate-200/80 dark:bg-slate-900/90 border border-slate-300/70 dark:border-white/10 ${
+      className={`relative inline-flex items-center rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-1 ${
         sizeClasses[size]
       } ${fullWidth ? 'w-full' : ''}`}
     >
@@ -56,26 +56,26 @@ export function SegmentedControl<T extends string>({
             aria-checked={isSelected}
             disabled={disabled}
             onClick={() => onChange(option.value)}
-            className={`relative flex items-center justify-center gap-1.5 rounded-lg font-bold transition-all duration-200 select-none ${
+            className={`relative flex items-center justify-center gap-1.5 rounded-md font-medium transition-all duration-150 select-none ${
               itemPadding[size]
             } ${fullWidth ? 'flex-1' : ''} ${
               isSelected
-                ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm shadow-black/10 border border-black/5 dark:border-white/10'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-            } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
+                ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-zinc-50 shadow-xs'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+            } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
           >
             {option.icon && (
-              <span className={`shrink-0 ${isSelected ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}`}>
+              <span className={`shrink-0 ${isSelected ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}>
                 {option.icon}
               </span>
             )}
             <span className="truncate">{option.label}</span>
             {option.badge && (
               <span
-                className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
+                className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
                   isSelected
-                    ? 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/25'
-                    : 'bg-slate-300/60 dark:bg-slate-700/60 text-slate-600 dark:text-slate-400'
+                    ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200'
+                    : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
                 }`}
               >
                 {option.badge}

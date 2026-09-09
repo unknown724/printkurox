@@ -20,7 +20,6 @@ import {
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
 import { useRouter } from 'next/navigation';
-import { FloatingCheckoutDock } from '@/components/ui/FloatingCheckoutDock';
 
 declare global {
   interface Window {
@@ -247,30 +246,28 @@ export function CostSummary({
   };
 
   return (
-    <div className="space-y-3">
-      {/* Itemized Summary Card */}
-      <div className="card-premium rounded-2xl border border-indigo-500/20 overflow-hidden">
+    <div className="space-y-4">
+      {/* Itemized Summary Card (shadcn Card style) */}
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs overflow-hidden">
         {/* Header bar */}
-        <div className="px-4 py-3 bg-gradient-to-r from-indigo-50 via-violet-50/50 to-transparent dark:from-indigo-600/10 dark:via-violet-600/8 border-b border-slate-200/80 dark:border-white/5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">
-              Order Summary
-            </span>
-            <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-300">
-              <Check className="w-3 h-3 text-emerald-500 dark:text-emerald-400" />
-              <span>Verified Secure</span>
-            </div>
+        <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between">
+          <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight">
+            Order Summary
+          </span>
+          <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <Check className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+            <span>Verified Secure</span>
           </div>
         </div>
 
         {/* Line items */}
-        <div className="px-4 py-3 space-y-0 divide-y divide-slate-200/70 dark:divide-white/[0.04]">
+        <div className="px-4 py-2 space-y-0 divide-y divide-zinc-100 dark:divide-zinc-800/60">
           <div className="flex items-center justify-between py-2.5">
-            <span className="text-xs text-slate-500 dark:text-slate-400">Pages to Print</span>
-            <span className="text-xs font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Document</span>
+            <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  pricing.colorMode === 'bw' ? 'bg-slate-400' : 'bg-pink-500'
+                  pricing.colorMode === 'bw' ? 'bg-zinc-400' : 'bg-pink-500'
                 }`}
               />
               {pricing.totalPages} Page{pricing.totalPages > 1 ? 's' : ''} (
@@ -282,134 +279,126 @@ export function CostSummary({
           </div>
 
           <div className="flex items-center justify-between py-2.5">
-            <span className="text-xs text-slate-500 dark:text-slate-400">Sheet Breakdown</span>
-            <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 text-right">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Paper Layout</span>
+            <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 text-right">
               {pricing.breakdown}
             </span>
           </div>
 
           {pricing.copies > 1 && (
             <div className="flex items-center justify-between py-2.5">
-              <span className="text-xs text-slate-500 dark:text-slate-400">Copies</span>
-              <span className="text-xs font-semibold text-slate-900 dark:text-white">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">Copies</span>
+              <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100">
                 {pricing.copies} × ₹{pricing.unitPrice}
               </span>
             </div>
           )}
         </div>
 
-        {/* Total */}
-        <div className="px-4 py-4 bg-gradient-to-r from-emerald-50 to-transparent dark:from-emerald-950/30 border-t border-slate-200/80 dark:border-white/5">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Total Payable</span>
-                {pricing.savings > 0 && (
-                  <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">
-                    Saved ₹{pricing.savings}
-                  </span>
-                )}
-              </div>
-              <p className="text-[10px] text-slate-500 mt-0.5">
-                {pricing.savings > 0 ? (
-                  <span className="text-emerald-400 font-semibold">{pricing.tierName} Applied</span>
-                ) : (
-                  'Includes paper, ink & taxes'
-                )}
-              </p>
-            </div>
-            <div className="flex items-baseline gap-1.5">
+        {/* Total Row */}
+        <div className="px-4 py-3.5 bg-zinc-50/80 dark:bg-zinc-950/40 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">Total Payable</span>
               {pricing.savings > 0 && (
-                <span className="text-base font-semibold line-through text-slate-500 tabular-nums">
-                  ₹{pricing.originalPrice}
+                <span className="px-2 py-0.5 text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-md border border-emerald-500/20">
+                  Save ₹{pricing.savings}
                 </span>
               )}
-              <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400">₹</span>
-              <span className="text-4xl font-black text-emerald-600 dark:text-emerald-400 tracking-tight tabular-nums">
-                {pricing.totalPrice}
-              </span>
             </div>
+            <p className="text-[11px] text-zinc-500 mt-0.5">
+              {pricing.savings > 0 ? (
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">Bulk Rate Applied</span>
+              ) : (
+                'Includes paper, ink & taxes'
+              )}
+            </p>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            {pricing.savings > 0 && (
+              <span className="text-xs font-medium line-through text-zinc-400 tabular-nums">
+                ₹{pricing.originalPrice}
+              </span>
+            )}
+            <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">₹</span>
+            <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight tabular-nums">
+              {pricing.totalPrice}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Printer Offline Warning Banner */}
+      {/* Printer Offline Warning */}
       {!statusLoading && !printerOnline && (
-        <div className="flex items-start gap-3 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-500/8 border border-amber-200 dark:border-amber-500/25 text-xs animate-scale-in">
-          <WifiOff className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-xs text-amber-900 dark:text-amber-200">
+          <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div>
-            <p className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
-              Printer Currently Offline
+            <p className="font-semibold flex items-center gap-1.5">
+              Printer Offline (Jobs will Queue)
             </p>
-            <p className="text-amber-700/80 dark:text-amber-200/70 mt-0.5 leading-relaxed">
-              You can still pay now — your job will be <strong className="text-amber-800 dark:text-amber-300">queued</strong> and printed automatically when the printer comes back online.
-            </p>
-            <p className="text-amber-600/70 dark:text-amber-200/50 mt-1 flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              Typically online within minutes.
+            <p className="text-amber-800/80 dark:text-amber-300/80 mt-0.5 leading-relaxed text-[11px]">
+              You can still pay now. Your print job will be securely queued and automatically printed once the kiosk reconnects.
             </p>
           </div>
         </div>
       )}
 
-      {/* Admin Bypass Button */}
+      {/* Admin Bypass Button (if verified) */}
       {isAdmin && (
         <button
           type="button"
           onClick={handleAdminBypass}
           disabled={isProcessing}
-          className="w-full py-3.5 px-5 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 text-black font-extrabold shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all hover:shadow-amber-500/35 hover:-translate-y-0.5 active:scale-[0.99] disabled:opacity-50"
+          className="w-full h-11 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors disabled:opacity-50"
         >
           <Zap className="w-4 h-4 fill-black" />
-          <span>⚡ Admin Free Print</span>
+          <span>⚡ Admin Free Print Bypass</span>
         </button>
       )}
 
-      {/* Main Pay Button */}
+      {/* Primary Pay Button (shadcn button) */}
       <button
         type="button"
         onClick={handlePayAndPrint}
         disabled={isProcessing}
-        className="btn-primary w-full py-4 px-6 rounded-2xl text-white font-bold flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed group"
+        className="w-full h-12 rounded-lg bg-zinc-900 text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 font-semibold text-sm flex items-center justify-center gap-2.5 shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isProcessing ? (
           <>
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm font-semibold">Processing…</span>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Processing Payment…</span>
           </>
         ) : (
           <>
-            <div className="w-7 h-7 rounded-full bg-white/15 flex items-center justify-center shrink-0">
-              <Printer className="w-4 h-4" />
-            </div>
-            <span className="text-base font-bold tracking-wide">
+            <Printer className="w-4 h-4" />
+            <span>
               {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} & Queue`}
             </span>
-            <ArrowRight className="w-4 h-4 text-indigo-200 group-hover:translate-x-1 transition-transform shrink-0" />
+            <ArrowRight className="w-4 h-4 opacity-70" />
           </>
         )}
       </button>
 
-      {/* Payment methods + Staff trigger */}
-      <div className="p-3.5 rounded-xl bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200/80 dark:border-white/5 space-y-2.5">
-        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+      {/* Payment methods & Staff trigger */}
+      <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 space-y-2 text-xs">
+        <div className="flex items-center justify-between text-[11px] text-zinc-500">
           <button
             type="button"
             onClick={() => setShowStaffModal(true)}
-            className="flex items-center gap-1.5 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+            className="flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
             title="Staff passcode access"
           >
-            <Lock className="w-3 h-3 text-emerald-500 dark:text-emerald-400" />
-            <span>100% Encrypted · RBI Compliant</span>
+            <Lock className="w-3 h-3 text-emerald-500" />
+            <span>RBI Compliant &amp; TLS Encrypted</span>
           </button>
-          <span className="text-slate-400 dark:text-slate-600">Instant Verification</span>
+          <span>Instant Verification</span>
         </div>
 
-        <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] font-semibold text-slate-700 dark:text-slate-300">
-          {['UPI', 'Google Pay', 'PhonePe', 'Paytm', 'Debit / Credit', 'NetBanking'].map((m) => (
+        <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+          {['UPI', 'Google Pay', 'PhonePe', 'Paytm', 'Cards', 'NetBanking'].map((m) => (
             <span
               key={m}
-              className="px-2 py-0.5 rounded bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-white/5 shadow-xs"
+              className="px-2 py-0.5 rounded bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700/80 shadow-xs"
             >
               {m}
             </span>
@@ -418,8 +407,8 @@ export function CostSummary({
       </div>
 
       {errorMessage && (
-        <div className="text-xs text-center text-rose-700 bg-rose-50 border border-rose-200 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/40 py-2.5 px-3 rounded-xl flex items-center justify-center gap-2">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-500 dark:text-rose-400" />
+        <div className="p-3 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/20 text-xs text-rose-800 dark:text-rose-300 flex items-center justify-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
           <span>{errorMessage}</span>
         </div>
       )}
@@ -428,34 +417,34 @@ export function CostSummary({
       {showStaffModal && (
         <div
           onClick={() => setShowStaffModal(false)}
-          className="fixed inset-0 z-50 bg-black/70 dark:bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in-up"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in-up"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="card-premium max-w-sm w-full rounded-3xl p-6 border border-indigo-500/35 space-y-4 text-center animate-scale-in"
+            className="max-w-sm w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-5 shadow-lg space-y-3.5 text-center animate-scale-in"
           >
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
-                <KeyRound className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+              <div className="flex items-center gap-2 text-zinc-900 dark:text-zinc-100">
+                <KeyRound className="w-4 h-4 text-amber-500" />
+                <span className="text-xs font-semibold uppercase tracking-wider">
                   Staff Print Bypass
                 </span>
               </div>
               <button
                 type="button"
                 onClick={() => setShowStaffModal(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 w-6 h-6 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              Enter the master staff passcode to print without Razorpay checkout.
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed text-left">
+              Enter the staff passcode to print directly without Razorpay checkout.
             </p>
 
             {staffError && (
-              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs flex items-center justify-center gap-1.5">
+              <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-center gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                 <span>{staffError}</span>
               </div>
@@ -470,21 +459,21 @@ export function CostSummary({
                   placeholder="Enter Staff Passcode"
                   required
                   autoFocus
-                  className="w-full pl-4 pr-10 py-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 text-sm text-center focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+                  className="w-full h-10 px-3 pr-10 rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 text-xs text-center focus:outline-none focus:ring-1 focus:ring-zinc-950 dark:focus:ring-zinc-300 transition-all"
                 />
                 <button
                   type="button"
                   onClick={() => setShowStaffPin(!showStaffPin)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
                 >
-                  {showStaffPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showStaffPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
 
               <button
                 type="submit"
                 disabled={staffLoading || !staffPin}
-                className="btn-primary w-full py-3 px-4 rounded-xl text-white text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full h-10 rounded-lg bg-zinc-900 text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 text-xs font-semibold disabled:opacity-50 flex items-center justify-center gap-2 shadow-xs transition-colors"
               >
                 {staffLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -499,24 +488,13 @@ export function CostSummary({
 
             <a
               href="/adminkurox"
-              className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline transition-colors"
+              className="inline-block text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:underline transition-colors"
             >
-              Authorize this device permanently at /adminkurox →
+              Permanent device authorization at /adminkurox →
             </a>
           </div>
         </div>
       )}
-
-      {/* Persistent Floating Glass Checkout Dock on Mobile & Desktop */}
-      <FloatingCheckoutDock
-        pricing={pricing}
-        printerOnline={printerOnline}
-        isAdmin={isAdmin}
-        isProcessing={isProcessing}
-        errorMessage={errorMessage}
-        onPayAndPrint={handlePayAndPrint}
-        onAdminBypass={handleAdminBypass}
-      />
     </div>
   );
 }

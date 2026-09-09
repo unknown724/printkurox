@@ -469,16 +469,16 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
     return (
       <div className="space-y-3">
         {/* Uploaded Files Queue Card */}
-        <div className="glass-card rounded-2xl p-4 border-indigo-500/20 divide-y divide-slate-200 dark:divide-white/5">
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 divide-y divide-zinc-100 dark:divide-zinc-800 shadow-xs">
           {/* Queue Header */}
           <div className="flex items-center justify-between pb-3">
             <div className="flex items-center space-x-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
-              <span className="text-xs font-semibold text-slate-900 dark:text-white">
+              <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
                 {uploadedBatch.fileCount} Document{uploadedBatch.fileCount > 1 ? 's' : ''} Uploaded
               </span>
             </div>
-            <span className="text-xs font-bold text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-300/60 dark:border-emerald-500/20">
+            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20">
               Total: {uploadedBatch.totalPages} Page{uploadedBatch.totalPages > 1 ? 's' : ''}
             </span>
           </div>
@@ -490,18 +490,18 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
               return (
                 <div
                   key={item.id || idx}
-                  className="flex items-center justify-between p-2.5 rounded-xl bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200/80 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/10 transition-colors"
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-950/60 border border-zinc-200 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
                 >
                   <div className="flex items-center space-x-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                    <div className="w-8 h-8 rounded-md bg-zinc-200/80 dark:bg-zinc-800 border border-zinc-300/60 dark:border-zinc-700 flex items-center justify-center text-zinc-700 dark:text-zinc-300 shrink-0">
                       {isImg ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-slate-900 dark:text-white truncate max-w-[200px] sm:max-w-[260px]">
+                      <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[200px] sm:max-w-[260px]">
                         {item.name}
                       </p>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                        <span className="text-indigo-600 dark:text-indigo-300 font-semibold">{item.pages} page{item.pages > 1 ? 's' : ''}</span> • {(item.size / (1024 * 1024)).toFixed(2)} MB
+                      <p className="text-[10px] text-zinc-500">
+                        <span className="text-zinc-700 dark:text-zinc-300 font-semibold">{item.pages} page{item.pages > 1 ? 's' : ''}</span> • {(item.size / (1024 * 1024)).toFixed(2)} MB
                       </p>
                     </div>
                   </div>
@@ -509,7 +509,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
                   <button
                     type="button"
                     onClick={() => handleRemoveFile(idx)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                    className="p-1.5 rounded-md text-zinc-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                     title="Remove file"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -525,7 +525,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
-              className="inline-flex items-center space-x-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 py-1.5 px-3 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/20 transition-all"
+              className="inline-flex items-center space-x-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 py-1.5 px-3 rounded-md bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 transition-all"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add More Files</span>
@@ -537,7 +537,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
                 setRawFiles([]);
                 onBatchUploaded(null);
               }}
-              className="text-xs text-slate-500 hover:text-rose-500 transition-colors"
+              className="text-xs text-zinc-500 hover:text-rose-500 transition-colors"
             >
               Clear All
             </button>
@@ -555,14 +555,14 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         />
 
         {isUploading && (
-          <div className="glass-card rounded-xl p-3 space-y-2">
-            <div className="flex items-center space-x-2 text-xs text-indigo-600 dark:text-indigo-300">
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 space-y-2 shadow-xs">
+            <div className="flex items-center space-x-2 text-xs text-zinc-700 dark:text-zinc-300">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               <span className="font-medium">{statusHeadline}</span>
             </div>
-            <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+            <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-1.5 overflow-hidden">
               <div
-                className="bg-indigo-600 dark:bg-indigo-500 h-1.5 transition-all duration-200 rounded-full"
+                className="bg-zinc-900 dark:bg-zinc-100 h-1.5 transition-all duration-200 rounded-full"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -570,7 +570,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         )}
 
         {errorMessage && (
-          <div className="flex items-center justify-between p-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/40 rounded-xl">
+          <div className="flex items-center justify-between p-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/40 rounded-lg">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 dark:text-rose-400" />
               <span>{errorMessage}</span>
@@ -597,10 +597,10 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
-        className={`glass-card glass-card-hover rounded-2xl p-6 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer border-2 border-dashed transition-all relative overflow-hidden ${
+        className={`rounded-xl p-6 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer border-2 border-dashed transition-all relative overflow-hidden ${
           isDragging
-            ? 'border-indigo-500 bg-indigo-500/10'
-            : 'border-slate-300 hover:border-indigo-500/60 hover:bg-slate-100/50 dark:border-white/10 dark:hover:border-indigo-500/50 dark:hover:bg-slate-900/50'
+            ? 'border-zinc-900 dark:border-zinc-100 bg-zinc-100/60 dark:bg-zinc-900/60'
+            : 'border-zinc-300 hover:border-zinc-400 bg-zinc-50/50 hover:bg-zinc-100/50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:bg-zinc-950/40 dark:hover:bg-zinc-900/40'
         }`}
       >
         <input
@@ -614,37 +614,37 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
 
         {isUploading ? (
           <div className="flex flex-col items-center py-4 space-y-3 w-full max-w-[260px]">
-            <Loader2 className="w-10 h-10 text-indigo-600 dark:text-indigo-400 animate-spin" />
+            <Loader2 className="w-9 h-9 text-zinc-900 dark:text-zinc-100 animate-spin" />
             <div className="text-center">
-              <p className="text-sm font-bold text-slate-900 dark:text-white">
+              <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                 {statusHeadline}
               </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              <p className="text-xs text-zinc-500 mt-1">
                 {statusSubtext}
               </p>
             </div>
-            <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+            <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-1.5 overflow-hidden">
               <div
-                className="bg-indigo-600 dark:bg-indigo-500 h-1.5 transition-all duration-200 rounded-full"
+                className="bg-zinc-900 dark:bg-zinc-100 h-1.5 transition-all duration-200 rounded-full"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
-            <p className="text-[11px] font-mono font-semibold text-indigo-600 dark:text-indigo-400">
+            <p className="text-[11px] font-mono font-semibold text-zinc-700 dark:text-zinc-300">
               {uploadProgress}%
             </p>
           </div>
         ) : (
           <>
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 mb-3 shadow-inner">
-              <UploadCloud className="w-7 h-7" />
+            <div className="w-12 h-12 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-600 dark:text-zinc-300 mb-3">
+              <UploadCloud className="w-6 h-6" />
             </div>
-            <p className="text-base font-semibold text-slate-900 dark:text-white">
-              Tap to Upload Document(s)
+            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Choose files or drag &amp; drop
             </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Select one or <span className="text-indigo-600 dark:text-indigo-400 font-semibold">multiple files</span> at once
+            <p className="text-xs text-zinc-500 mt-1">
+              Select one or multiple documents
             </p>
-            <div className="flex items-center gap-1.5 mt-3 text-[11px] text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-white/5 px-2.5 py-1 rounded-full border border-slate-200 dark:border-white/5">
+            <div className="flex items-center gap-1.5 mt-3 text-[10px] text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800/80 px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-700">
               <span>PDF</span>
               <span>•</span>
               <span>DOCX</span>
@@ -657,9 +657,9 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         )}
       </div>
 
-      <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 pt-0.5">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"></span>
-        <span>High-Speed Direct Edge Storage • Auto-purged in 15 mins</span>
+      <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 pt-0.5">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+        <span>Automatic A4 sizing • Fast edge processing</span>
       </div>
 
       {errorMessage && (
