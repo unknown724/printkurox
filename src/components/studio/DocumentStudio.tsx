@@ -107,17 +107,18 @@ export function DocumentStudio({
           />
 
           {/* If file is staged, show sleek Continue button */}
+          {/* If file is staged, show sleek Continue button with Glassmorphism */}
           {uploadedBatch && (
-            <div className="p-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 flex items-center justify-between gap-3 animate-scale-in">
+            <div className="p-3.5 rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/85 backdrop-blur-xl flex items-center justify-between gap-3 animate-scale-in shadow-xs">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center text-zinc-700 dark:text-zinc-300 shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-blue-500/10 dark:bg-white/10 border border-blue-500/20 dark:border-white/15 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
                   <FileText className="w-4 h-4" />
                 </div>
                 <div className="truncate">
                   <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                     {uploadedBatch.fileName}
                   </p>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
                     {uploadedBatch.totalPages} pages ready
                   </p>
                 </div>
@@ -126,11 +127,10 @@ export function DocumentStudio({
               <button
                 type="button"
                 onClick={() => goToStep(2)}
-                className="relative overflow-hidden group h-9 px-4 rounded-lg bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950 font-medium text-xs flex items-center gap-1.5 shrink-0 shadow-xs transition-all active:scale-[0.98]"
+                className="relative overflow-hidden group h-9 px-4 rounded-xl bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs flex items-center gap-1.5 shrink-0 shadow-[0_2px_12px_rgba(255,255,255,0.18)] transition-all active:scale-[0.98] cursor-pointer"
               >
-                <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/20 dark:via-zinc-900/10 to-transparent animate-shimmer-sheen pointer-events-none" />
                 <span>Customize Pages</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                <ArrowRight className="w-3.5 h-3.5 text-zinc-950 stroke-[2.2] group-hover:translate-x-0.5 transition-transform" />
               </button>
             </div>
           )}
@@ -142,10 +142,10 @@ export function DocumentStudio({
           ========================================================= */}
       {currentStep === 2 && uploadedBatch && (
         <div className="space-y-4 animate-fade-in-up">
-          {/* Top Info Bar with Gemini-style Copies Stepper */}
+          {/* Top Info Bar with Copies Stepper */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 px-0.5 pt-1">
             <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-[#1e1f20] border border-zinc-200 dark:border-[#282a2c] flex items-center justify-center text-zinc-700 dark:text-zinc-300 shrink-0">
+              <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-[#16161a] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center text-zinc-700 dark:text-zinc-300 shrink-0">
                 <Layers className="w-4 h-4" />
               </div>
               <div className="min-w-0">
@@ -160,14 +160,14 @@ export function DocumentStudio({
 
             {/* Stage 2 Controls: Copies Stepper & Counts */}
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Google Gemini Style Copies Stepper */}
-              <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-[#1e1f20] border border-zinc-200 dark:border-[#282a2c] rounded-full px-2.5 py-1 shadow-2xs">
+              {/* Copies Stepper */}
+              <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-[#141418] border border-zinc-200 dark:border-[#37333b] rounded-full px-2.5 py-1 shadow-2xs">
                 <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pl-0.5">Copies</span>
                 <button
                   type="button"
                   onClick={() => onSettingsChange({ ...settings, copies: Math.max(1, settings.copies - 1) })}
                   disabled={settings.copies <= 1}
-                  className="w-5 h-5 rounded-full bg-white dark:bg-[#282a2c] border border-zinc-200 dark:border-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
+                  className="w-5 h-5 rounded-full bg-white dark:bg-[#201f26] border border-zinc-200 dark:border-[#37333b] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-[#2a2833] transition-colors"
                   title="Decrease copies"
                   aria-label="Decrease copies"
                 >
@@ -180,7 +180,7 @@ export function DocumentStudio({
                   type="button"
                   onClick={() => onSettingsChange({ ...settings, copies: Math.min(50, settings.copies + 1) })}
                   disabled={settings.copies >= 50}
-                  className="w-5 h-5 rounded-full bg-white dark:bg-[#282a2c] border border-zinc-200 dark:border-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
+                  className="w-5 h-5 rounded-full bg-white dark:bg-[#201f26] border border-zinc-200 dark:border-[#37333b] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-[#2a2833] transition-colors"
                   title="Increase copies"
                   aria-label="Increase copies"
                 >
@@ -190,15 +190,15 @@ export function DocumentStudio({
 
               {/* B&W / Color Clean Counts */}
               <div className="flex items-center gap-1.5 text-xs">
-                <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-[#1e1f20] text-zinc-800 dark:text-zinc-200 font-mono text-[11px] font-medium border border-zinc-200 dark:border-[#282a2c]">
+                <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-[#141418] text-zinc-800 dark:text-zinc-200 font-mono text-[11px] font-medium border border-zinc-200 dark:border-[#37333b]">
                   {bwCount} B&amp;W
                 </span>
                 {colorCount > 0 ? (
-                  <span className="px-2.5 py-1 rounded-full bg-gradient-to-r from-blue-500/15 via-purple-500/15 to-pink-500/15 text-blue-600 dark:text-blue-300 font-mono text-[11px] font-semibold border border-blue-500/30">
+                  <span className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-300 font-mono text-[11px] font-semibold border border-blue-500/30">
                     {colorCount} Color
                   </span>
                 ) : (
-                  <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-[#1e1f20] text-zinc-500 dark:text-zinc-400 font-mono text-[11px] border border-zinc-200 dark:border-[#282a2c]">
+                  <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-[#141418] text-zinc-500 dark:text-zinc-400 font-mono text-[11px] border border-zinc-200 dark:border-[#37333b]">
                     0 Color
                   </span>
                 )}
@@ -233,7 +233,7 @@ export function DocumentStudio({
             <button
               type="button"
               onClick={() => goToStep(1)}
-              className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium flex items-center gap-1.5 transition-colors"
+              className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#141418] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#1d1c22] text-xs font-medium flex items-center gap-1.5 transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back</span>
@@ -242,11 +242,10 @@ export function DocumentStudio({
             <button
               type="button"
               onClick={() => goToStep(3)}
-              className="relative overflow-hidden group h-9 px-4 rounded-lg bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950 text-xs font-medium flex items-center gap-1.5 shadow-xs transition-all active:scale-[0.98]"
+              className="relative overflow-hidden group h-9 px-4 rounded-xl bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-bold flex items-center gap-1.5 shadow-[0_2px_12px_rgba(255,255,255,0.18)] transition-all active:scale-[0.98] cursor-pointer"
             >
-              <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/20 dark:via-zinc-900/10 to-transparent animate-shimmer-sheen pointer-events-none" />
               <span>Continue to Checkout (₹{pricing.totalPrice})</span>
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+              <ArrowRight className="w-3.5 h-3.5 text-zinc-950 stroke-[2.2] group-hover:translate-x-0.5 transition-transform" />
             </button>
           </div>
         </div>

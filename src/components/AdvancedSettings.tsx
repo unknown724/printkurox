@@ -23,21 +23,21 @@ export function AdvancedSettings({ options, onChange, copies }: AdvancedSettings
     onChange({ ...options, ...patch });
 
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs overflow-hidden">
+    <div className="rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/90 shadow-xs overflow-hidden">
       {/* Accordion Toggle */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full p-4 flex items-center justify-between text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors group"
+        className="w-full p-4 flex items-center justify-between text-left hover:bg-zinc-50 dark:hover:bg-[#18171e] transition-colors group"
       >
         <div className="flex items-center space-x-3">
-          <div className="w-6 h-6 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-600 dark:text-zinc-300">
+          <div className="w-6 h-6 rounded-md bg-zinc-100 dark:bg-[#1a1920] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center text-zinc-600 dark:text-zinc-300">
             <Sliders className="w-3.5 h-3.5" />
           </div>
           <div>
             <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
               Advanced Print Settings
-              <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-700">
+              <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 dark:bg-[#1a1920] px-1.5 py-0.5 rounded border border-zinc-200 dark:border-[#37333b]">
                 Optional
               </span>
             </span>
@@ -50,7 +50,7 @@ export function AdvancedSettings({ options, onChange, copies }: AdvancedSettings
         <div
           className={`w-6 h-6 rounded-md flex items-center justify-center transition-all duration-200 ${
             isOpen
-              ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+              ? 'bg-zinc-100 dark:bg-[#1a1920] text-zinc-900 dark:text-zinc-100'
               : 'text-zinc-400 group-hover:text-zinc-600 dark:group-hover:text-zinc-300'
           }`}
         >
@@ -62,7 +62,7 @@ export function AdvancedSettings({ options, onChange, copies }: AdvancedSettings
 
       {/* Expandable Panel */}
       {isOpen && (
-        <div className="px-4 pb-4 pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-4 animate-fade-in-up text-xs">
+        <div className="px-4 pb-4 pt-2 border-t border-zinc-100 dark:border-[#2d2932] space-y-4 animate-fade-in-up text-xs">
           {/* Page Scaling */}
           <div className="space-y-2">
             <label className="text-zinc-700 dark:text-zinc-300 font-medium flex items-center gap-1.5 text-[11px]">
@@ -82,7 +82,7 @@ export function AdvancedSettings({ options, onChange, copies }: AdvancedSettings
                   className={`p-2 rounded-lg text-left border transition-all ${
                     options.scaling === item.id
                       ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900 shadow-xs'
-                      : 'border-zinc-200 bg-zinc-50/70 text-zinc-600 hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-100'
+                      : 'border-zinc-200 bg-zinc-50/70 text-zinc-600 hover:border-zinc-300 hover:text-zinc-900 dark:border-[#37333b] dark:bg-[#18171e] dark:text-zinc-400 dark:hover:border-[#4b4652] dark:hover:text-zinc-100'
                   }`}
                 >
                   <p className="font-semibold text-[11px] truncate">{item.label}</p>
@@ -104,7 +104,7 @@ export function AdvancedSettings({ options, onChange, copies }: AdvancedSettings
                 onChange={(e) =>
                   update({ margins: e.target.value as AdvancedPrintOptions['margins'] })
                 }
-                className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-950 dark:focus:ring-zinc-300 transition-colors"
+                className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-50 dark:bg-[#0c0c0f] border border-zinc-200 dark:border-[#37333b] text-zinc-900 dark:text-zinc-100 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-950 dark:focus:ring-zinc-500 transition-colors"
               >
                 <option value="standard">Standard (0.5in)</option>
                 <option value="narrow">Narrow (0.2in)</option>
@@ -122,7 +122,7 @@ export function AdvancedSettings({ options, onChange, copies }: AdvancedSettings
                 onChange={(e) =>
                   update({ quality: e.target.value as AdvancedPrintOptions['quality'] })
                 }
-                className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-950 dark:focus:ring-zinc-300 transition-colors"
+                className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-50 dark:bg-[#0c0c0f] border border-zinc-200 dark:border-[#37333b] text-zinc-900 dark:text-zinc-100 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-950 dark:focus:ring-zinc-500 transition-colors"
               >
                 <option value="standard">Standard (300 DPI)</option>
                 <option value="high_dpi">High Quality (600 DPI)</option>

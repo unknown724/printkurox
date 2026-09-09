@@ -247,11 +247,23 @@ export function CostSummary({
 
   return (
     <div className="space-y-4">
-      {/* Itemized Summary Card (shadcn Card style) */}
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs overflow-hidden">
+      {/* Itemized Summary Card (Glassmorphic with Qronos Moving Light Beam) */}
+      <div className="relative rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/90 backdrop-blur-xl shadow-xs overflow-hidden group">
+        {/* Qronos-style animated hairline glow */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute left-4 top-0 h-px w-[calc(100%-2rem)] bg-gradient-to-r from-amber-500/0 via-amber-400/50 to-amber-500/0"
+        />
+        {/* Moving light sheen on the left border */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-0 w-[2px] bg-gradient-to-b from-amber-500/0 via-amber-400/50 to-amber-500/0"
+        />
+
         {/* Header bar */}
-        <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between">
-          <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight">
+        <div className="px-4 py-3 border-b border-zinc-100 dark:border-[#2d2932] flex items-center justify-between">
+          <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             Order Summary
           </span>
           <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -261,67 +273,81 @@ export function CostSummary({
         </div>
 
         {/* Line items */}
-        <div className="px-4 py-2 space-y-0 divide-y divide-zinc-100 dark:divide-zinc-800/60">
+        <div className="px-4 py-2 space-y-0 divide-y divide-zinc-100 dark:divide-[#242229]">
           <div className="flex items-center justify-between py-2.5">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">Document</span>
             <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  pricing.colorMode === 'bw' ? 'bg-zinc-400' : 'bg-pink-500'
-                }`}
-              />
-              {pricing.totalPages} Page{pricing.totalPages > 1 ? 's' : ''} (
-              {pricing.colorMode === 'custom'
-                ? 'Mixed B&W/Color'
-                : pricing.colorMode.toUpperCase()}
-              )
+              <span>{pricing.totalPages} Page{pricing.totalPages > 1 ? 's' : ''}</span>
+              {pricing.colorMode === 'bw' ? (
+                <span className="px-1.5 py-0.5 rounded-md bg-zinc-200 dark:bg-[#201f26] text-zinc-900 dark:text-white border border-zinc-300 dark:border-[#37333b] font-bold text-[10px] font-mono">
+                  B&amp;W
+                </span>
+              ) : pricing.colorMode === 'color' ? (
+                <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-pink-500/20 text-blue-600 dark:text-blue-300 border border-blue-500/30 font-bold text-[10px] font-mono">
+                  FULL COLOR
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-500/30 font-bold text-[10px] font-mono">
+                  MIXED
+                </span>
+              )}
             </span>
           </div>
 
           <div className="flex items-center justify-between py-2.5">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">Paper Layout</span>
             <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 text-right">
-              {pricing.breakdown}
+              {pricing.isDuplex ? (
+                <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
+                  <span>Double-Sided (Eco)</span>
+                  <span className="text-[10px] font-mono text-zinc-400">({pricing.breakdown})</span>
+                </span>
+              ) : (
+                <span>Single-Sided ({pricing.breakdown})</span>
+              )}
             </span>
           </div>
 
           {pricing.copies > 1 && (
             <div className="flex items-center justify-between py-2.5">
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Copies</span>
-              <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100">
-                {pricing.copies} × ₹{pricing.unitPrice}
+              <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 font-mono">
+                {pricing.copies} Sets × ₹{pricing.unitPrice}
               </span>
             </div>
           )}
         </div>
 
-        {/* Total Row */}
-        <div className="px-4 py-3.5 bg-zinc-50/80 dark:bg-zinc-950/40 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between">
+        {/* Total Row with Golden Highlight */}
+        <div className="px-4 py-3.5 bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent border-t border-amber-500/20 dark:border-amber-400/25 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">Total Payable</span>
+              <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wide">
+                Total Payable
+              </span>
               {pricing.savings > 0 && (
-                <span className="px-2 py-0.5 text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-md border border-emerald-500/20">
+                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 rounded-md border border-emerald-500/30">
                   Save ₹{pricing.savings}
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
               {pricing.savings > 0 ? (
-                <span className="text-emerald-600 dark:text-emerald-400 font-medium">Bulk Rate Applied</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Bulk discount applied</span>
               ) : (
                 'Includes paper, ink & taxes'
               )}
             </p>
           </div>
-          <div className="flex items-baseline gap-1.5">
+
+          <div className="flex items-baseline gap-1">
             {pricing.savings > 0 && (
-              <span className="text-xs font-medium line-through text-zinc-400 tabular-nums">
+              <span className="text-xs font-medium line-through text-zinc-400 tabular-nums font-mono mr-1">
                 ₹{pricing.originalPrice}
               </span>
             )}
-            <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">₹</span>
-            <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight tabular-nums">
+            <span className="text-base font-bold text-amber-500 dark:text-amber-400">₹</span>
+            <span className="text-3xl sm:text-4xl font-black text-amber-500 dark:text-amber-300 drop-shadow-[0_0_16px_rgba(245,158,11,0.45)] tracking-tight tabular-nums font-mono">
               {pricing.totalPrice}
             </span>
           </div>
@@ -330,7 +356,7 @@ export function CostSummary({
 
       {/* Printer Offline Warning */}
       {!statusLoading && !printerOnline && (
-        <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-xs text-amber-900 dark:text-amber-200">
+        <div className="flex items-start gap-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-xs text-amber-900 dark:text-amber-200">
           <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div>
             <p className="font-semibold flex items-center gap-1.5">
@@ -349,7 +375,7 @@ export function CostSummary({
           type="button"
           onClick={handleAdminBypass}
           disabled={isProcessing}
-          className="relative overflow-hidden w-full h-11 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.99] disabled:opacity-50"
+          className="relative overflow-hidden w-full h-11 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
         >
           <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer-sheen pointer-events-none" />
           <Zap className="w-4 h-4 fill-zinc-950" />
@@ -357,37 +383,39 @@ export function CostSummary({
         </button>
       )}
 
-      {/* Primary Pay Button (with live shimmer sheen) */}
+      {/* Primary Pay Button (Golden Radiance Highlighted CTA) */}
       <button
         type="button"
         onClick={handlePayAndPrint}
         disabled={isProcessing}
-        className="relative overflow-hidden group w-full h-12 rounded-xl bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-white font-semibold text-sm flex items-center justify-center gap-2.5 shadow-xs transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
+        className="relative overflow-hidden group w-full h-12 sm:h-13 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(245,158,11,0.38)] hover:shadow-[0_0_36px_rgba(245,158,11,0.58)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
       >
-        <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/15 dark:via-zinc-900/10 to-transparent animate-shimmer-sheen pointer-events-none" />
+        {/* Moving light sheen */}
+        <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent animate-shimmer-sheen pointer-events-none" />
+
         {isProcessing ? (
           <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Processing Payment…</span>
+            <Loader2 className="w-5 h-5 animate-spin text-zinc-950" />
+            <span className="tracking-wide">Processing Secure Payment…</span>
           </>
         ) : (
           <>
-            <Printer className="w-4 h-4" />
-            <span>
+            <Printer className="w-5 h-5 text-zinc-950 stroke-[2.2]" />
+            <span className="tracking-wide font-black">
               {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} & Queue`}
             </span>
-            <ArrowRight className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 transition-transform" />
+            <ArrowRight className="w-4 h-4 text-zinc-950 stroke-[2.5] opacity-85 group-hover:translate-x-1 transition-transform" />
           </>
         )}
       </button>
 
       {/* Payment methods & Staff trigger */}
-      <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 space-y-2 text-xs">
-        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+      <div className="p-3 rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white/50 dark:bg-[#121215]/80 backdrop-blur-md space-y-2 text-xs">
+        <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
           <button
             type="button"
             onClick={() => setShowStaffModal(true)}
-            className="flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+            className="flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors cursor-pointer"
             title="Staff passcode access"
           >
             <Lock className="w-3 h-3 text-emerald-500" />
@@ -400,7 +428,7 @@ export function CostSummary({
           {['UPI', 'Google Pay', 'PhonePe', 'Paytm', 'Cards', 'NetBanking'].map((m) => (
             <span
               key={m}
-              className="px-2 py-0.5 rounded bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700/80 shadow-xs"
+              className="px-2.5 py-0.5 rounded-full bg-white/80 dark:bg-[#18171e] border border-zinc-200 dark:border-[#2d2932] text-zinc-700 dark:text-zinc-300 font-medium shadow-2xs"
             >
               {m}
             </span>

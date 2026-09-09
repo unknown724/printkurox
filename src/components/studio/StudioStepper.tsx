@@ -26,8 +26,8 @@ export function StudioStepper({
 
   return (
     <div className="w-full">
-      {/* shadcn/ui TabsList segmented container */}
-      <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium select-none">
+      {/* Glassmorphic Segmented Tabs List matching Image 1 */}
+      <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-zinc-100/80 dark:bg-[#101013] border border-zinc-200 dark:border-[#37333b] backdrop-blur-md text-xs font-medium select-none shadow-xs">
         {steps.map((step) => {
           const isActive = currentStep === step.id;
           const isCompleted = step.id < currentStep;
@@ -39,11 +39,11 @@ export function StudioStepper({
               type="button"
               disabled={!isClickable}
               onClick={() => onStepClick(step.id)}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-md transition-all text-xs font-medium ${
+              className={`flex items-center justify-center gap-1.5 py-2 px-1.5 sm:px-2 rounded-lg transition-all text-xs font-medium ${
                 isActive
-                  ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-zinc-50 shadow-xs'
+                  ? 'bg-white dark:bg-[#201f26] text-zinc-950 dark:text-white shadow-xs border border-zinc-200/50 dark:border-[#423d48]'
                   : isCompleted
-                  ? 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 cursor-pointer'
+                  ? 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/50 dark:hover:bg-[#18171e] cursor-pointer'
                   : isClickable
                   ? 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 cursor-pointer'
                   : 'text-zinc-400 dark:text-zinc-600 opacity-40 cursor-not-allowed'
@@ -52,10 +52,10 @@ export function StudioStepper({
               <span
                 className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
                   isActive
-                    ? 'bg-zinc-950 text-white dark:bg-white dark:text-zinc-950'
+                    ? 'bg-blue-600 text-white'
                     : isCompleted
                     ? 'bg-emerald-500 text-white'
-                    : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                    : 'bg-zinc-200 dark:bg-[#282630] text-zinc-600 dark:text-zinc-400'
                 }`}
               >
                 {isCompleted ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : step.id}

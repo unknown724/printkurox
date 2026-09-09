@@ -16,7 +16,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#131314",
+  themeColor: "#08080a",
 };
 
 export default function RootLayout({
@@ -25,28 +25,29 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="overflow-x-hidden max-w-full">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         {/* Anti-flash theme script */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{const t=localStorage.getItem('printkurox-theme');if(t==='light'||(!t&&window.matchMedia('(prefers-color-scheme: light)').matches)){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}else{document.documentElement.classList.add('dark');document.documentElement.classList.remove('light');}}catch(e){document.documentElement.classList.add('dark');}})();`,
+            __html: `(function(){try{const t=localStorage.getItem('printkurox-theme');if(t==='light'){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}else{document.documentElement.classList.add('dark');document.documentElement.classList.remove('light');}}catch(e){document.documentElement.classList.add('dark');}})();`,
           }}
         />
       </head>
-      <body className="antialiased bg-white text-zinc-900 dark:bg-[#131314] dark:text-[#e3e3e3] flex flex-col min-h-screen selection:bg-blue-500/30 selection:text-white transition-colors duration-200">
-        {/* Subtle Gemini living ambient gradient */}
+      <body className="antialiased bg-[#f9f9fa] text-zinc-900 dark:bg-[#08080a] dark:text-[#e3e3e3] flex flex-col min-h-screen selection:bg-white/20 selection:text-white transition-colors duration-200 overflow-x-hidden w-full max-w-full">
+        {/* Qronos-Accurate Deep Obsidian Atmosphere matching Image 1 */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[360px] bg-gradient-to-b from-blue-500/[0.06] via-purple-500/[0.04] to-transparent dark:from-blue-500/[0.09] dark:via-purple-500/[0.05] dark:to-transparent blur-3xl opacity-75 animate-living-glow" />
+          {/* Subtle top radial glow identical to Qronos about-card */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[1200px] h-[480px] bg-[radial-gradient(circle_at_50%_0%,rgba(94,73,86,0.18),transparent_70%)] pointer-events-none" />
         </div>
 
-        {/* Contextual Header (renders on non-landing pages) */}
+        {/* Top Header */}
         <KioskHeader />
 
         {/* Main Content */}
-        <main className="relative z-10 flex-1 w-full flex flex-col">
+        <main className="relative z-10 flex-1 w-full max-w-full overflow-x-hidden flex flex-col">
           {children}
         </main>
 

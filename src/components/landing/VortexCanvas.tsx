@@ -44,18 +44,18 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
     window.addEventListener('mousemove', handlePointerMove);
 
     // Qronos-accurate Hyperboloid Parameters:
-    // topRadius: 380, waistRadius: 53, bottomRadius: 1150, twist: 3.2, count: 180
+    // topRadius: 380, waistRadius: 53, bottomRadius: 1150, twist: 3, speed: slow (10/100)
     const STRAND_COUNT = 180;
-    const SEGMENTS_PER_STRAND = 70;
-    const DOT_COUNT = 750;
-    const COMET_COUNT = 14;
+    const SEGMENTS_PER_STRAND = 65;
+    const DOT_COUNT = 550;
+    const COMET_COUNT = 10;
 
-    const R_WAIST = 52;
-    const R_TOP = 380;
-    const R_FLOOR = 1150;
-    const TOTAL_HEIGHT = 680;
-    const WAIST_POS = 0.5; // Center waist
-    const TWIST = 3.2 * Math.PI * 2;
+    const R_WAIST = 46;
+    const R_TOP = 360;
+    const R_FLOOR = 1180;
+    const TOTAL_HEIGHT = 640;
+    const WAIST_POS = 0.5;
+    const TWIST = 3.0 * Math.PI * 2;
 
     // Pre-create dots along strands
     interface Dot {
@@ -71,14 +71,14 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
     const dots: Dot[] = Array.from({ length: DOT_COUNT }, () => ({
       strand: Math.floor(Math.random() * STRAND_COUNT),
       t: Math.random(),
-      speed: 0.0004 + Math.random() * 0.0012,
-      baseAlpha: 0.2 + Math.random() * 0.7,
-      size: 0.8 + Math.random() * 1.5,
-      flickerSpeed: 2 + Math.random() * 6,
+      speed: 0.0001 + Math.random() * 0.0003, // Slow gentle drift
+      baseAlpha: 0.15 + Math.random() * 0.65,
+      size: 0.7 + Math.random() * 1.3,
+      flickerSpeed: 1 + Math.random() * 3,
       phase: Math.random() * Math.PI * 2,
     }));
 
-    // Pre-create comets
+    // Pre-create slow stately comets
     interface Comet {
       strand: number;
       t: number;
@@ -90,17 +90,18 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
     const comets: Comet[] = Array.from({ length: COMET_COUNT }, () => ({
       strand: Math.floor(Math.random() * STRAND_COUNT),
       t: Math.random(),
-      speed: 0.003 + Math.random() * 0.006,
-      tailLen: 0.08 + Math.random() * 0.09,
+      speed: 0.0008 + Math.random() * 0.0014, // Relaxed majestic comet speed
+      tailLen: 0.07 + Math.random() * 0.08,
       brightness: 0.7 + Math.random() * 0.3,
     }));
 
     let time = 0;
 
     const render = () => {
-      time += 0.005;
-      mouseX += (targetMouseX - mouseX) * 0.05;
-      mouseY += (targetMouseY - mouseY) * 0.05;
+      // Gentle, calm speed matching Qronos speed: 10
+      time += 0.001;
+      mouseX += (targetMouseX - mouseX) * 0.03;
+      mouseY += (targetMouseY - mouseY) * 0.03;
 
       ctx.clearRect(0, 0, width, height);
 
@@ -110,8 +111,8 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
       const camDist = 650;
 
       // Pitch angle looking slightly down into the bottom flare
-      const pitch = 0.36 + mouseY * 0.08;
-      const yaw = mouseX * 0.12;
+      const pitch = 0.34 + mouseY * 0.06;
+      const yaw = mouseX * 0.08;
 
       const cosP = Math.cos(pitch);
       const sinP = Math.sin(pitch);
@@ -120,7 +121,6 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
 
       // Compute 3D point on hyperboloid
       const projectPoint = (strandIdx: number, tProg: number, flowOffset = 0) => {
-        // tProg ranges from 0 (floor) to 1 (top)
         let r: number;
         let y3d: number;
 
@@ -135,7 +135,8 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
         }
 
         const laneAngle = (strandIdx / STRAND_COUNT) * Math.PI * 2;
-        const spiralAngle = Math.pow(tProg, 1.3) * TWIST + laneAngle + time * 0.8 + flowOffset;
+        // Slow rotation angle
+        const spiralAngle = Math.pow(tProg, 1.25) * TWIST + laneAngle + time * 0.28 + flowOffset;
 
         const x = r * Math.cos(spiralAngle);
         const y = y3d;
@@ -151,28 +152,26 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
 
         const scale = fov / z2;
         const sx = cx + x1 * scale;
-        const sy = cy - y2 * scale; // invert Y for screen coords
+        const sy = cy - y2 * scale;
         const depthAlpha = Math.max(0.04, Math.min(1, (1200 - z2) / 750));
 
         return { sx, sy, z2, depthAlpha, r, tProg };
       };
 
-      // 1. Draw Dense Wireframe Strands (200 strands)
+      // 1. Draw Wireframe Strands
       for (let s = 0; s < STRAND_COUNT; s++) {
         ctx.beginPath();
         let started = false;
 
-        // Determine base strand brightness for texture variation
         const isAccent = s % 6 === 0;
-        const baseAlpha = isAccent ? 0.32 : s % 2 === 0 ? 0.2 : 0.12;
+        const baseAlpha = isAccent ? 0.3 : s % 2 === 0 ? 0.18 : 0.1;
 
         for (let i = 0; i <= SEGMENTS_PER_STRAND; i++) {
           const tProg = i / SEGMENTS_PER_STRAND;
           const pt = projectPoint(s, tProg);
           if (!pt) continue;
 
-          // Don't draw points wildly off-screen
-          if (pt.sx < -width * 0.5 || pt.sx > width * 1.5 || pt.sy < -height * 0.5 || pt.sy > height * 1.8) {
+          if (pt.sx < -width * 0.4 || pt.sx > width * 1.4 || pt.sy < -height * 0.4 || pt.sy > height * 1.6) {
             continue;
           }
 
@@ -186,7 +185,7 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
 
         if (started) {
           ctx.strokeStyle = `rgba(235, 240, 255, ${baseAlpha})`;
-          ctx.lineWidth = isAccent ? 0.95 : 0.65;
+          ctx.lineWidth = isAccent ? 0.9 : 0.6;
           ctx.stroke();
         }
       }
@@ -200,17 +199,17 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
         if (!pt) return;
         if (pt.sx < 0 || pt.sx > width || pt.sy < 0 || pt.sy > height) return;
 
-        const flicker = Math.sin(time * d.flickerSpeed + d.phase);
-        const alpha = Math.max(0.1, d.baseAlpha * pt.depthAlpha * (0.7 + 0.3 * flicker));
+        const flicker = Math.sin(time * 6 + d.phase);
+        const alpha = Math.max(0.08, d.baseAlpha * pt.depthAlpha * (0.75 + 0.25 * flicker));
         const size = d.size * (fov / pt.z2);
 
         ctx.beginPath();
-        ctx.arc(pt.sx, pt.sy, Math.max(0.6, size), 0, Math.PI * 2);
+        ctx.arc(pt.sx, pt.sy, Math.max(0.5, size), 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
         ctx.fill();
       });
 
-      // 3. Draw Comets (High-speed luminous trails)
+      // 3. Draw Comets (Gentle speed luminous trails)
       comets.forEach((c) => {
         c.t += c.speed;
         if (c.t > 1) {
@@ -224,7 +223,7 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
         ctx.beginPath();
         ctx.moveTo(headPt.sx, headPt.sy);
 
-        const tailSteps = 8;
+        const tailSteps = 7;
         for (let k = 1; k <= tailSteps; k++) {
           const tailT = Math.max(0, c.t - (c.tailLen / tailSteps) * k);
           const tailPt = projectPoint(c.strand, tailT);
@@ -233,17 +232,17 @@ export function VortexCanvas({ className = '' }: VortexCanvasProps) {
           }
         }
 
-        const cometAlpha = c.brightness * headPt.depthAlpha * 0.9;
-        ctx.strokeStyle = `rgba(255, 255, 255, ${cometAlpha * 0.7})`;
-        ctx.lineWidth = 1.3;
+        const cometAlpha = c.brightness * headPt.depthAlpha * 0.85;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${cometAlpha * 0.65})`;
+        ctx.lineWidth = 1.2;
         ctx.stroke();
 
         // Glowing Comet Head
         ctx.beginPath();
-        ctx.arc(headPt.sx, headPt.sy, 2.2 * (fov / headPt.z2), 0, Math.PI * 2);
+        ctx.arc(headPt.sx, headPt.sy, 2.0 * (fov / headPt.z2), 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 255, 255, ${cometAlpha})`;
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.9)';
-        ctx.shadowBlur = 6;
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+        ctx.shadowBlur = 5;
         ctx.fill();
         ctx.shadowBlur = 0;
       });

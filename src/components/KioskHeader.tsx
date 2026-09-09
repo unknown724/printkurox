@@ -2,25 +2,20 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { AdminBadge } from '@/components/AdminBadge';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
 
 export function KioskHeader() {
-  const pathname = usePathname();
-
-  // On the main landing hero page, the landing hero provides its own immersive Qronos header
-  if (pathname === '/') {
-    return null;
-  }
-
   return (
-    <header className="relative z-20 border-b border-zinc-200/80 dark:border-[#282a2c] bg-white/90 dark:bg-[#131314]/90 backdrop-blur-xl sticky top-0 transition-colors duration-200">
-      <div className="max-w-xl mx-auto px-4 h-14 flex items-center justify-between">
-        {/* Brand Mark - Printer Logo with Google Gemini Gradient Colors */}
-        <Link href="/" className="flex items-center space-x-2.5 group">
-          <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-[#1e1f20] border border-zinc-200/80 dark:border-[#282a2c] flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
+    <header className="relative z-30 border-b border-zinc-200 dark:border-[#37333b] bg-white/80 dark:bg-[#0d0d10]/90 backdrop-blur-xl sticky top-0 transition-colors duration-200">
+      {/* Subtle top hairline highlight */}
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-300/20 to-transparent pointer-events-none" />
+
+      <div className="max-w-xl mx-auto px-3.5 sm:px-4 h-14 flex items-center justify-between">
+        {/* Brand Mark - Printer Logo */}
+        <Link href="/" className="flex items-center space-x-2.5 group shrink-0">
+          <div className="w-8 h-8 rounded-xl bg-zinc-100 dark:bg-[#16161a] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
             <svg
               className="w-4.5 h-4.5 shrink-0"
               viewBox="0 0 24 24"
@@ -62,7 +57,7 @@ export function KioskHeader() {
           <div>
             <h1 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#e3e3e3] flex items-center gap-1.5">
               PrintKurox
-              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-[#282a2c] text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
+              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full bg-blue-500/10 dark:bg-blue-400/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
                 Kiosk
               </span>
             </h1>
@@ -73,7 +68,7 @@ export function KioskHeader() {
         </Link>
 
         {/* Right controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           <ThemeToggle />
           <AdminBadge />
           <PrinterStatusPill />
