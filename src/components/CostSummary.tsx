@@ -20,6 +20,7 @@ import {
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
 import { useRouter } from 'next/navigation';
+import { BorderBeam } from '@/components/ui/BorderBeam';
 
 declare global {
   interface Window {
@@ -247,21 +248,13 @@ export function CostSummary({
 
   return (
     <div className="space-y-4">
-      {/* Itemized Summary Card (Glassmorphic with Qronos Moving Light Beam) */}
-      <div className="relative rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/90 backdrop-blur-xl shadow-xs overflow-hidden group">
-        {/* Qronos-style animated hairline glow */}
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute left-4 top-0 h-px w-[calc(100%-2rem)] bg-gradient-to-r from-amber-500/0 via-amber-400/50 to-amber-500/0"
-        />
-        {/* Moving light sheen on the left border */}
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 left-0 w-[2px] bg-gradient-to-b from-amber-500/0 via-amber-400/50 to-amber-500/0"
-        />
+      {/* Itemized Summary Card (Glassmorphic with Qronos Moving Border Beam) */}
+      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/95 backdrop-blur-xl shadow-xs overflow-hidden group">
+        {/* Dynamic Specular Border Beam gliding slowly & smoothly around perimeter */}
+        <BorderBeam duration={14} borderWidth={1.5} borderRadius={16} colorFrom="rgba(255, 255, 255, 0.85)" />
 
         {/* Header bar */}
-        <div className="px-4 py-3 border-b border-zinc-100 dark:border-[#2d2932] flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-zinc-100 dark:border-white/[0.06] flex items-center justify-between relative z-10">
           <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             Order Summary
@@ -273,21 +266,21 @@ export function CostSummary({
         </div>
 
         {/* Line items */}
-        <div className="px-4 py-2 space-y-0 divide-y divide-zinc-100 dark:divide-[#242229]">
+        <div className="px-4 py-2 space-y-0 divide-y divide-zinc-100 dark:divide-white/[0.06] relative z-10">
           <div className="flex items-center justify-between py-2.5">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">Document</span>
             <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
               <span>{pricing.totalPages} Page{pricing.totalPages > 1 ? 's' : ''}</span>
               {pricing.colorMode === 'bw' ? (
-                <span className="px-1.5 py-0.5 rounded-md bg-zinc-200 dark:bg-[#201f26] text-zinc-900 dark:text-white border border-zinc-300 dark:border-[#37333b] font-bold text-[10px] font-mono">
+                <span className="px-1.5 py-0.5 rounded-md bg-zinc-200 dark:bg-white/10 text-zinc-900 dark:text-white border border-zinc-300 dark:border-white/15 font-bold text-[10px] font-mono">
                   B&amp;W
                 </span>
               ) : pricing.colorMode === 'color' ? (
-                <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-pink-500/20 text-blue-600 dark:text-blue-300 border border-blue-500/30 font-bold text-[10px] font-mono">
+                <span className="px-1.5 py-0.5 rounded-md bg-white/10 text-white border border-white/20 font-bold text-[10px] font-mono">
                   FULL COLOR
                 </span>
               ) : (
-                <span className="px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-500/30 font-bold text-[10px] font-mono">
+                <span className="px-1.5 py-0.5 rounded-md bg-white/10 text-white border border-white/20 font-bold text-[10px] font-mono">
                   MIXED
                 </span>
               )}
@@ -410,7 +403,7 @@ export function CostSummary({
       </button>
 
       {/* Payment methods & Staff trigger */}
-      <div className="p-3 rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white/50 dark:bg-[#121215]/80 backdrop-blur-md space-y-2 text-xs">
+      <div className="p-3 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white/50 dark:bg-[#08080a]/80 backdrop-blur-md space-y-2 text-xs">
         <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
           <button
             type="button"
@@ -428,7 +421,7 @@ export function CostSummary({
           {['UPI', 'Google Pay', 'PhonePe', 'Paytm', 'Cards', 'NetBanking'].map((m) => (
             <span
               key={m}
-              className="px-2.5 py-0.5 rounded-full bg-white/80 dark:bg-[#18171e] border border-zinc-200 dark:border-[#2d2932] text-zinc-700 dark:text-zinc-300 font-medium shadow-2xs"
+              className="px-2.5 py-0.5 rounded-full bg-white/80 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 text-zinc-700 dark:text-zinc-300 font-medium shadow-2xs"
             >
               {m}
             </span>

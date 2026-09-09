@@ -45,6 +45,7 @@ daemon/sumatra/
 daemon/temp_prints/
 daemon/.env
 daemon/logs/
+walkthrough.md
 
 
 .vercel

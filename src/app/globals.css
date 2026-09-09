@@ -14,11 +14,11 @@
   }
 
   .dark {
-    --background: #131314;
-    --foreground: #e3e3e3;
-    --card-bg: #1e1f20;
-    --border-subtle: #282a2c;
-    --glow-indigo: rgba(66, 133, 244, 0.15);
+    --background: #000000;
+    --foreground: #f4f4f5;
+    --card-bg: rgba(9, 9, 11, 0.85);
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --glow-indigo: rgba(255, 255, 255, 0.12);
     --glow-emerald: rgba(16, 185, 129, 0.15);
   }
 }
@@ -60,13 +60,15 @@ body {
 }
 
 .dark .glass-card {
-  background: #1e1f20;
-  border: 1px solid #282a2c;
-  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.25);
+  background: rgba(9, 9, 11, 0.82);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 .glass-card-hover {
-  transition: all 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .glass-card-hover:hover {
@@ -76,8 +78,8 @@ body {
 }
 
 .dark .glass-card-hover:hover {
-  border-color: #3c4043;
-  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 /* Premium card variant - richer gradient bg */
@@ -97,15 +99,17 @@ body {
 
 .dark .card-premium {
   background: linear-gradient(
-    135deg,
-    rgba(15, 20, 38, 0.90) 0%,
-    rgba(10, 14, 26, 0.95) 100%
+    145deg,
+    rgba(14, 14, 16, 0.92) 0%,
+    rgba(6, 6, 8, 0.96) 100%
   );
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+    0 20px 50px -12px rgba(0, 0, 0, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.8);
 }
 
 /* =========================================================
@@ -175,10 +179,22 @@ body {
   to { opacity: 1; transform: scale(1); }
 }
 
+@keyframes border-beam {
+  0% {
+    offset-distance: 0%;
+  }
+  100% {
+    offset-distance: 100%;
+  }
+}
+
 .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-fade-in-up { animation: fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .animate-scale-in { animation: scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-border-beam {
+  animation: border-beam var(--duration, 14s) linear infinite;
+}
 
 /* Shimmer overlay for loading states */
 .shimmer-overlay::after {
@@ -445,6 +461,45 @@ body {
 
 .animate-shimmer-sheen {
   animation: shimmer-sheen 4s ease-in-out infinite;
+}
+
+/* =========================================================
+   LIVING BORDER BEAM & GLASSMORPHISM MOVING SHINE
+   ========================================================= */
+
+@keyframes border-beam {
+  0% {
+    offset-distance: 0%;
+  }
+  100% {
+    offset-distance: 100%;
+  }
+}
+
+.animate-border-beam {
+  animation: border-beam var(--duration, 14s) linear infinite;
+}
+
+.animate-conic-spin {
+  animation: conic-spin calc(var(--duration, 10) * 1s) linear infinite;
+}
+
+.animate-living-rim {
+  animation: living-rim-glow 4s ease-in-out infinite;
+}
+
+/* Masked border container */
+.border-beam-container {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  overflow: hidden;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  padding: 1px;
 }
 
 /* =========================================================

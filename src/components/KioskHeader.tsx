@@ -8,14 +8,14 @@ import { PrinterStatusPill } from '@/components/PrinterStatusPill';
 
 export function KioskHeader() {
   return (
-    <header className="relative z-30 border-b border-zinc-200 dark:border-[#37333b] bg-white/80 dark:bg-[#0d0d10]/90 backdrop-blur-xl sticky top-0 transition-colors duration-200">
+    <header className="relative z-30 border-b border-zinc-200 dark:border-white/10 bg-white/80 dark:bg-[#000000]/80 backdrop-blur-xl sticky top-0 transition-colors duration-200">
       {/* Subtle top hairline highlight */}
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-300/20 to-transparent pointer-events-none" />
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
 
       <div className="max-w-xl mx-auto px-3.5 sm:px-4 h-14 flex items-center justify-between">
         {/* Brand Mark - Printer Logo */}
         <Link href="/" className="flex items-center space-x-2.5 group shrink-0">
-          <div className="w-8 h-8 rounded-xl bg-zinc-100 dark:bg-[#16161a] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
+          <div className="w-8 h-8 rounded-xl bg-zinc-100 dark:bg-white/[0.05] border border-zinc-200 dark:border-white/10 flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
             <svg
               className="w-4.5 h-4.5 shrink-0"
               viewBox="0 0 24 24"
@@ -55,9 +55,9 @@ export function KioskHeader() {
             </svg>
           </div>
           <div>
-            <h1 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#e3e3e3] flex items-center gap-1.5">
+            <h1 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#f4f4f5] flex items-center gap-1.5">
               PrintKurox
-              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full bg-blue-500/10 dark:bg-blue-400/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full bg-zinc-200/80 dark:bg-white/10 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-white/15">
                 Kiosk
               </span>
             </h1>

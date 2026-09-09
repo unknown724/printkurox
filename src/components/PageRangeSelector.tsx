@@ -114,11 +114,11 @@ export function PageRangeSelector({
   };
 
   return (
-    <div className="rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/90 p-4 shadow-xs space-y-3.5">
+    <div className="rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 p-4 shadow-xs space-y-3.5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-          <div className="w-6 h-6 rounded-md bg-zinc-100 dark:bg-[#1a1920] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center text-zinc-600 dark:text-zinc-300">
+          <div className="w-6 h-6 rounded-md bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-600 dark:text-zinc-300">
             <ListFilter className="w-3.5 h-3.5" />
           </div>
           <span>Pages to Print</span>
@@ -156,7 +156,7 @@ export function PageRangeSelector({
                 className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all ${
                   preset.active
                     ? 'border-zinc-900 bg-zinc-900 text-zinc-50 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900 shadow-xs'
-                    : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100 dark:border-[#37333b] dark:bg-[#18171e] dark:text-zinc-400 dark:hover:bg-[#222129]'
+                    : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400 dark:hover:bg-white/[0.08]'
                 }`}
               >
                 {preset.label}
@@ -205,7 +205,7 @@ export function PageRangeSelector({
                   className={`h-7 min-w-[30px] px-2 rounded-md text-xs font-mono font-medium transition-all duration-100 flex items-center justify-center gap-0.5 select-none ${
                     isSelected
                       ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-xs'
-                      : 'bg-zinc-100 text-zinc-400 border border-zinc-200 hover:bg-zinc-200 line-through dark:bg-[#18171e] dark:text-zinc-500 dark:border-[#2d2932] dark:hover:bg-[#24232c]'
+                      : 'bg-zinc-100 text-zinc-400 border border-zinc-200 hover:bg-zinc-200 line-through dark:bg-white/[0.03] dark:text-zinc-500 dark:border-white/10 dark:hover:bg-white/[0.06]'
                   }`}
                 >
                   <span>{pageNum}</span>
@@ -230,10 +230,10 @@ export function PageRangeSelector({
             placeholder="e.g. 1-3, 5"
             value={rangeInput}
             onChange={(e) => handleRangeInputChange(e.target.value)}
-            className={`w-full bg-zinc-50 dark:bg-[#0c0c0f] border rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 font-mono focus:outline-none transition-all pr-8 ${
+            className={`w-full bg-zinc-50 dark:bg-[#050507] border rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 font-mono focus:outline-none transition-all pr-8 ${
               !validationResult.isValid
                 ? 'border-rose-400 focus:border-rose-500 bg-rose-50/50 dark:border-rose-800/80 dark:bg-rose-950/10'
-                : 'border-zinc-200 dark:border-[#37333b] focus:border-zinc-400 dark:focus:border-zinc-500 focus:bg-white dark:focus:bg-[#0c0c0f]'
+                : 'border-zinc-200 dark:border-white/10 focus:border-zinc-400 dark:focus:border-zinc-400 focus:bg-white dark:focus:bg-[#050507]'
             }`}
           />
           {rangeInput && rangeInput.toLowerCase() !== 'all' && (

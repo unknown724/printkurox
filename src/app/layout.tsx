@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { FooterLegal } from "@/components/FooterLegal";
 import { KioskHeader } from "@/components/KioskHeader";
+import { DotPattern } from "@/components/ui/dot-pattern";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,7 +17,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#08080a",
+  themeColor: "#000000",
 };
 
 export default function RootLayout({
@@ -36,11 +37,19 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased bg-[#f9f9fa] text-zinc-900 dark:bg-[#08080a] dark:text-[#e3e3e3] flex flex-col min-h-screen selection:bg-white/20 selection:text-white transition-colors duration-200 overflow-x-hidden w-full max-w-full">
-        {/* Qronos-Accurate Deep Obsidian Atmosphere matching Image 1 */}
+      <body className="antialiased bg-[#f9f9fa] text-zinc-900 dark:bg-[#000000] dark:text-[#f4f4f5] flex flex-col min-h-screen selection:bg-white/20 selection:text-white transition-colors duration-200 overflow-x-hidden w-full max-w-full">
+        {/* Qronos Obsidian Background with Designali Dot-Pattern */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-          {/* Subtle top radial glow identical to Qronos about-card */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[1200px] h-[480px] bg-[radial-gradient(circle_at_50%_0%,rgba(94,73,86,0.18),transparent_70%)] pointer-events-none" />
+          {/* Subtle top specular radial glow */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[1200px] h-[500px] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.035),transparent_70%)] pointer-events-none" />
+          <DotPattern
+            width={24}
+            height={24}
+            cx={1}
+            cy={1}
+            cr={1.2}
+            className="fill-zinc-400/40 dark:fill-white/[0.18] [mask-image:radial-gradient(1100px_circle_at_50%_35%,white_35%,transparent_85%)]"
+          />
         </div>
 
         {/* Top Header */}

@@ -91,9 +91,9 @@ export function DocumentStudio({
             <button
               type="button"
               onClick={() => setShowRatesModal(true)}
-              className="inline-flex items-center gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white px-2.5 py-1.5 rounded-lg border border-zinc-200/80 dark:border-white/10 bg-zinc-100/70 dark:bg-white/[0.04] hover:dark:bg-white/[0.08] hover:dark:border-white/20 transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] cursor-pointer"
             >
-              <HelpCircle className="w-3.5 h-3.5" />
+              <HelpCircle className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-400" />
               <span>Rate Card</span>
             </button>
           </div>
@@ -109,7 +109,7 @@ export function DocumentStudio({
           {/* If file is staged, show sleek Continue button */}
           {/* If file is staged, show sleek Continue button with Glassmorphism */}
           {uploadedBatch && (
-            <div className="p-3.5 rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/85 backdrop-blur-xl flex items-center justify-between gap-3 animate-scale-in shadow-xs">
+            <div className="p-3.5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl flex items-center justify-between gap-3 animate-scale-in shadow-xs">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-blue-500/10 dark:bg-white/10 border border-blue-500/20 dark:border-white/15 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
                   <FileText className="w-4 h-4" />
@@ -145,7 +145,7 @@ export function DocumentStudio({
           {/* Top Info Bar with Copies Stepper */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 px-0.5 pt-1">
             <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-[#16161a] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center text-zinc-700 dark:text-zinc-300 shrink-0">
+              <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-700 dark:text-zinc-300 shrink-0">
                 <Layers className="w-4 h-4" />
               </div>
               <div className="min-w-0">
@@ -161,13 +161,13 @@ export function DocumentStudio({
             {/* Stage 2 Controls: Copies Stepper & Counts */}
             <div className="flex items-center gap-2 flex-wrap">
               {/* Copies Stepper */}
-              <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-[#141418] border border-zinc-200 dark:border-[#37333b] rounded-full px-2.5 py-1 shadow-2xs">
+              <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 rounded-full px-2.5 py-1 shadow-2xs">
                 <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pl-0.5">Copies</span>
                 <button
                   type="button"
                   onClick={() => onSettingsChange({ ...settings, copies: Math.max(1, settings.copies - 1) })}
                   disabled={settings.copies <= 1}
-                  className="w-5 h-5 rounded-full bg-white dark:bg-[#201f26] border border-zinc-200 dark:border-[#37333b] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-[#2a2833] transition-colors"
+                  className="w-5 h-5 rounded-full bg-white dark:bg-white/[0.08] border border-zinc-200 dark:border-white/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-white/15 transition-colors"
                   title="Decrease copies"
                   aria-label="Decrease copies"
                 >
@@ -180,7 +180,7 @@ export function DocumentStudio({
                   type="button"
                   onClick={() => onSettingsChange({ ...settings, copies: Math.min(50, settings.copies + 1) })}
                   disabled={settings.copies >= 50}
-                  className="w-5 h-5 rounded-full bg-white dark:bg-[#201f26] border border-zinc-200 dark:border-[#37333b] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-[#2a2833] transition-colors"
+                  className="w-5 h-5 rounded-full bg-white dark:bg-white/[0.08] border border-zinc-200 dark:border-white/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-white/15 transition-colors"
                   title="Increase copies"
                   aria-label="Increase copies"
                 >
@@ -190,7 +190,7 @@ export function DocumentStudio({
 
               {/* B&W / Color Clean Counts */}
               <div className="flex items-center gap-1.5 text-xs">
-                <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-[#141418] text-zinc-800 dark:text-zinc-200 font-mono text-[11px] font-medium border border-zinc-200 dark:border-[#37333b]">
+                <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-white/[0.04] text-zinc-800 dark:text-zinc-200 font-mono text-[11px] font-medium border border-zinc-200 dark:border-white/10">
                   {bwCount} B&amp;W
                 </span>
                 {colorCount > 0 ? (
@@ -198,7 +198,7 @@ export function DocumentStudio({
                     {colorCount} Color
                   </span>
                 ) : (
-                  <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-[#141418] text-zinc-500 dark:text-zinc-400 font-mono text-[11px] border border-zinc-200 dark:border-[#37333b]">
+                  <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-white/[0.04] text-zinc-500 dark:text-zinc-400 font-mono text-[11px] border border-zinc-200 dark:border-white/10">
                     0 Color
                   </span>
                 )}
@@ -233,7 +233,7 @@ export function DocumentStudio({
             <button
               type="button"
               onClick={() => goToStep(1)}
-              className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#141418] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#1d1c22] text-xs font-medium flex items-center gap-1.5 transition-colors"
+              className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/[0.04] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/[0.08] text-xs font-medium flex items-center gap-1.5 transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back</span>

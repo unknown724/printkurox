@@ -8,6 +8,7 @@ import { AdvancedPrintOptions } from '@/components/AdvancedSettings';
 import { calculatePricing, PageConfig } from '@/lib/pricing';
 import { pagesToRangeString } from '@/lib/pdf-utils';
 import { DocumentStudio } from '@/components/studio/DocumentStudio';
+import { BorderBeam } from '@/components/ui/BorderBeam';
 import { Crown, ChevronRight } from 'lucide-react';
 
 export default function HomePage() {
@@ -136,37 +137,31 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Document Studio Card with Image 1 Qronos Glassmorphism */}
-      <div className="relative rounded-[22px] border border-zinc-300 dark:border-[#37333b] bg-white dark:bg-[linear-gradient(145deg,rgba(19,19,21,0.98),rgba(7,7,8,0.98))] p-[5px] shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_-1px_0_rgba(0,0,0,0.7)]">
-        <div className="relative overflow-hidden rounded-[16px] border border-zinc-200 dark:border-[#37333b] bg-zinc-50/50 dark:bg-[linear-gradient(145deg,rgba(19,19,21,0.98),rgba(7,7,8,0.98))] p-3.5 sm:p-5 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
-          {/* Top hairline shimmer sheen matching Image 1 */}
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute left-[1.125rem] top-0 h-px w-[calc(100%-2.25rem)] bg-gradient-to-r from-slate-300/0 via-slate-200/90 to-slate-300/0"
-          />
-          {/* Bottom subtle glow accent matching Image 1 */}
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-0 h-px w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
-          />
+      {/* Document Studio Card with Qronos Obsidian Glassmorphism & Moving Border Beam */}
+      <div className="relative rounded-2xl border border-zinc-200/80 dark:border-white/[0.10] bg-white dark:bg-[#0c0c0e] dark:bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.055),transparent_70%),linear-gradient(#0e0e12,#09090c)] backdrop-blur-2xl p-4 sm:p-6 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.1)] overflow-hidden">
+        {/* Top-Middle Luminous Specular Flare (Permanent Top Center Shining Effect) */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-44 sm:w-64 h-[2.5px] bg-gradient-to-r from-transparent via-white to-transparent shadow-[0_0_16px_rgba(255,255,255,0.9)] pointer-events-none z-30" />
+        <div className="absolute -top-7 left-1/2 -translate-x-1/2 w-64 sm:w-80 h-16 bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.25),transparent_75%)] pointer-events-none z-20" />
 
-          <DocumentStudio
-            uploadedBatch={uploadedBatch}
-            onBatchUploaded={handleBatchUploaded}
-            pageConfigs={pageConfigs}
-            onPageConfigsChange={handlePageConfigsChange}
-            orientation={orientation}
-            onOrientationChange={(orient) => setOrientation(orient)}
-            settings={settings}
-            onSettingsChange={handleSettingsChange}
-            advancedOptions={advancedOptions}
-            onAdvancedOptionsChange={(opts) => setAdvancedOptions(opts)}
-            pricing={pricing}
-            bwCount={bwCount}
-            colorCount={colorCount}
-            onRangeChange={handleRangeChange}
-          />
-        </div>
+        {/* Dynamic Specular Border Beam gliding smoothly around perimeter */}
+        <BorderBeam duration={14} borderWidth={2.5} borderRadius={16} size={360} colorFrom="rgba(255, 255, 255, 1)" />
+
+        <DocumentStudio
+          uploadedBatch={uploadedBatch}
+          onBatchUploaded={handleBatchUploaded}
+          pageConfigs={pageConfigs}
+          onPageConfigsChange={handlePageConfigsChange}
+          orientation={orientation}
+          onOrientationChange={(orient) => setOrientation(orient)}
+          settings={settings}
+          onSettingsChange={handleSettingsChange}
+          advancedOptions={advancedOptions}
+          onAdvancedOptionsChange={(opts) => setAdvancedOptions(opts)}
+          pricing={pricing}
+          bwCount={bwCount}
+          colorCount={colorCount}
+          onRangeChange={handleRangeChange}
+        />
       </div>
     </div>
   );

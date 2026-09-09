@@ -35,17 +35,17 @@ export function PrintSettings({
 
   return (
     <div className="space-y-3">
-      {/* 1. Color Mode - Image 1 Glassmorphic Card with Hairline Top Glow */}
-      <div className="relative rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/90 backdrop-blur-xl p-4 shadow-xs space-y-3 overflow-hidden">
+      {/* 1. Color Mode - Glassmorphic Card */}
+      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-4 shadow-xs space-y-3 overflow-hidden">
         {/* Luminous top edge sheen */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute left-4 top-0 h-px w-[calc(100%-2rem)] bg-gradient-to-r from-slate-300/0 via-slate-200/30 to-slate-300/0"
+          className="pointer-events-none absolute left-4 top-0 h-px w-[calc(100%-2rem)] bg-gradient-to-r from-transparent via-white/20 to-transparent"
         />
 
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-            <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-[#1a1920] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
+            <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
               <Palette className="w-3.5 h-3.5" />
             </div>
             <span>Color Mode</span>
@@ -54,8 +54,8 @@ export function PrintSettings({
           <span
             className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-full border ${
               settings.colorMode === 'color'
-                ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30'
-                : 'bg-zinc-100 dark:bg-[#1a1920] text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-[#37333b]'
+                ? 'bg-white/10 text-white border-white/20'
+                : 'bg-zinc-100 dark:bg-white/[0.04] text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-white/10'
             }`}
           >
             {settings.colorMode === 'custom'
@@ -77,27 +77,27 @@ export function PrintSettings({
               badge: '₹4/pg',
               icon: <span className="w-2.5 h-2.5 rounded-full bg-zinc-300 dark:bg-zinc-400 shrink-0 shadow-2xs" />,
               activeClassName:
-                'bg-white text-zinc-950 dark:bg-[#201f26] dark:text-white border border-zinc-300/80 dark:border-[#423d48] shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
+                'bg-white text-zinc-950 dark:bg-white/[0.08] dark:text-white border border-zinc-300/80 dark:border-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
               badgeClassName:
-                'bg-zinc-100 dark:bg-[#2c2a34] text-zinc-800 dark:text-zinc-100 border border-zinc-300 dark:border-[#37333b]',
+                'bg-zinc-100 dark:bg-white/10 text-zinc-800 dark:text-zinc-100 border border-zinc-300 dark:border-white/15',
             },
             {
               value: 'color',
               label: 'Full Color',
               badge: '₹7/pg',
               icon: (
-                <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-blue-500 via-purple-500 to-pink-500 shrink-0 shadow-xs" />
+                <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-blue-400 via-purple-400 to-pink-400 shrink-0 shadow-xs" />
               ),
               activeClassName:
-                'bg-gradient-to-r from-blue-500/15 via-purple-500/15 to-pink-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/40 dark:border-blue-400/50 shadow-[0_0_16px_rgba(66,133,244,0.25)] font-bold',
+                'bg-white text-zinc-950 dark:bg-white/[0.08] dark:text-white border border-zinc-300/80 dark:border-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
               badgeClassName:
-                'bg-gradient-to-r from-blue-500 to-purple-600 text-white border-transparent shadow-2xs',
+                'bg-zinc-900 dark:bg-white text-white dark:text-black border-transparent shadow-2xs',
             },
           ]}
         />
 
         {settings.colorMode === 'custom' && (
-          <div className="px-3 py-1.5 rounded-xl bg-zinc-100/80 dark:bg-[#16161a] border border-zinc-200 dark:border-[#37333b] flex items-center justify-between text-xs">
+          <div className="px-3 py-1.5 rounded-xl bg-zinc-100/80 dark:bg-white/[0.03] border border-zinc-200 dark:border-white/10 flex items-center justify-between text-xs">
             <span className="text-zinc-800 dark:text-zinc-200 font-medium text-[11px]">Mixed Mode Configured</span>
             <span className="text-zinc-500 dark:text-zinc-400 text-[10px]">
               Tap above to apply across all pages
@@ -107,7 +107,7 @@ export function PrintSettings({
       </div>
 
       {/* 2. Sides - Highlighted Single vs Double Sided Eco */}
-      <div className="relative rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/90 backdrop-blur-xl p-4 shadow-xs space-y-3 overflow-hidden">
+      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-4 shadow-xs space-y-3 overflow-hidden">
         {/* Luminous top edge sheen */}
         <span
           aria-hidden="true"
@@ -116,7 +116,7 @@ export function PrintSettings({
 
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-            <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-[#1a1920] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
+            <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
               <Layers className="w-3.5 h-3.5" />
             </div>
             <span>Print Sides</span>
@@ -126,7 +126,7 @@ export function PrintSettings({
             className={`text-[11px] px-2.5 py-0.5 rounded-full border font-medium ${
               settings.isDuplex
                 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                : 'bg-zinc-100/80 dark:bg-[#1a1920] text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-[#37333b]'
+                : 'bg-zinc-100/80 dark:bg-white/[0.04] text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-white/10'
             }`}
           >
             {settings.isDuplex ? 'Front & Back (Eco)' : 'Single Side'}
@@ -142,7 +142,7 @@ export function PrintSettings({
               label: 'Single-Sided',
               sublabel: '1 pg/sheet',
               activeClassName:
-                'bg-white text-zinc-950 dark:bg-[#201f26] dark:text-white border border-zinc-300/80 dark:border-[#423d48] shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
+                'bg-white text-zinc-950 dark:bg-white/[0.08] dark:text-white border border-zinc-300/80 dark:border-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
             },
             {
               value: 'duplex',
@@ -158,20 +158,20 @@ export function PrintSettings({
       </div>
 
       {/* 3. Copies */}
-      <div className="relative rounded-2xl border border-zinc-200 dark:border-[#37333b] bg-white dark:bg-[#121215]/90 backdrop-blur-xl p-4 shadow-xs flex items-center justify-between overflow-hidden">
+      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#08080a]/90 backdrop-blur-xl p-4 shadow-xs flex items-center justify-between overflow-hidden">
         <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-          <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-[#1a1920] border border-zinc-200 dark:border-[#37333b] flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
+          <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
             <Copy className="w-3.5 h-3.5" />
           </div>
           <span>Total Set Copies</span>
         </div>
 
-        <div className="flex items-center space-x-1 bg-zinc-100/80 dark:bg-[#18171e] border border-zinc-200 dark:border-[#37333b] rounded-full p-1 shadow-2xs">
+        <div className="flex items-center space-x-1 bg-zinc-100/80 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 rounded-full p-1 shadow-2xs">
           <button
             type="button"
             onClick={() => update({ copies: Math.max(1, settings.copies - 1) })}
             disabled={settings.copies <= 1}
-            className="w-7 h-7 rounded-full bg-white dark:bg-[#24232c] border border-zinc-200 dark:border-[#37333b] hover:bg-zinc-50 dark:hover:bg-[#2d2b36] disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 transition-colors shadow-2xs cursor-pointer"
+            className="w-7 h-7 rounded-full bg-white dark:bg-white/10 border border-zinc-200 dark:border-white/15 hover:bg-zinc-50 dark:hover:bg-white/20 disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 transition-colors shadow-2xs cursor-pointer"
             title="Decrease copies"
             aria-label="Decrease copies"
           >
@@ -186,7 +186,7 @@ export function PrintSettings({
             type="button"
             onClick={() => update({ copies: Math.min(50, settings.copies + 1) })}
             disabled={settings.copies >= 50}
-            className="w-7 h-7 rounded-full bg-white dark:bg-[#24232c] border border-zinc-200 dark:border-[#37333b] hover:bg-zinc-50 dark:hover:bg-[#2d2b36] disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 transition-colors shadow-2xs cursor-pointer"
+            className="w-7 h-7 rounded-full bg-white dark:bg-white/10 border border-zinc-200 dark:border-white/15 hover:bg-zinc-50 dark:hover:bg-white/20 disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 transition-colors shadow-2xs cursor-pointer"
             title="Increase copies"
             aria-label="Increase copies"
           >
