@@ -109,8 +109,12 @@ export function DocumentStudio({
           {/* If file is staged, show sleek Continue button */}
           {/* If file is staged, show sleek Continue button with Glassmorphism */}
           {uploadedBatch && (
-            <div className="p-3.5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl flex items-center justify-between gap-3 animate-scale-in shadow-xs">
-              <div className="flex items-center gap-2.5 min-w-0">
+            <div className="relative p-3.5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl flex items-center justify-between gap-3 animate-scale-in shadow-xs overflow-hidden">
+              {/* Specular Shining Flare on middle bottom */}
+              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-36 sm:w-56 h-[1.5px] bg-gradient-to-r from-transparent via-white/85 to-transparent shadow-[0_0_12px_rgba(255,255,255,0.8)] pointer-events-none z-10" />
+              <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 w-48 sm:w-64 h-10 bg-[radial-gradient(ellipse_at_bottom,rgba(255,255,255,0.18),transparent_70%)] pointer-events-none z-0" />
+
+              <div className="flex items-center gap-2.5 min-w-0 relative z-10">
                 <div className="w-8 h-8 rounded-xl bg-blue-500/10 dark:bg-white/10 border border-blue-500/20 dark:border-white/15 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
                   <FileText className="w-4 h-4" />
                 </div>
@@ -127,7 +131,7 @@ export function DocumentStudio({
               <button
                 type="button"
                 onClick={() => goToStep(2)}
-                className="relative overflow-hidden group h-9 px-4 rounded-xl bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs flex items-center gap-1.5 shrink-0 shadow-[0_2px_12px_rgba(255,255,255,0.18)] transition-all active:scale-[0.98] cursor-pointer"
+                className="relative overflow-hidden group h-9 px-4 rounded-xl bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs flex items-center gap-1.5 shrink-0 shadow-[0_2px_12px_rgba(255,255,255,0.18)] transition-all active:scale-[0.98] cursor-pointer z-10"
               >
                 <span>Customize Pages</span>
                 <ArrowRight className="w-3.5 h-3.5 text-zinc-950 stroke-[2.2] group-hover:translate-x-0.5 transition-transform" />

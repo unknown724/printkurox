@@ -14,10 +14,19 @@ import shutil
 import subprocess
 import requests
 import winsound
+import socket
 from datetime import datetime, timezone
 import boto3
 from botocore.client import Config
 from dotenv import load_dotenv
+
+# Ensure only one instance of the daemon can ever run on this machine
+_lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _lock_socket.bind(('127.0.0.1', 49152))
+except OSError:
+    print("[ERROR] Another instance of PrintKurox daemon is already active on this system. Exiting immediately to prevent duplicate prints.")
+    sys.exit(0)
 
 # Load local environment variables from daemon/.env or parent .env.local
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
@@ -26,12 +35,12 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env.loca
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-CLOUDFLARE_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID', '948fd75d8b84a5cf20559d6aa789d4dd')
-CLOUDFLARE_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN', 'cfat_anp9h1g8fRES9Euxqup0joShGwK0K31OSDRzFtfafd3b257f')
-CLOUDFLARE_D1_DATABASE_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID', '3f4d4547-e86b-4cdd-a867-9ebba19c12c9')
+CLOUDFLARE_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID', '')
+CLOUDFLARE_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN', '')
+CLOUDFLARE_D1_DATABASE_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID', '')
 
-R2_ACCESS_KEY_ID = os.getenv('R2_ACCESS_KEY_ID', '0f5bb8b4f2d7c00a84da3c20efcc8949')
-R2_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY', 'cf9c00b5509a1be636238fab2c332fff210300607e89ab802c86a829c9ddbcda')
+R2_ACCESS_KEY_ID = os.getenv('R2_ACCESS_KEY_ID', '')
+R2_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY', '')
 R2_ENDPOINT = os.getenv('R2_ENDPOINT', f'https://{CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com')
 R2_BUCKET_NAME = os.getenv('R2_BUCKET_NAME', 'kiosk-uploads')
 
@@ -104,6 +113,36 @@ def update_job_status(job_id, status):
     sql = "UPDATE print_jobs SET status = ? WHERE id = ?"
     query_d1(sql, [status, job_id])
     log(f"Job {job_id[:8]} status updated -> {status}", "SUCCESS")
+
+def claim_paid_job(job_id):
+    """
+    Atomically claims a PAID job by setting status to PRINTING_ODD.
+    Uses compare-and-swap (CAS) check: status MUST be 'PAID'.
+    Returns True if successfully claimed, False if already claimed or modified.
+    """
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/d1/database/{CLOUDFLARE_D1_DATABASE_ID}/query"
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    sql = "UPDATE print_jobs SET status = 'PRINTING_ODD' WHERE id = ? AND status = 'PAID'"
+    body = {"sql": sql, "params": [job_id]}
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("success"):
+            return False
+        result_array = data.get("result", [])
+        if result_array and len(result_array) > 0:
+            meta = result_array[0].get("meta", {})
+            if meta.get("changes", 0) > 0:
+                log(f"Atomically claimed job {job_id[:8]} -> PRINTING_ODD", "SUCCESS")
+                return True
+        return False
+    except Exception as e:
+        log(f"Failed to claim job {job_id[:8]}: {e}", "WARN")
+        return False
 
 # =============================================================================
 # SUMATRAPDF PRINT ENGINE
@@ -207,8 +246,9 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
         settings_list.append("monochrome")
     else:
         settings_list.append("color")
-    if copies > 1:
-        settings_list.append(f"{copies}x")
+    # Always specify exact copies explicitly so SumatraPDF never uses persistent printer driver defaults
+    target_copies = max(1, int(copies or 1))
+    settings_list.append(f"{target_copies}x")
     if orientation in ["portrait", "landscape"]:
         settings_list.append(orientation)
     settings_list.append("fit") # Fit printable area cleanly
@@ -238,7 +278,6 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
 # =============================================================================
 def process_single_sided_job(job, local_file_path):
     """Standard 1-sided printing."""
-    update_job_status(job["id"], "PRINTING_ODD")
     log(f"Printing Single-Sided: {job['total_pages']} pages, {job['copies']} copy/copies", "INFO")
 
     page_range = None
@@ -477,11 +516,10 @@ def main():
 
                     log(f"Processing Job {pickup_code} ({file_name}) — {total_pages} pages, Duplex: {is_duplex}")
 
-                    # Atomically mark job as PRINTING_ODD to claim it from PAID queue
-                    try:
-                        update_job_status(job_id, "PRINTING_ODD")
-                    except Exception as claim_err:
-                        log(f"Failed to claim job {job_id[:8]}: {claim_err}", "WARN")
+                    # Atomically claim the job using CAS update (status = 'PAID' -> 'PRINTING_ODD')
+                    if not claim_paid_job(job_id):
+                        log(f"Job {job_id[:8]} was already claimed by another worker. Skipping.", "WARN")
+                        continue
 
                     # 1. Download file from Cloudflare R2
                     base_name = os.path.basename(file_name)

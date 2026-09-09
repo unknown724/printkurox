@@ -188,12 +188,24 @@ body {
   }
 }
 
+@keyframes border-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-fade-in-up { animation: fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .animate-scale-in { animation: scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .animate-border-beam {
   animation: border-beam var(--duration, 14s) linear infinite;
+}
+.animate-border-spin {
+  animation: border-spin var(--duration, 10s) linear infinite;
 }
 
 /* Shimmer overlay for loading states */
@@ -263,18 +275,34 @@ body {
 }
 
 /* =========================================================
-   SCROLLBAR STYLING
+   SCROLLBAR STYLING — VISUALLY HIDDEN (NATIVE APP FEEL)
+   Maintains 100% functional, buttery-smooth scrolling
+   while completely removing clunky visual scrollbars.
    ========================================================= */
-.scrollbar-thin {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
+html,
+body,
+* {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* IE & Edge */
 }
 
-.scrollbar-thin::-webkit-scrollbar { width: 4px; height: 4px; }
-.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.35);
-  border-radius: 99px;
+*::-webkit-scrollbar {
+  display: none !important; /* Chrome, Safari, Edge, Opera */
+  width: 0px !important;
+  height: 0px !important;
+}
+
+.scrollbar-thin,
+.scrollbar-none {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
+  display: none !important;
+  width: 0px !important;
+  height: 0px !important;
 }
 
 /* =========================================================

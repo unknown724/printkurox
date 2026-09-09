@@ -140,11 +140,15 @@ export default function HomePage() {
       {/* Document Studio Card with Qronos Obsidian Glassmorphism & Moving Border Beam */}
       <div className="relative rounded-2xl border border-zinc-200/80 dark:border-white/[0.10] bg-white dark:bg-[#0c0c0e] dark:bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.055),transparent_70%),linear-gradient(#0e0e12,#09090c)] backdrop-blur-2xl p-4 sm:p-6 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.1)] overflow-hidden">
         {/* Top-Middle Luminous Specular Flare (Permanent Top Center Shining Effect) */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-44 sm:w-64 h-[2.5px] bg-gradient-to-r from-transparent via-white to-transparent shadow-[0_0_16px_rgba(255,255,255,0.9)] pointer-events-none z-30" />
-        <div className="absolute -top-7 left-1/2 -translate-x-1/2 w-64 sm:w-80 h-16 bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.25),transparent_75%)] pointer-events-none z-20" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 sm:w-72 h-[2.5px] bg-gradient-to-r from-transparent via-white to-transparent shadow-[0_0_16px_rgba(255,255,255,0.95)] pointer-events-none z-30" />
+        <div className="absolute -top-7 left-1/2 -translate-x-1/2 w-64 sm:w-88 h-16 bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.25),transparent_75%)] pointer-events-none z-20" />
 
-        {/* Dynamic Specular Border Beam gliding smoothly around perimeter */}
-        <BorderBeam duration={14} borderWidth={2.5} borderRadius={16} size={360} colorFrom="rgba(255, 255, 255, 1)" />
+        {/* Bottom-Middle Luminous Specular Flare (Permanent Bottom Center Shining Effect) */}
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-48 sm:w-72 h-[2.5px] bg-gradient-to-r from-transparent via-white to-transparent shadow-[0_0_16px_rgba(255,255,255,0.95)] pointer-events-none z-30" />
+        <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 w-64 sm:w-88 h-16 bg-[radial-gradient(ellipse_at_bottom,rgba(255,255,255,0.25),transparent_75%)] pointer-events-none z-20" />
+
+        {/* Dynamic Specular Border Beam gliding seamlessly around perimeter */}
+        <BorderBeam duration={12} borderWidth={2} borderRadius={16} colorFrom="rgba(255, 255, 255, 1)" />
 
         <DocumentStudio
           uploadedBatch={uploadedBatch}

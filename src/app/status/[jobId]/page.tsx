@@ -50,7 +50,7 @@ export default function JobStatusPage({
   const [job, setJob] = useState<JobStatusData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hasCelebrated, setHasCelebrated] = useState(false);
+  const hasCelebratedRef = React.useRef(false);
   const [copied, setCopied] = useState(false);
 
   // Poll status every 2 seconds
@@ -72,14 +72,14 @@ export default function JobStatusPage({
         }
 
         // Trigger celebratory confetti once on completion or initial paid
-        if (!hasCelebrated && (data.status === 'PAID' || data.status === 'COMPLETED')) {
+        if (!hasCelebratedRef.current && (data.status === 'PAID' || data.status === 'COMPLETED')) {
+          hasCelebratedRef.current = true;
           confetti({
             particleCount: 50,
             spread: 60,
             origin: { y: 0.6 },
             colors: ['#ffffff', '#e2e8f0', '#94a3b8', '#10b981'],
           });
-          setHasCelebrated(true);
         }
       } catch (err: unknown) {
         console.error(err);
@@ -95,7 +95,7 @@ export default function JobStatusPage({
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [jobId, hasCelebrated]);
+  }, [jobId]);
 
   const handleShareOrCopy = async () => {
     if (!job) return;

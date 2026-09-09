@@ -38,17 +38,18 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased bg-[#f9f9fa] text-zinc-900 dark:bg-[#000000] dark:text-[#f4f4f5] flex flex-col min-h-screen selection:bg-white/20 selection:text-white transition-colors duration-200 overflow-x-hidden w-full max-w-full">
-        {/* Qronos Obsidian Background with Designali Dot-Pattern */}
-        <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+        {/* Hardware-Accelerated Responsive Ambient Background */}
+        <div className="fixed inset-0 overflow-hidden pointer-events-none z-0 select-none [contain:strict]">
           {/* Subtle top specular radial glow */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[1200px] h-[500px] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.035),transparent_70%)] pointer-events-none" />
-          <DotPattern
-            width={24}
-            height={24}
-            cx={1}
-            cy={1}
-            cr={1.2}
-            className="fill-zinc-400/40 dark:fill-white/[0.18] [mask-image:radial-gradient(1100px_circle_at_50%_35%,white_35%,transparent_85%)]"
+          {/* Ultra-smooth GPU studio dot grid (crisp, elegant, high-definition blueprint feel) */}
+          <div
+            className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,0,0,0.20)_1.25px,transparent_1.25px)] dark:bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.32)_1.25px,transparent_1.25px)] bg-[size:24px_24px] pointer-events-none"
+            style={{
+              maskImage: 'radial-gradient(ellipse 95% 85% at 50% 35%, black 60%, transparent 98%)',
+              WebkitMaskImage: 'radial-gradient(ellipse 95% 85% at 50% 35%, black 60%, transparent 98%)',
+              transform: 'translateZ(0)',
+            }}
           />
         </div>
 

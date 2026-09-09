@@ -50,3 +50,5 @@ walkthrough.md
 
 .vercel
 .env*
+__pycache__/
+*.pyc

@@ -99,8 +99,8 @@ export function PageVisualizer({
                     configsChanged = true;
                   }
 
-                  // High quality thumbnail render (0.65 scale = crisp on mobile screens)
-                  const viewport = page.getViewport({ scale: 0.65 });
+                  // Fast, high-quality thumbnail render (0.6 scale = crisp on mobile, lightweight memory)
+                  const viewport = page.getViewport({ scale: 0.6 });
                   const canvas = document.createElement('canvas');
                   const context = canvas.getContext('2d');
                   canvas.height = viewport.height;
@@ -108,11 +108,13 @@ export function PageVisualizer({
 
                   if (context) {
                     await page.render({ canvasContext: context, viewport }).promise;
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                    newThumbs[pageNumber] = dataUrl;
-                    // Progressive: show each thumbnail immediately as it renders
-                    if (isMounted) {
-                      setThumbnails((prev) => ({ ...prev, [pageNumber]: dataUrl }));
+                    // Use async toBlob (runs off main thread, zero massive Base64 string allocations)
+                    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.8));
+                    if (blob && isMounted) {
+                      const objectUrl = URL.createObjectURL(blob);
+                      createdUrls.push(objectUrl);
+                      newThumbs[pageNumber] = objectUrl;
+                      setThumbnails((prev) => ({ ...prev, [pageNumber]: objectUrl }));
                     }
                   }
                   currentPageIdx++;
@@ -176,7 +178,7 @@ export function PageVisualizer({
             const thisPage = pageNum;
             try {
               const page = await pdf.getPage(thisPage);
-              const viewport = page.getViewport({ scale: 0.65 });
+              const viewport = page.getViewport({ scale: 0.6 });
               const canvas = document.createElement('canvas');
               const context = canvas.getContext('2d');
               canvas.height = viewport.height;
@@ -184,11 +186,12 @@ export function PageVisualizer({
 
               if (context) {
                 await page.render({ canvasContext: context, viewport }).promise;
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                newThumbs[thisPage] = dataUrl;
-                // Progressive: render each page as it's ready
-                if (isMounted) {
-                  setThumbnails((prev) => ({ ...prev, [thisPage]: dataUrl }));
+                const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.8));
+                if (blob && isMounted) {
+                  const objectUrl = URL.createObjectURL(blob);
+                  createdUrls.push(objectUrl);
+                  newThumbs[thisPage] = objectUrl;
+                  setThumbnails((prev) => ({ ...prev, [thisPage]: objectUrl }));
                 }
               }
             } catch (err) {

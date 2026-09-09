@@ -14,29 +14,22 @@ interface BorderBeamProps {
 }
 
 /**
- * BorderBeam provides a slow, smooth, traveling specular luminous shine along the perimeter
- * of the glassmorphism box/table without pulsating.
+ * BorderBeam provides a continuous, seamless, rotating specular luminous shine along
+ * the perimeter of the glassmorphism card that never stops, pops, or vanishes.
  */
 export function BorderBeam({
   className = '',
-  size = 360,
-  duration = 14,
-  borderWidth = 2.5,
+  duration = 10,
+  borderWidth = 2,
   colorFrom = 'rgba(255, 255, 255, 1)',
-  colorTo = 'transparent',
-  delay = 0,
   borderRadius = 16,
 }: BorderBeamProps) {
   return (
     <div
       style={
         {
-          '--size': `${size}px`,
           '--duration': `${duration}s`,
           '--border-width': `${borderWidth}px`,
-          '--delay': `-${delay}s`,
-          '--color-from': colorFrom,
-          '--color-to': colorTo,
           '--border-radius': `${borderRadius}px`,
         } as React.CSSProperties
       }
@@ -57,14 +50,11 @@ export function BorderBeam({
         }}
       >
         <div
-          className="absolute aspect-square w-[var(--size)] will-change-[offset-distance] animate-border-beam"
+          className="absolute -inset-[150%] m-auto aspect-square will-change-transform animate-border-spin pointer-events-none"
           style={{
-            animationDuration: `var(--duration)`,
-            animationDelay: `var(--delay)`,
-            background: `linear-gradient(to left, var(--color-from) 0%, rgba(255, 255, 255, 0.9) 30%, rgba(255, 255, 255, 0.3) 65%, var(--color-to) 100%)`,
-            offsetAnchor: '100% 50%',
-            offsetPath: `rect(0 auto auto 0 round var(--border-radius))`,
-            filter: 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.95)) drop-shadow(0 0 16px rgba(255, 255, 255, 0.6))',
+            background: `conic-gradient(from 0deg at 50% 50%, transparent 0deg, transparent 270deg, rgba(255, 255, 255, 0.25) 305deg, ${colorFrom} 345deg, rgba(255, 255, 255, 0.45) 358deg, transparent 360deg)`,
+            animationDuration: `${duration}s`,
+            transform: 'translateZ(0)',
           }}
         />
       </div>

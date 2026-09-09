@@ -67,8 +67,7 @@ export async function getFileBufferFromR2(key: string): Promise<Buffer> {
   });
   const res = await s3.send(command);
   if (!res.Body) throw new Error(`Object not found: ${key}`);
-  // @ts-expect-error transformToByteArray exists on AWS SDK S3 stream in Node
-  const bytes = await res.Body.transformToByteArray();
+  const bytes = await (res.Body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
   return Buffer.from(bytes);
 }
 
