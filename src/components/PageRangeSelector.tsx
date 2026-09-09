@@ -33,16 +33,18 @@ export function PageRangeSelector({
 
   // Sync when parent changes
   useEffect(() => {
-    if (pageRangeType === 'all') {
-      setRangeInput('All');
-      setValidationResult({
-        isValid: true,
-        pages: Array.from({ length: totalPages }, (_, i) => i + 1),
-      });
-    } else {
-      setRangeInput(customPageRange);
-      setValidationResult(validatePageRangeInput(customPageRange, totalPages));
-    }
+    queueMicrotask(() => {
+      if (pageRangeType === 'all') {
+        setRangeInput('All');
+        setValidationResult({
+          isValid: true,
+          pages: Array.from({ length: totalPages }, (_, i) => i + 1),
+        });
+      } else {
+        setRangeInput(customPageRange);
+        setValidationResult(validatePageRangeInput(customPageRange, totalPages));
+      }
+    });
   }, [pageRangeType, customPageRange, totalPages]);
 
   const activePageNumbers: number[] = pageConfigs

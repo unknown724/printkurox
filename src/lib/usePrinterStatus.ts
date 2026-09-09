@@ -36,7 +36,9 @@ export function usePrinterStatus(pollIntervalMs = 30_000): PrinterStatus {
 
   useEffect(() => {
     // Initial check
-    check();
+    queueMicrotask(() => {
+      check();
+    });
 
     // Poll on interval
     const timer = setInterval(check, pollIntervalMs);

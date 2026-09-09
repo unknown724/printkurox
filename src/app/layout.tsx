@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { FooterLegal } from "@/components/FooterLegal";
 import { KioskHeader } from "@/components/KioskHeader";
-import { DotPattern } from "@/components/ui/dot-pattern";
 import "./globals.css";
 
 export const metadata: Metadata = {
