@@ -12,6 +12,9 @@ import {
   Eye,
   EyeOff,
   Compass,
+  Plus,
+  Minus,
+  Copy,
 } from 'lucide-react';
 
 interface PageVisualizerProps {
@@ -245,15 +248,13 @@ export function PageVisualizer({
     onChange(updated);
   };
 
-  // Change orientation for an individual page
+  // Change orientation for an individual page (without artificial 90° rotation)
   const setPageOrientation = (pageNumber: number, orient: 'portrait' | 'landscape') => {
     const updated = pageConfigs.map((p) => {
       if (p.pageNumber === pageNumber) {
-        const rot = orient === 'landscape' ? 90 : 0;
         return {
           ...p,
           orientation: orient,
-          rotation: rot,
         };
       }
       return p;
@@ -261,51 +262,66 @@ export function PageVisualizer({
     onChange(updated);
   };
 
-  // Change orientation for all pages at once
+  // Change orientation for all pages at once (without artificial 90° rotation)
   const setAllOrientation = (orient: 'portrait' | 'landscape') => {
     if (onOrientationChange) {
       onOrientationChange(orient);
     }
-    const rot = orient === 'landscape' ? 90 : 0;
     const updated = pageConfigs.map((p) => ({
       ...p,
       orientation: orient,
-      rotation: rot,
     }));
     onChange(updated);
   };
 
-  // Rotate individual page 90 degrees clockwise
-  const rotatePage = (pageNumber: number) => {
+  // Per-page copies modifier
+  const setPageCopies = (pageNumber: number, delta: number) => {
     const updated = pageConfigs.map((p) => {
       if (p.pageNumber === pageNumber) {
-        const currentRot = p.rotation || (p.orientation === 'landscape' ? 90 : 0);
-        const nextRot = (currentRot + 90) % 360;
-        const nextOrient = nextRot === 90 || nextRot === 270 ? ('landscape' as const) : ('portrait' as const);
-        return {
-          ...p,
-          rotation: nextRot,
-          orientation: nextOrient,
-        };
+        const currentCopies = Math.max(1, Math.floor(p.copies || 1));
+        const nextCopies = Math.max(1, Math.min(99, currentCopies + delta));
+        return { ...p, copies: nextCopies };
       }
       return p;
     });
     onChange(updated);
   };
 
-  // Rotate all pages at once
-  const rotateAllPages = () => {
-    const nextOrient = orientation === 'portrait' ? 'landscape' : 'portrait';
-    setAllOrientation(nextOrient);
+  const setAllCopies = (copies: number) => {
+    const validCopies = Math.max(1, Math.min(99, Math.floor(copies) || 1));
+    const updated = pageConfigs.map((p) => ({
+      ...p,
+      copies: validCopies,
+    }));
+    onChange(updated);
+  };
+
+  // Rotate individual page 90 degrees clockwise (for user manual rotation only)
+  const rotatePage = (pageNumber: number) => {
+    const updated = pageConfigs.map((p) => {
+      if (p.pageNumber === pageNumber) {
+        const currentRot = p.rotation || 0;
+        const nextRot = (currentRot + 90) % 360;
+        return {
+          ...p,
+          rotation: nextRot,
+        };
+      }
+      return p;
+    });
+    onChange(updated);
   };
 
   const includedPagesCount = pageConfigs.filter((p) => p.included).length;
   const colorPagesCount = pageConfigs.filter((p) => p.included && p.colorMode === 'color').length;
   const bwPagesCount = pageConfigs.filter((p) => p.included && p.colorMode === 'bw').length;
+  const totalCopiesCount = pageConfigs
+    .filter((p) => p.included)
+    .reduce((sum, p) => sum + Math.max(1, Math.floor(p.copies || 1)), 0);
 
   return (
     <div className="rounded-2xl p-3 sm:p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-3.5 shadow-2xs">
-      {/* Top Toolbar: Orientation & Bulk Actions */}
+      {/* Top Toolbar: Orientation, Copies & Bulk Actions */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-zinc-200/80 dark:border-[#282a2c]">
         {/* Orientation Switcher */}
         <div className="inline-flex rounded-full bg-zinc-100 dark:bg-[#131314] p-1 border border-zinc-200/80 dark:border-[#282a2c] text-xs">
@@ -333,6 +349,12 @@ export function PageVisualizer({
           >
             Landscape
           </button>
+        </div>
+
+        {/* Total Impressions Stats Tag */}
+        <div className="text-[11px] font-mono px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-zinc-600 dark:text-zinc-400">
+          <span className="font-semibold text-zinc-900 dark:text-zinc-100">{includedPagesCount}</span> pgs •{' '}
+          <span className="font-semibold text-zinc-900 dark:text-zinc-100">{totalCopiesCount}</span> total sheets
         </div>
 
         {/* Quick Action Bulk Buttons */}
@@ -389,8 +411,8 @@ export function PageVisualizer({
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
         {pageConfigs.map((config) => {
           const thumb = thumbnails[config.pageNumber];
-          const rot = config.rotation ?? (config.orientation === 'landscape' ? 90 : 0);
-          const isLandscape = rot === 90 || rot === 270;
+          const isLandscape = config.orientation === 'landscape';
+          const pageCopies = Math.max(1, Math.floor(config.copies || 1));
 
           return (
             <div
@@ -409,13 +431,44 @@ export function PageVisualizer({
                   <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 text-xs">
                     #{config.pageNumber}
                   </span>
+
+                  {/* Tactile Copies Stepper */}
+                  <div
+                    className="flex items-center space-x-0.5 bg-zinc-100 dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700/80 rounded-full px-1 py-0.5"
+                    title="Number of copies for this page"
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPageCopies(config.pageNumber, -1);
+                      }}
+                      disabled={pageCopies <= 1}
+                      className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                    >
+                      <Minus className="w-2.5 h-2.5" />
+                    </button>
+                    <span className="font-mono text-[10px] font-bold text-zinc-900 dark:text-zinc-100 min-w-[14px] text-center">
+                      {pageCopies}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPageCopies(config.pageNumber, 1);
+                      }}
+                      className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-center space-x-1">
                   {/* Compact Orientation Pill */}
                   <button
                     type="button"
-                    onClick={() => rotatePage(config.pageNumber)}
+                    onClick={() => setPageOrientation(config.pageNumber, isLandscape ? 'portrait' : 'landscape')}
                     className="px-1.5 py-0.5 rounded-full text-[10px] font-medium border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                     title="Toggle orientation (Portrait / Landscape)"
                   >
@@ -471,14 +524,19 @@ export function PageVisualizer({
                     {config.colorMode === 'bw' ? 'B&W' : 'Color'}
                   </span>
 
+                  {/* Multi-Copy Badge if copies > 1 */}
+                  {pageCopies > 1 && (
+                    <span className="absolute top-1 right-1.5 text-[8px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-500 text-white shadow-2xs">
+                      {pageCopies}× copies
+                    </span>
+                  )}
+
                   {thumb ? (
                     <div className="w-full h-full p-2 flex items-center justify-center overflow-hidden">
                       <div
-                        className="flex items-center justify-center transition-all duration-300"
+                        className="w-full h-full flex items-center justify-center transition-all duration-300"
                         style={{
-                          width: (rot === 90 || rot === 270) ? 'calc(100% * 210 / 297)' : '100%',
-                          height: (rot === 90 || rot === 270) ? 'calc(100% * 297 / 210)' : '100%',
-                          transform: rot ? `rotate(${rot}deg)` : undefined,
+                          transform: config.rotation ? `rotate(${config.rotation}deg)` : undefined,
                           transformOrigin: 'center center',
                         }}
                       >
@@ -602,10 +660,39 @@ export function PageVisualizer({
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {/* Modal Orientation Toggle */}
+                {/* Modal Copies Stepper */}
                 {(() => {
                   const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
-                  const isLand = currConf?.rotation === 90 || currConf?.rotation === 270 || currConf?.orientation === 'landscape';
+                  const pCopies = Math.max(1, Math.floor(currConf?.copies || 1));
+                  return (
+                    <div className="flex items-center space-x-1 bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] rounded-full px-2 py-1 text-xs">
+                      <span className="text-[10px] text-zinc-500 mr-1">Copies:</span>
+                      <button
+                        type="button"
+                        onClick={() => setPageCopies(zoomPage, -1)}
+                        disabled={pCopies <= 1}
+                        className="w-4 h-4 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                      >
+                        <Minus className="w-2.5 h-2.5" />
+                      </button>
+                      <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 min-w-[16px] text-center">
+                        {pCopies}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPageCopies(zoomPage, 1)}
+                        className="w-4 h-4 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  );
+                })()}
+
+                {/* Modal Orientation Toggle (No unwanted rotation) */}
+                {(() => {
+                  const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
+                  const isLand = currConf?.orientation === 'landscape';
                   return (
                     <div className="inline-flex rounded-full bg-zinc-100 dark:bg-[#131314] p-0.5 border border-zinc-200 dark:border-[#282a2c] text-xs">
                       <button
@@ -634,6 +721,7 @@ export function PageVisualizer({
                   type="button"
                   onClick={() => rotatePage(zoomPage)}
                   className="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 dark:bg-[#282a2c] dark:hover:bg-zinc-700 dark:text-zinc-200 text-xs font-medium flex items-center gap-1 transition-colors"
+                  title="Rotate 90 degrees"
                 >
                   <RotateCw className="w-3.5 h-3.5" />
                   <span>Rotate</span>
@@ -650,8 +738,7 @@ export function PageVisualizer({
             <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-zinc-100 dark:bg-[#131314] rounded-xl">
               {(() => {
                 const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
-                const rot = currConf?.rotation ?? (currConf?.orientation === 'landscape' ? 90 : 0);
-                const isLand = rot === 90 || rot === 270;
+                const isLand = currConf?.orientation === 'landscape';
                 return (
                   <div
                     className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black/60 rounded-xs border border-zinc-300 dark:border-zinc-700 transition-all duration-300 overflow-hidden ${
@@ -674,11 +761,9 @@ export function PageVisualizer({
 
                     <div className="w-full h-full p-4 flex items-center justify-center overflow-hidden">
                       <div
-                        className="flex items-center justify-center transition-all duration-300"
+                        className="w-full h-full flex items-center justify-center transition-all duration-300"
                         style={{
-                          width: (rot === 90 || rot === 270) ? 'calc(100% * 210 / 297)' : '100%',
-                          height: (rot === 90 || rot === 270) ? 'calc(100% * 297 / 210)' : '100%',
-                          transform: rot ? `rotate(${rot}deg)` : undefined,
+                          transform: currConf?.rotation ? `rotate(${currConf.rotation}deg)` : undefined,
                           transformOrigin: 'center center',
                         }}
                       >

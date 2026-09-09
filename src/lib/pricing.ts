@@ -21,6 +21,7 @@ export interface PageConfig {
   included: boolean;
   orientation?: 'portrait' | 'landscape';
   rotation?: number; // 0, 90, 180, 270
+  copies?: number; // Specific copies for this page (min 1, default 1)
 }
 
 export interface PricingInput {
@@ -127,21 +128,29 @@ export function calculatePricing(input: PricingInput): PricingResult {
       };
     }
 
+    // Expand pages according to per-page copies
+    const expandedPages: { colorMode: 'bw' | 'color'; pageNumber: number }[] = [];
     let bwPagesCount = 0;
     let colorPagesCount = 0;
+
     includedPages.forEach((p) => {
-      if (p.colorMode === 'color') colorPagesCount++;
-      else bwPagesCount++;
+      const pageCopies = Math.max(1, Math.floor(p.copies || 1));
+      for (let i = 0; i < pageCopies; i++) {
+        expandedPages.push({ colorMode: p.colorMode, pageNumber: p.pageNumber });
+        if (p.colorMode === 'color') colorPagesCount++;
+        else bwPagesCount++;
+      }
     });
 
+    const totalExpandedCount = expandedPages.length;
     let duplexSheets = 0;
     let singleSheets = 0;
 
     if (!isDuplex) {
-      singleSheets = activeTotal;
+      singleSheets = totalExpandedCount;
     } else {
-      duplexSheets = Math.floor(activeTotal / 2);
-      singleSheets = activeTotal % 2;
+      duplexSheets = Math.floor(totalExpandedCount / 2);
+      singleSheets = totalExpandedCount % 2;
     }
 
     const totalSheetsPerCopy = duplexSheets + singleSheets;
@@ -154,13 +163,8 @@ export function calculatePricing(input: PricingInput): PricingResult {
     const parts: string[] = [];
 
     if (!isDuplex) {
-      const bwCost = bwPagesCount * tier.rates.bw.single;
-      const colorCost = colorPagesCount * tier.rates.color.single;
-      unitPrice = bwCost + colorCost;
-
-      const origBwCost = bwPagesCount * TIER_RATES.standard.bw.single;
-      const origColorCost = colorPagesCount * TIER_RATES.standard.color.single;
-      originalUnitPrice = origBwCost + origColorCost;
+      unitPrice = (bwPagesCount * tier.rates.bw.single) + (colorPagesCount * tier.rates.color.single);
+      originalUnitPrice = (bwPagesCount * TIER_RATES.standard.bw.single) + (colorPagesCount * TIER_RATES.standard.color.single);
 
       if (bwPagesCount > 0) {
         parts.push(`${bwPagesCount} B&W (${tier.rates.bw.single === 4 ? '₹4' : `₹${tier.rates.bw.single}`} ea)`);
@@ -172,9 +176,9 @@ export function calculatePricing(input: PricingInput): PricingResult {
       let bwDuplexCount = 0;
       let colorDuplexCount = 0;
 
-      for (let i = 0; i < includedPages.length; i += 2) {
-        const page1 = includedPages[i];
-        const page2 = includedPages[i + 1];
+      for (let i = 0; i < expandedPages.length; i += 2) {
+        const page1 = expandedPages[i];
+        const page2 = expandedPages[i + 1];
 
         if (page2) {
           const isColorSheet = page1.colorMode === 'color' || page2.colorMode === 'color';
@@ -198,33 +202,41 @@ export function calculatePricing(input: PricingInput): PricingResult {
       }
 
       if (bwDuplexCount > 0) {
-        parts.unshift(`${bwDuplexCount} B&W Double (₹${tier.rates.bw.duplex} ea)`);
+        parts.push(`${bwDuplexCount} B&W Double-Sided (₹${tier.rates.bw.duplex} ea)`);
       }
       if (colorDuplexCount > 0) {
-        parts.unshift(`${colorDuplexCount} Color Double (₹${tier.rates.color.duplex} ea)`);
+        parts.push(`${colorDuplexCount} Color Double-Sided (₹${tier.rates.color.duplex} ea)`);
       }
     }
 
-    const rawTotalPrice = Math.round(unitPrice * safeCopies);
-    const rawOriginalPrice = Math.round(originalUnitPrice * safeCopies);
-    const savings = Math.max(0, rawOriginalPrice - rawTotalPrice);
+    const finalTotalPrice = unitPrice * safeCopies;
+    const finalOriginalPrice = originalUnitPrice * safeCopies;
+    const savings = Math.max(0, finalOriginalPrice - finalTotalPrice);
+
+    let breakdownStr = parts.join(' + ');
+    if (safeCopies > 1) {
+      breakdownStr = `(${breakdownStr}) × ${safeCopies} copies`;
+    }
+    if (tier.tierKey !== 'standard') {
+      breakdownStr += ` [${tier.tierName} Applied]`;
+    }
 
     return {
-      totalPages: activeTotal,
-      colorMode,
+      totalPages: totalExpandedCount,
+      colorMode: colorPagesCount > 0 && bwPagesCount > 0 ? 'custom' : colorPagesCount > 0 ? 'color' : 'bw',
       isDuplex,
       copies: safeCopies,
       duplexSheets,
       singleSheets,
-      totalSheets: totalSheetsPerCopy,
+      totalSheets: totalPhysicalSheets,
       unitPrice,
-      totalPrice: rawTotalPrice,
-      originalPrice: rawOriginalPrice,
+      totalPrice: finalTotalPrice,
+      originalPrice: finalOriginalPrice,
       savings,
       tierName: tier.tierName,
       nextTierSheetsNeeded: tier.nextTierSheetsNeeded,
       nextTierName: tier.nextTierName,
-      breakdown: parts.join(' + ') || `${activeTotal} Sheets`,
+      breakdown: breakdownStr,
       bwPagesCount,
       colorPagesCount,
     };

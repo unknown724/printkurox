@@ -65,8 +65,15 @@ export async function POST(req: NextRequest) {
 
     if (pageConfigs && Array.isArray(pageConfigs) && pageConfigs.length > 0) {
       const included = pageConfigs.filter((p: { included: boolean }) => p.included);
-      activePagesCount = included.length;
-      effectivePageRange = included.map((p: { pageNumber: number }) => p.pageNumber).join(',');
+      const sequence: number[] = [];
+      included.forEach((p: { copies?: number; pageNumber: number }) => {
+        const c = Math.max(1, Math.floor(p.copies || 1));
+        for (let i = 0; i < c; i++) {
+          sequence.push(p.pageNumber);
+        }
+      });
+      activePagesCount = sequence.length;
+      effectivePageRange = sequence.join(',');
     } else {
       const selectedPages = parsePageRange(pageRange, docPages);
       activePagesCount = selectedPages.length;
