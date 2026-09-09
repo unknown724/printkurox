@@ -158,7 +158,8 @@ export function CostSummary({
         throw new Error(errData.error || 'Failed to create order.');
       }
 
-      const { jobId, orderId, amount, currency, keyId, pickupCode } = await orderRes.json();
+      const { jobId, orderId, order_id, amount, currency, keyId, pickupCode } = await orderRes.json();
+      const activeOrderId = order_id || orderId;
 
       if (typeof window !== 'undefined') {
         if (!window.Razorpay) {
@@ -192,40 +193,48 @@ export function CostSummary({
           currency: currency || 'INR',
           name: process.env.NEXT_PUBLIC_SHOP_NAME || 'PrintKurox',
           description: `Order ${pickupCode} • ${pricing.totalPages} pgs (${pricing.copies}x)`,
-          order_id:
-            orderId && !orderId.startsWith('dummy_') && !orderId.startsWith('test_')
-              ? orderId
-              : undefined,
+          order_id: activeOrderId,
           handler: async function (response: {
             razorpay_payment_id?: string;
             razorpay_order_id?: string;
             razorpay_signature?: string;
           }) {
             try {
-              await fetch('/api/verify-payment', {
+              const verifyRes = await fetch('/api/verify-payment', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   jobId,
-                  razorpay_order_id: response.razorpay_order_id || orderId,
-                  razorpay_payment_id: response.razorpay_payment_id || 'pay_' + Date.now(),
-                  razorpay_signature: response.razorpay_signature || 'sig_' + Date.now(),
+                  razorpay_order_id: response.razorpay_order_id || activeOrderId,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature,
                 }),
               });
-            } finally {
+
+              const verifyData = await verifyRes.json();
+              if (!verifyRes.ok || !verifyData.success) {
+                throw new Error(verifyData.error || 'Payment signature verification failed.');
+              }
+
               router.push(`/status/${jobId}`);
+            } catch (vErr: unknown) {
+              setErrorMessage(vErr instanceof Error ? vErr.message : 'Payment verification failed.');
+              setIsProcessing(false);
             }
           },
           prefill: { name: 'Kiosk Customer', email: 'customer@printkurox.com', contact: '9999999999' },
           theme: { color: '#6366f1', backdrop_color: 'rgba(7, 11, 20, 0.90)' },
           modal: {
             confirm_close: true,
-            ondismiss: () => setIsProcessing(false),
+            ondismiss: () => {
+              setIsProcessing(false);
+              setErrorMessage('Payment cancelled by user.');
+            },
           },
         };
         const rzp = new window.Razorpay(options);
-        rzp.on('payment.failed', (r: { error?: { description?: string } }) => {
-          setErrorMessage(r.error?.description || 'Payment was cancelled or failed.');
+        rzp.on('payment.failed', (r: { error?: { description?: string; reason?: string } }) => {
+          setErrorMessage(r.error?.description || r.error?.reason || 'Payment was cancelled or failed.');
           setIsProcessing(false);
         });
         rzp.open();
