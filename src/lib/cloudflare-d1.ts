@@ -26,6 +26,30 @@ export interface PrintJobRecord {
   expires_at: string;
 }
 
+export interface PrinterSuppliesRecord {
+  id: number;
+  black_pages_remaining: number;
+  color_pages_remaining: number;
+  black_capacity: number;
+  color_capacity: number;
+  paper_sheets_remaining: number;
+  paper_capacity: number;
+  last_black_refill: string | null;
+  last_color_refill: string | null;
+  last_paper_refill: string | null;
+  updated_at: string;
+}
+
+export interface PrinterTelemetryRecord {
+  id: number;
+  printer_name: string;
+  is_online: number;
+  status_code: number;
+  status_text: string;
+  spooler_jobs: number;
+  updated_at: string;
+}
+
 export async function queryD1<T = unknown>(sql: string, params: (string | number | null)[] = []): Promise<T[]> {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`;
 

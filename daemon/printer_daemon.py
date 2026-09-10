@@ -296,6 +296,7 @@ def process_single_sided_job(job, local_file_path):
     )
     if success:
         update_job_status(job["id"], "COMPLETED")
+        record_supplies_depletion(job)
         # Clean up Cloudflare R2 uploaded file to free cloud storage and protect privacy
         try:
             s3_client.delete_object(Bucket=R2_BUCKET_NAME, Key=job["file_key"])
@@ -426,6 +427,7 @@ def process_manual_duplex_job(job, local_file_path):
 
     if True:
         update_job_status(job["id"], "COMPLETED")
+        record_supplies_depletion(job)
         log(f"Job {job['pickup_code']} manual duplex finished successfully!", "SUCCESS")
         play_chime()
         try:
@@ -454,12 +456,92 @@ def purge_old_local_files():
                     log(f"Error purging file {fname}: {e}", "WARN")
 
 # =============================================================================
-# HEARTBEAT — Lets the frontend know the daemon is alive
+# SUPPLIES & TELEMETRY ENGINE
+# =============================================================================
+def record_supplies_depletion(job):
+    """
+    Atomically deducts printed pages and sheets from printer_supplies in D1.
+    """
+    try:
+        pages = max(1, int(job.get("total_pages") or 1)) * max(1, int(job.get("copies") or 1))
+        duplex_sheets = int(job.get("duplex_sheets") or 0) * max(1, int(job.get("copies") or 1))
+        single_sheets = int(job.get("single_sheets") or 0) * max(1, int(job.get("copies") or 1))
+        total_sheets = duplex_sheets + single_sheets
+        if total_sheets <= 0:
+            total_sheets = pages
+
+        color_mode = str(job.get("color_mode") or "bw").lower()
+        if color_mode == "color":
+            sql = """
+                UPDATE printer_supplies 
+                SET color_pages_remaining = MAX(0, color_pages_remaining - ?),
+                    paper_sheets_remaining = MAX(0, paper_sheets_remaining - ?),
+                    updated_at = datetime('now')
+                WHERE id = 1
+            """
+        else:
+            sql = """
+                UPDATE printer_supplies 
+                SET black_pages_remaining = MAX(0, black_pages_remaining - ?),
+                    paper_sheets_remaining = MAX(0, paper_sheets_remaining - ?),
+                    updated_at = datetime('now')
+                WHERE id = 1
+            """
+        query_d1(sql, [pages, total_sheets])
+        log(f"Supplies updated: -{pages} {color_mode.upper()} pages, -{total_sheets} paper sheets", "INFO")
+    except Exception as e:
+        log(f"Supplies depletion update warning: {e}", "WARN")
+
+def get_windows_printer_telemetry():
+    """Queries Windows Spooler via PowerShell for live status and queue count."""
+    target_name = (PRINTER_NAME or "").strip() or "EPSON L3210 Series"
+    try:
+        ps_cmd = f"Get-Printer -Name '{target_name}' -ErrorAction SilentlyContinue | Select-Object PrinterStatus, JobCount | ConvertTo-Json"
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            import json
+            data = json.loads(res.stdout)
+            raw_status = data.get("PrinterStatus", 0)
+            job_count = int(data.get("JobCount", 0))
+
+            # Map Windows PrinterStatus enum
+            status_map = {
+                0: "Normal",
+                2: "Normal",
+                3: "Printing",
+                4: "Offline",
+                5: "Printer Error",
+                6: "Paper Jam",
+                7: "Out of Paper",
+                8: "Paper Problem",
+                9: "Paused",
+                10: "User Intervention"
+            }
+            status_text = status_map.get(raw_status, str(raw_status) if raw_status else "Normal")
+            is_online = 0 if raw_status == 4 else 1
+
+            return {
+                "name": target_name,
+                "is_online": is_online,
+                "status_text": status_text,
+                "spooler_jobs": job_count
+            }
+    except Exception:
+        pass
+    return {
+        "name": target_name,
+        "is_online": 1,
+        "status_text": "Normal",
+        "spooler_jobs": 0
+    }
+
+# =============================================================================
+# HEARTBEAT & TELEMETRY SYNC
 # =============================================================================
 def write_heartbeat():
-    """Upsert a single row into daemon_heartbeat with the current UTC timestamp."""
+    """Upsert daemon heartbeat and printer telemetry with live hardware metrics."""
     try:
-        # Ensure table exists
+        # Ensure table exists and record heartbeat
         query_d1("""
             CREATE TABLE IF NOT EXISTS daemon_heartbeat (
                 id INTEGER PRIMARY KEY DEFAULT 1,
@@ -471,7 +553,16 @@ def write_heartbeat():
             VALUES (1, datetime('now'))
             ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now')
         """)
-        log("Heartbeat written to D1", "INFO")
+
+        # Sync hardware telemetry
+        telem = get_windows_printer_telemetry()
+        query_d1("""
+            UPDATE printer_telemetry
+            SET printer_name = ?, is_online = ?, status_text = ?, spooler_jobs = ?, updated_at = datetime('now')
+            WHERE id = 1
+        """, [telem["name"], telem["is_online"], telem["status_text"], telem["spooler_jobs"]])
+
+        log(f"Heartbeat & Telemetry synced ({telem['name']}: {telem['status_text']})", "INFO")
     except Exception as hb_err:
         log(f"Heartbeat write failed: {hb_err}", "WARN")
 
