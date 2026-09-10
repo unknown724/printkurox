@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 WIDTH, HEIGHT = 2480, 3508
 
 def get_font(size, bold=False, semibold=False):
-    """Load high-quality Windows font with graceful fallbacks."""
+    """Load crisp Windows fonts with graceful fallbacks."""
     if bold:
         candidates = ["segoeuib.ttf", "arialbd.ttf", "calibrib.ttf", "tahomabd.ttf"]
     elif semibold:
@@ -25,379 +25,441 @@ def draw_pill(draw, x0, y0, x1, y1, fill, outline=None, width=1):
     r = (y1 - y0) // 2
     draw.rounded_rectangle([(x0, y0), (x1, y1)], radius=r, fill=fill, outline=outline, width=width)
 
-def draw_corner_brackets(draw, x0, y0, x1, y1, bracket_len=65, stroke=8, color=(79, 70, 229)):
-    """Draws sleek camera viewfinder corner brackets."""
+def draw_corner_viewfinders(draw, x0, y0, x1, y1, arm=95, stroke=10, color=(37, 99, 235)):
+    """Draws high-precision camera viewfinder corner brackets."""
     # Top-Left
-    draw.line([(x0, y0), (x0 + bracket_len, y0)], fill=color, width=stroke)
-    draw.line([(x0, y0), (x0, y0 + bracket_len)], fill=color, width=stroke)
+    draw.line([(x0, y0), (x0 + arm, y0)], fill=color, width=stroke)
+    draw.line([(x0, y0), (x0, y0 + arm)], fill=color, width=stroke)
     # Top-Right
-    draw.line([(x1, y0), (x1 - bracket_len, y0)], fill=color, width=stroke)
-    draw.line([(x1, y0), (x1, y0 + bracket_len)], fill=color, width=stroke)
+    draw.line([(x1, y0), (x1 - arm, y0)], fill=color, width=stroke)
+    draw.line([(x1, y0), (x1 - arm, y0 + arm)], fill=color, width=stroke)
+    draw.line([(x1, y0), (x1, y0 + arm)], fill=color, width=stroke)
     # Bottom-Left
-    draw.line([(x0, y1), (x0 + bracket_len, y1)], fill=color, width=stroke)
-    draw.line([(x0, y1), (x0, y1 - bracket_len)], fill=color, width=stroke)
+    draw.line([(x0, y1), (x0 + arm, y1)], fill=color, width=stroke)
+    draw.line([(x0, y1), (x0, y1 - arm)], fill=color, width=stroke)
     # Bottom-Right
-    draw.line([(x1, y1), (x1 - bracket_len, y1)], fill=color, width=stroke)
-    draw.line([(x1, y1), (x1, y1 - bracket_len)], fill=color, width=stroke)
+    draw.line([(x1, y1), (x1 - arm, y1)], fill=color, width=stroke)
+    draw.line([(x1, y1), (x1, y1 - arm)], fill=color, width=stroke)
+
+def draw_camera_icon(draw, cx, cy, size=44, color=(255, 255, 255)):
+    """Draws a clean modern camera vector icon."""
+    w = size
+    h = int(size * 0.74)
+    x0 = cx - w // 2
+    y0 = cy - h // 2
+    # Camera top bump
+    bump_w = int(w * 0.35)
+    bump_h = int(h * 0.25)
+    draw.rounded_rectangle(
+        [(cx - bump_w // 2, y0 - bump_h), (cx + bump_w // 2, y0 + 2)],
+        radius=4,
+        fill=color
+    )
+    # Camera body
+    draw.rounded_rectangle(
+        [(x0, y0), (x0 + w, y0 + h)],
+        radius=8,
+        fill=color
+    )
+    # Camera lens (outer ring)
+    lens_r = int(h * 0.34)
+    lens_color = (37, 99, 235) if color == (255, 255, 255) else (255, 255, 255)
+    draw.ellipse([(cx - lens_r, cy - lens_r + 2), (cx + lens_r, cy + lens_r + 2)], fill=lens_color)
+    inner_r = int(lens_r * 0.52)
+    draw.ellipse([(cx - inner_r, cy - inner_r + 2), (cx + inner_r, cy + inner_r + 2)], fill=color)
+
+def draw_pin_icon(draw, cx, cy, size=34, color=(239, 68, 68)):
+    """Draws a crisp map pin vector icon."""
+    r = size // 2
+    # Circle head
+    draw.ellipse([(cx - r, cy - r - 4), (cx + r, cy + r - 4)], fill=color)
+    # Triangle tip
+    draw.polygon([
+        (cx - r + 3, cy - 2),
+        (cx + r - 3, cy - 2),
+        (cx, cy + r + 6)
+    ], fill=color)
+    # Inner cutout dot
+    dot_r = int(r * 0.42)
+    draw.ellipse([(cx - dot_r, cy - dot_r - 4), (cx + dot_r, cy + dot_r - 4)], fill=(15, 23, 42))
+
+def draw_bolt_icon(draw, cx, cy, size=32, color=(250, 204, 21)):
+    """Draws a clean lightning bolt icon."""
+    s = size // 2
+    points = [
+        (cx - int(s * 0.2), cy - s),
+        (cx + int(s * 0.7), cy - s),
+        (cx + int(s * 0.1), cy - int(s * 0.1)),
+        (cx + int(s * 0.8), cy - int(s * 0.1)),
+        (cx - int(s * 0.6), cy + s),
+        (cx - int(s * 0.1), cy + int(s * 0.1)),
+        (cx - int(s * 0.7), cy + int(s * 0.1)),
+    ]
+    draw.polygon(points, fill=color)
+
+def draw_lock_icon(draw, cx, cy, size=28, color=(148, 163, 184)):
+    """Draws a clean security padlock icon."""
+    w = size
+    h = int(size * 0.8)
+    body_y0 = cy - h // 4
+    sh_w = int(w * 0.6)
+    sh_h = int(h * 0.85)
+    sh_x0 = cx - sh_w // 2
+    sh_y0 = body_y0 - sh_h + 4
+    draw.arc([(sh_x0, sh_y0), (sh_x0 + sh_w, sh_y0 + sh_h)], start=180, end=0, fill=color, width=4)
+    draw.line([(sh_x0, sh_y0 + sh_h // 2), (sh_x0, body_y0)], fill=color, width=4)
+    draw.line([(sh_x0 + sh_w, sh_y0 + sh_h // 2), (sh_x0 + sh_w, body_y0)], fill=color, width=4)
+    draw.rounded_rectangle([(cx - w // 2, body_y0), (cx + w // 2, body_y0 + h)], radius=6, fill=color)
 
 def create_poster():
-    # 1. Base Canvas
+    # 1. Canvas Setup
     img = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    margin = 75
-
-    # 2. Outer Framing & Margin with Subtle Drop Highlight
+    margin = 80
+    # Outer crisp architectural border
     draw.rounded_rectangle(
         [(margin, margin), (WIDTH - margin, HEIGHT - margin)],
         radius=44,
         fill=(255, 255, 255),
-        outline=(226, 232, 240), # Slate 200
+        outline=(203, 213, 225), # Slate 300
         width=4
     )
 
-    # 3. Top Professional Header Accent Bar (Replaces Google Pay 4-color stripe)
-    # Perfectly fits within the top border curve
-    header_top = margin + 4
-    header_h = 24
-    draw.rounded_rectangle(
-        [(margin + 16, header_top), (WIDTH - margin - 16, header_top + header_h)],
-        radius=12,
-        fill=(15, 23, 42) # Slate 900
-    )
-    # Gradient/Accent Indigo Line centered within
-    draw.rounded_rectangle(
-        [(WIDTH // 2 - 400, header_top + 4), (WIDTH // 2 + 400, header_top + header_h - 4)],
-        radius=6,
-        fill=(99, 102, 241) # Indigo 500
-    )
-
-    y_cursor = margin + 70
-
-    # 4. Brand & Header Section
-    # Top Kiosk Pill Badge
-    pill_w = 1040
-    pill_h = 58
-    pill_x0 = (WIDTH - pill_w) // 2
-    draw_pill(draw, pill_x0, y_cursor, pill_x0 + pill_w, y_cursor + pill_h, fill=(241, 245, 249), outline=(203, 213, 225), width=2)
-    f_kiosk = get_font(28, bold=True)
-    kiosk_text = "CAMPUS SMART CLOUD PRINT KIOSK  •  24/7 INSTANT SELF-SERVICE"
-    bbox = draw.textbbox((0, 0), kiosk_text, font=f_kiosk)
-    draw.text((pill_x0 + (pill_w - (bbox[2] - bbox[0])) // 2, y_cursor + (pill_h - (bbox[3] - bbox[1])) // 2 - 3), kiosk_text, fill=(71, 85, 105), font=f_kiosk)
-
-    y_cursor += pill_h + 30
+    # 2. Top Header Bar
+    y_cursor = margin + 50
 
     # Brand Title: PrintKurox
-    f_brand = get_font(136, bold=True)
-    brand_text = "PrintKurox"
-    bbox = draw.textbbox((0, 0), brand_text, font=f_brand)
-    w_text = bbox[2] - bbox[0]
-    draw.text(((WIDTH - w_text) // 2, y_cursor), brand_text, fill=(15, 23, 42), font=f_brand)
+    f_brand = get_font(56, bold=True)
+    draw.text((margin + 60, y_cursor), "PrintKurox", fill=(15, 23, 42), font=f_brand)
 
-    # Subtitle
-    y_cursor += 155
-    f_sub = get_font(42, semibold=True)
-    sub_text = "Zero App Required  •  Instant Document Upload  •  Laser-Sharp Output"
-    bbox = draw.textbbox((0, 0), sub_text, font=f_sub)
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), sub_text, fill=(100, 116, 139), font=f_sub)
+    # Tagline
+    f_brand_sub = get_font(32, semibold=True)
+    draw.text((margin + 390, y_cursor + 18), "•   Campus Self-Service Cloud Kiosk", fill=(100, 116, 139), font=f_brand_sub)
 
-    # 5. Hero QR Code Card
-    y_cursor += 80
-    hero_w = 1580
-    hero_h = 1040
-    hero_x0 = (WIDTH - hero_w) // 2
-    hero_y0 = y_cursor
+    # Right Status Pill
+    badge_w = 490
+    badge_h = 60
+    badge_x = WIDTH - margin - 60 - badge_w
+    draw_pill(draw, badge_x, y_cursor, badge_x + badge_w, y_cursor + badge_h, fill=(240, 253, 244), outline=(187, 247, 208), width=2)
+    draw.ellipse([(badge_x + 28, y_cursor + 22), (badge_x + 44, y_cursor + 38)], fill=(22, 163, 74))
+    draw.text((badge_x + 58, y_cursor + 13), "SELF-PRINTING ACTIVE 24/7", fill=(21, 128, 61), font=get_font(27, bold=True))
 
-    # Soft subtle outer card
+    # Divider below header
+    y_cursor += 88
+    draw.line([(margin + 60, y_cursor), (WIDTH - margin - 60, y_cursor)], fill=(226, 232, 240), width=2)
+
+    # 3. Main Hero Hook
+    y_cursor += 55
+    f_hero = get_font(114, bold=True)
+    hero_text = "PRINT DIRECTLY FROM YOUR PHONE"
+    bbox = draw.textbbox((0, 0), hero_text, font=f_hero)
+    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), hero_text, fill=(15, 23, 42), font=f_hero)
+
+    y_cursor += 135
+    f_hero_sub = get_font(44, semibold=True)
+    hero_sub = "No Apps Needed   •   Upload Any Document   •   Instant Laser Print in ~30s"
+    bbox = draw.textbbox((0, 0), hero_sub, font=f_hero_sub)
+    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), hero_sub, fill=(71, 85, 105), font=f_hero_sub)
+
+    # 4. Hero Split Section: [Left: Scanner Target Viewfinder] + [Right: 4 Steps & Pickup Card]
+    y_cursor += 75
+    hero_box_y = y_cursor
+    hero_box_h = 1240
+    hero_box_w = WIDTH - 2 * (margin + 40)
+    hero_box_x = margin + 40
+
     draw.rounded_rectangle(
-        [(hero_x0, hero_y0), (hero_x0 + hero_w, hero_y0 + hero_h)],
+        [(hero_box_x, hero_box_y), (hero_box_x + hero_box_w, hero_box_y + hero_box_h)],
         radius=36,
-        fill=(255, 255, 255),
-        outline=(199, 210, 254), # Indigo 200
-        width=4
+        fill=(248, 250, 252), # Slate 50
+        outline=(226, 232, 240),
+        width=3
     )
 
-    # Top CTA banner inside card
-    banner_h = 96
+    # Left Column: Scanner Viewfinder Box
+    left_w = 1040
+    left_h = hero_box_h - 60
+    left_x = hero_box_x + 30
+    left_y = hero_box_y + 30
+
     draw.rounded_rectangle(
-        [(hero_x0 + 8, hero_y0 + 8), (hero_x0 + hero_w - 8, hero_y0 + banner_h + 8)],
+        [(left_x, left_y), (left_x + left_w, left_y + left_h)],
         radius=28,
-        fill=(79, 70, 229) # Indigo 600
+        fill=(255, 255, 255),
+        outline=(203, 213, 225),
+        width=2
     )
-    f_cta = get_font(52, bold=True)
-    cta_text = "SCAN WITH CAMERA TO PRINT"
-    bbox = draw.textbbox((0, 0), cta_text, font=f_cta)
-    draw.text((hero_x0 + (hero_w - (bbox[2] - bbox[0])) // 2, hero_y0 + 8 + (banner_h - (bbox[3] - bbox[1])) // 2 - 4), cta_text, fill=(255, 255, 255), font=f_cta)
 
-    # Generate QR Code: box_size = 18 -> exactly 666 x 666 px
+    # Scanner Header Bar
+    scan_header_h = 84
+    draw.rounded_rectangle(
+        [(left_x + 8, left_y + 8), (left_x + left_w - 8, left_y + scan_header_h + 8)],
+        radius=20,
+        fill=(37, 99, 235) # Electric Cobalt
+    )
+
+    f_scan_title = get_font(36, bold=True)
+    scan_title_text = "POINT PHONE CAMERA TO PRINT"
+    bbox = draw.textbbox((0, 0), scan_title_text, font=f_scan_title)
+    text_w = bbox[2] - bbox[0]
+    total_header_content_w = 50 + 20 + text_w # icon + gap + text
+    header_content_start_x = left_x + (left_w - total_header_content_w) // 2
+
+    # Draw vector camera icon
+    cam_icon_cx = header_content_start_x + 25
+    cam_icon_cy = left_y + 8 + scan_header_h // 2
+    draw_camera_icon(draw, cam_icon_cx, cam_icon_cy, size=46, color=(255, 255, 255))
+
+    draw.text((header_content_start_x + 65, left_y + 8 + (scan_header_h - (bbox[3] - bbox[1])) // 2 - 2), scan_title_text, fill=(255, 255, 255), font=f_scan_title)
+
+    # High-Density QR Code
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=18,
+        box_size=21,
         border=2,
     )
     qr.add_data("https://printkurox.vercel.app")
     qr.make(fit=True)
     qr_img = qr.make_image(fill_color="#0f172a", back_color="#ffffff").convert("RGB")
     qr_w, qr_h = qr_img.size
-    qr_x = (WIDTH - qr_w) // 2
-    qr_y = hero_y0 + banner_h + 45
+    qr_x = left_x + (left_w - qr_w) // 2
+    qr_y = left_y + scan_header_h + 38
 
-    # Draw quiet zone frame
-    draw.rectangle(
-        [(qr_x - 14, qr_y - 14), (qr_x + qr_w + 14, qr_y + qr_h + 14)],
-        fill=(255, 255, 255),
-        outline=(226, 232, 240),
-        width=3
-    )
-    # Viewfinder corner brackets with proper breathing room
-    draw_corner_brackets(draw, qr_x - 32, qr_y - 32, qr_x + qr_w + 32, qr_y + qr_h + 32, bracket_len=65, stroke=8, color=(79, 70, 229))
-
+    # Optical Camera Frame & Corner Brackets
+    draw.rectangle([(qr_x - 12, qr_y - 12), (qr_x + qr_w + 12, qr_y + qr_h + 12)], fill=(255, 255, 255), outline=(226, 232, 240), width=2)
+    draw_corner_viewfinders(draw, qr_x - 30, qr_y - 30, qr_x + qr_w + 30, qr_y + qr_h + 30, arm=95, stroke=10, color=(37, 99, 235))
     img.paste(qr_img, (qr_x, qr_y))
 
-    # Website link pill below QR
-    url_box_y = qr_y + qr_h + 40
-    url_box_w = 1120
-    url_box_h = 72
-    url_box_x = (WIDTH - url_box_w) // 2
-    draw_pill(draw, url_box_x, url_box_y, url_box_x + url_box_w, url_box_y + url_box_h, fill=(248, 250, 252), outline=(203, 213, 225), width=2)
-    
-    f_url = get_font(38, bold=True)
-    url_text = "WEBSITE:  https://printkurox.vercel.app"
-    bbox = draw.textbbox((0, 0), url_text, font=f_url)
-    draw.text((url_box_x + (url_box_w - (bbox[2] - bbox[0])) // 2, url_box_y + (url_box_h - (bbox[3] - bbox[1])) // 2 - 3), url_text, fill=(30, 41, 59), font=f_url)
+    # Website link box
+    url_box_y = qr_y + qr_h + 38
+    url_box_w = 860
+    url_box_h = 70
+    url_box_x = left_x + (left_w - url_box_w) // 2
+    draw_pill(draw, url_box_x, url_box_y, url_box_x + url_box_w, url_box_y + url_box_h, fill=(241, 245, 249), outline=(203, 213, 225), width=2)
+    f_url = get_font(33, bold=True)
+    url_str = "WEBSITE:   printkurox.vercel.app"
+    bbox = draw.textbbox((0, 0), url_str, font=f_url)
+    draw.text((url_box_x + (url_box_w - (bbox[2] - bbox[0])) // 2, url_box_y + (url_box_h - (bbox[3] - bbox[1])) // 2 - 2), url_str, fill=(30, 41, 59), font=f_url)
 
-    # Hint text
-    f_hint = get_font(32, semibold=True)
-    hint_text = "Works with iPhone & Android camera  •  Upload PDF, Word, PPT or Photos"
-    bbox = draw.textbbox((0, 0), hint_text, font=f_hint)
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, url_box_y + url_box_h + 18), hint_text, fill=(100, 116, 139), font=f_hint)
+    # Footnote below QR
+    f_scan_sub = get_font(28, semibold=True)
+    scan_sub_text = "Works on iPhone & Android   •   Open in Safari, Chrome or Any Browser"
+    bbox = draw.textbbox((0, 0), scan_sub_text, font=f_scan_sub)
+    draw.text((left_x + (left_w - (bbox[2] - bbox[0])) // 2, url_box_y + url_box_h + 20), scan_sub_text, fill=(100, 116, 139), font=f_scan_sub)
 
-    # 6. Pricing Section Header
-    y_cursor = hero_y0 + hero_h + 65
+    # Right Column: 4-Step Self-Print Flow & Physical Pickup Card
+    right_x = left_x + left_w + 40
+    right_w = hero_box_w - left_w - 100
+    right_y = left_y
 
-    f_sec_title = get_font(56, bold=True)
-    sec_title = "TRANSPARENT PRICING & BULK OFFERS"
-    bbox = draw.textbbox((0, 0), sec_title, font=f_sec_title)
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), sec_title, fill=(15, 23, 42), font=f_sec_title)
-
-    y_cursor += 72
-    f_sec_sub = get_font(34, semibold=True)
-    sec_sub = "Direct volume discounts applied automatically at checkout based on total sheets"
-    bbox = draw.textbbox((0, 0), sec_sub, font=f_sec_sub)
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), sec_sub, fill=(100, 116, 139), font=f_sec_sub)
-
-    # 7. Three-Tier Pricing Grid (Standard | Assignment Saver | Mega Bulk Saver)
-    y_cursor += 60
-    card_w = 720
-    card_h = 715
-    gap = 40
-    start_x = (WIDTH - (3 * card_w + 2 * gap)) // 2
-
-    # CARD 1: STANDARD (1-9 Sheets)
-    c1_x0 = start_x
-    draw.rounded_rectangle(
-        [(c1_x0, y_cursor), (c1_x0 + card_w, y_cursor + card_h)],
-        radius=28,
-        fill=(255, 255, 255),
-        outline=(226, 232, 240),
-        width=4
-    )
-    # Header strip
-    draw.rounded_rectangle([(c1_x0, y_cursor), (c1_x0 + card_w, y_cursor + 115)], radius=28, fill=(248, 250, 252))
-    draw.rectangle([(c1_x0, y_cursor + 80), (c1_x0 + card_w, y_cursor + 115)], fill=(248, 250, 252))
-    draw.line([(c1_x0, y_cursor + 115), (c1_x0 + card_w, y_cursor + 115)], fill=(226, 232, 240), width=3)
-    
-    # Title & Sub-badge
-    draw.text((c1_x0 + 35, y_cursor + 22), "Standard", fill=(15, 23, 42), font=get_font(42, bold=True))
-    draw.text((c1_x0 + 35, y_cursor + 72), "1 – 9 Sheets  •  Regular Rate", fill=(100, 116, 139), font=get_font(28, semibold=True))
-    draw_pill(draw, c1_x0 + card_w - 200, y_cursor + 28, c1_x0 + card_w - 30, y_cursor + 78, fill=(241, 245, 249), outline=(203, 213, 225), width=2)
-    draw.text((c1_x0 + card_w - 180, y_cursor + 38), "REGULAR", fill=(71, 85, 105), font=get_font(24, bold=True))
-
-    # B&W Box
-    box1_y0 = y_cursor + 140
-    box_h = 230
-    draw.rounded_rectangle([(c1_x0 + 25, box1_y0), (c1_x0 + card_w - 25, box1_y0 + box_h)], radius=20, fill=(248, 250, 252), outline=(226, 232, 240), width=2)
-    draw.text((c1_x0 + 45, box1_y0 + 18), "BLACK & WHITE", fill=(71, 85, 105), font=get_font(26, bold=True))
-    draw.text((c1_x0 + 45, box1_y0 + 58), "₹4", fill=(15, 23, 42), font=get_font(84, bold=True))
-    draw.text((c1_x0 + 180, box1_y0 + 95), "/ single sheet", fill=(100, 116, 139), font=get_font(34, semibold=True))
-    draw.line([(c1_x0 + 45, box1_y0 + 160), (c1_x0 + card_w - 45, box1_y0 + 160)], fill=(226, 232, 240), width=2)
-    draw.text((c1_x0 + 45, box1_y0 + 175), "Double-Sided (Duplex):  ₹6 / sheet", fill=(30, 41, 59), font=get_font(30, bold=True))
-
-    # Color Box
-    box2_y0 = box1_y0 + box_h + 25
-    draw.rounded_rectangle([(c1_x0 + 25, box2_y0), (c1_x0 + card_w - 25, box2_y0 + box_h)], radius=20, fill=(255, 241, 242), outline=(254, 205, 211), width=2)
-    draw.text((c1_x0 + 45, box2_y0 + 18), "FULL VIBRANT COLOR", fill=(190, 24, 93), font=get_font(26, bold=True))
-    draw.text((c1_x0 + 45, box2_y0 + 58), "₹7", fill=(190, 24, 93), font=get_font(84, bold=True))
-    draw.text((c1_x0 + 180, box2_y0 + 95), "/ single sheet", fill=(100, 116, 139), font=get_font(34, semibold=True))
-    draw.line([(c1_x0 + 45, box2_y0 + 160), (c1_x0 + card_w - 45, box2_y0 + 160)], fill=(254, 205, 211), width=2)
-    draw.text((c1_x0 + 45, box2_y0 + 175), "Double-Sided (Duplex):  ₹10 / sheet", fill=(159, 18, 57), font=get_font(30, bold=True))
-
-    # Bottom Note
-    draw.text((c1_x0 + 35, y_cursor + card_h - 48), "• Everyday fast printouts & forms", fill=(148, 163, 184), font=get_font(26, semibold=True))
-
-    # CARD 2: ASSIGNMENT SAVER (10-29 Sheets) - FEATURED
-    c2_x0 = start_x + card_w + gap
-    draw.rounded_rectangle(
-        [(c2_x0, y_cursor), (c2_x0 + card_w, y_cursor + card_h)],
-        radius=28,
-        fill=(255, 255, 255),
-        outline=(99, 102, 241), # Indigo 500
-        width=5
-    )
-    # Header strip
-    draw.rounded_rectangle([(c2_x0, y_cursor), (c2_x0 + card_w, y_cursor + 115)], radius=28, fill=(238, 242, 255))
-    draw.rectangle([(c2_x0, y_cursor + 80), (c2_x0 + card_w, y_cursor + 115)], fill=(238, 242, 255))
-    draw.line([(c2_x0, y_cursor + 115), (c2_x0 + card_w, y_cursor + 115)], fill=(199, 210, 254), width=3)
-    
-    # Title & Badge
-    draw.text((c2_x0 + 35, y_cursor + 22), "Assignment Saver", fill=(49, 46, 129), font=get_font(42, bold=True))
-    draw.text((c2_x0 + 35, y_cursor + 72), "10 – 29 Sheets  •  Auto-Applied", fill=(79, 70, 229), font=get_font(28, bold=True))
-    draw_pill(draw, c2_x0 + card_w - 230, y_cursor + 28, c2_x0 + card_w - 30, y_cursor + 78, fill=(79, 70, 229), outline=None)
-    draw.text((c2_x0 + card_w - 208, y_cursor + 38), "SAVE 25%", fill=(255, 255, 255), font=get_font(25, bold=True))
-
-    # B&W Box
-    draw.rounded_rectangle([(c2_x0 + 25, box1_y0), (c2_x0 + card_w - 25, box1_y0 + box_h)], radius=20, fill=(248, 250, 252), outline=(226, 232, 240), width=2)
-    draw.text((c2_x0 + 45, box1_y0 + 18), "BLACK & WHITE", fill=(71, 85, 105), font=get_font(26, bold=True))
-    draw.text((c2_x0 + 45, box1_y0 + 58), "₹3", fill=(15, 23, 42), font=get_font(84, bold=True))
-    draw.text((c2_x0 + 180, box1_y0 + 95), "/ single sheet  (was ₹4)", fill=(79, 70, 229), font=get_font(32, bold=True))
-    draw.line([(c2_x0 + 45, box1_y0 + 160), (c2_x0 + card_w - 45, box1_y0 + 160)], fill=(226, 232, 240), width=2)
-    draw.text((c2_x0 + 45, box1_y0 + 175), "Double-Sided (Duplex):  ₹5 / sheet", fill=(30, 41, 59), font=get_font(30, bold=True))
-
-    # Color Box
-    draw.rounded_rectangle([(c2_x0 + 25, box2_y0), (c2_x0 + card_w - 25, box2_y0 + box_h)], radius=20, fill=(255, 241, 242), outline=(254, 205, 211), width=2)
-    draw.text((c2_x0 + 45, box2_y0 + 18), "FULL VIBRANT COLOR", fill=(190, 24, 93), font=get_font(26, bold=True))
-    draw.text((c2_x0 + 45, box2_y0 + 58), "₹6", fill=(190, 24, 93), font=get_font(84, bold=True))
-    draw.text((c2_x0 + 180, box2_y0 + 95), "/ single sheet  (was ₹7)", fill=(190, 24, 93), font=get_font(32, bold=True))
-    draw.line([(c2_x0 + 45, box2_y0 + 160), (c2_x0 + card_w - 45, box2_y0 + 160)], fill=(254, 205, 211), width=2)
-    draw.text((c2_x0 + 45, box2_y0 + 175), "Double-Sided (Duplex):  ₹8 / sheet", fill=(159, 18, 57), font=get_font(30, bold=True))
-
-    # Bottom Note
-    draw.text((c2_x0 + 35, y_cursor + card_h - 48), "• Popular for Lab Records & Assignments", fill=(79, 70, 229), font=get_font(26, bold=True))
-
-    # CARD 3: MEGA BULK SAVER (30+ Sheets) - BEST VALUE
-    c3_x0 = start_x + 2 * (card_w + gap)
-    draw.rounded_rectangle(
-        [(c3_x0, y_cursor), (c3_x0 + card_w, y_cursor + card_h)],
-        radius=28,
-        fill=(255, 255, 255),
-        outline=(16, 185, 129), # Emerald 500
-        width=5
-    )
-    # Header strip
-    draw.rounded_rectangle([(c3_x0, y_cursor), (c3_x0 + card_w, y_cursor + 115)], radius=28, fill=(236, 253, 245))
-    draw.rectangle([(c3_x0, y_cursor + 80), (c3_x0 + card_w, y_cursor + 115)], fill=(236, 253, 245))
-    draw.line([(c3_x0, y_cursor + 115), (c3_x0 + card_w, y_cursor + 115)], fill=(167, 243, 208), width=3)
-    
-    # Title & Badge
-    draw.text((c3_x0 + 35, y_cursor + 22), "Mega Bulk Saver", fill=(6, 78, 59), font=get_font(42, bold=True))
-    draw.text((c3_x0 + 35, y_cursor + 72), "30+ Sheets  •  Maximum Savings", fill=(21, 128, 61), font=get_font(28, bold=True))
-    draw_pill(draw, c3_x0 + card_w - 240, y_cursor + 28, c3_x0 + card_w - 30, y_cursor + 78, fill=(5, 150, 105), outline=None)
-    draw.text((c3_x0 + card_w - 225, y_cursor + 38), "SAVE 37.5%", fill=(255, 255, 255), font=get_font(25, bold=True))
-
-    # B&W Box
-    draw.rounded_rectangle([(c3_x0 + 25, box1_y0), (c3_x0 + card_w - 25, box1_y0 + box_h)], radius=20, fill=(240, 253, 244), outline=(187, 247, 208), width=2)
-    draw.text((c3_x0 + 45, box1_y0 + 18), "BLACK & WHITE", fill=(22, 101, 52), font=get_font(26, bold=True))
-    draw.text((c3_x0 + 45, box1_y0 + 58), "₹2.50", fill=(21, 128, 61), font=get_font(84, bold=True))
-    draw.text((c3_x0 + 280, box1_y0 + 95), "/ single sheet", fill=(100, 116, 139), font=get_font(34, semibold=True))
-    draw.line([(c3_x0 + 45, box1_y0 + 160), (c3_x0 + card_w - 45, box1_y0 + 160)], fill=(187, 247, 208), width=2)
-    draw.text((c3_x0 + 45, box1_y0 + 175), "Double-Sided:  ₹4 / sheet (₹2/side!)", fill=(21, 128, 61), font=get_font(30, bold=True))
-
-    # Color Box
-    draw.rounded_rectangle([(c3_x0 + 25, box2_y0), (c3_x0 + card_w - 25, box2_y0 + box_h)], radius=20, fill=(255, 241, 242), outline=(254, 205, 211), width=2)
-    draw.text((c3_x0 + 45, box2_y0 + 18), "FULL VIBRANT COLOR", fill=(190, 24, 93), font=get_font(26, bold=True))
-    draw.text((c3_x0 + 45, box2_y0 + 58), "₹5", fill=(190, 24, 93), font=get_font(84, bold=True))
-    draw.text((c3_x0 + 180, box2_y0 + 95), "/ single sheet  (was ₹7)", fill=(190, 24, 93), font=get_font(32, bold=True))
-    draw.line([(c3_x0 + 45, box2_y0 + 160), (c3_x0 + card_w - 45, box2_y0 + 160)], fill=(254, 205, 211), width=2)
-    draw.text((c3_x0 + 45, box2_y0 + 175), "Double-Sided (Duplex):  ₹7 / sheet", fill=(159, 18, 57), font=get_font(30, bold=True))
-
-    # Bottom Note
-    draw.text((c3_x0 + 35, y_cursor + card_h - 48), "• Best for Lecture Notes, Thesis & Manuals", fill=(5, 150, 105), font=get_font(26, bold=True))
-
-    # 8. Pickup Location Banner
-    y_cursor += card_h + 65
-    loc_w = 2240
-    loc_h = 165
-    loc_x0 = (WIDTH - loc_w) // 2
-
-    draw.rounded_rectangle(
-        [(loc_x0, y_cursor), (loc_x0 + loc_w, y_cursor + loc_h)],
-        radius=26,
-        fill=(15, 23, 42), # Slate 900
-        outline=(99, 102, 241), # Indigo 500
-        width=4
-    )
-    # Left accent tag
-    draw.rounded_rectangle([(loc_x0 + 35, y_cursor + 32), (loc_x0 + 360, y_cursor + loc_h - 32)], radius=16, fill=(30, 41, 59))
-    draw.text((loc_x0 + 65, y_cursor + 54), "COLLECT AT", fill=(148, 163, 184), font=get_font(30, bold=True))
-    draw.text((loc_x0 + 65, y_cursor + 94), "PICKUP POINT", fill=(255, 255, 255), font=get_font(28, bold=True))
-
-    # Main Address
-    draw.text((loc_x0 + 400, y_cursor + 40), "Block B, Room 29", fill=(255, 255, 255), font=get_font(74, bold=True))
-    draw.text((loc_x0 + 405, y_cursor + 115), "Instant auto-print • Collect your prints with your 4-digit Pickup Code", fill=(199, 210, 254), font=get_font(30, semibold=True))
-
-    # Right side badge
-    badge_w = 410
-    badge_h = 72
-    badge_x = loc_x0 + loc_w - badge_w - 35
-    badge_y = y_cursor + (loc_h - badge_h) // 2
-    draw_pill(draw, badge_x, badge_y, badge_x + badge_w, badge_y + badge_h, fill=(22, 163, 74), outline=None)
-    draw.text((badge_x + 35, badge_y + 18), "READY INSTANTLY", fill=(255, 255, 255), font=get_font(30, bold=True))
-
-    # 9. How It Works Steps
-    y_cursor += loc_h + 60
-    f_step_sec = get_font(38, bold=True)
-    step_sec_title = "HOW TO PRINT IN 4 SIMPLE STEPS"
-    bbox = draw.textbbox((0, 0), step_sec_title, font=f_step_sec)
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), step_sec_title, fill=(71, 85, 105), font=f_step_sec)
-
-    y_cursor += 60
-    step_box_w = 525
-    step_box_h = 145
-    step_gap = 46
-    step_start_x = (WIDTH - (4 * step_box_w + 3 * step_gap)) // 2
+    f_flow_header = get_font(38, bold=True)
+    draw.text((right_x + 10, right_y + 12), "HOW SELF-SERVICE PRINTING WORKS", fill=(15, 23, 42), font=f_flow_header)
 
     steps = [
-        ("1", "Scan QR Code", "Open kiosk on phone"),
-        ("2", "Upload Files", "PDF, Docs or Photos"),
-        ("3", "Pay Online", "UPI / QR / Cards"),
-        ("4", "Collect Prints", "Block B, Room 29")
+        ("1", "Scan QR with Phone", "Instantly opens kiosk web app — zero downloads or logins required."),
+        ("2", "Upload Document", "Upload PDF, Word DOCX, PPTX, or photos directly from your device."),
+        ("3", "Pay Securely Online", "UPI (Google Pay, PhonePe, Paytm), Cards or Net Banking."),
+        ("4", "Collect at Room 29", "High-speed laser printer automatically dispenses upon payment.")
     ]
 
-    for i, (num, title, desc) in enumerate(steps):
-        sx0 = step_start_x + i * (step_box_w + step_gap)
-        # Step card
-        draw.rounded_rectangle([(sx0, y_cursor), (sx0 + step_box_w, y_cursor + step_box_h)], radius=20, fill=(248, 250, 252), outline=(226, 232, 240), width=2)
-        # Number badge
-        draw.ellipse([(sx0 + 25, y_cursor + 38), (sx0 + 95, y_cursor + 108)], fill=(79, 70, 229))
-        draw.text((sx0 + 46, y_cursor + 51), num, fill=(255, 255, 255), font=get_font(36, bold=True))
-        # Text
-        draw.text((sx0 + 120, y_cursor + 36), title, fill=(15, 23, 42), font=get_font(32, bold=True))
-        draw.text((sx0 + 120, y_cursor + 82), desc, fill=(100, 116, 139), font=get_font(26, semibold=True))
+    step_y = right_y + 75
+    step_card_h = 136
+    step_gap = 20
 
-    # 10. Footer Trust & Accepted Payments
-    y_cursor += step_box_h + 55
+    for num, title, desc in steps:
+        draw.rounded_rectangle(
+            [(right_x, step_y), (right_x + right_w, step_y + step_card_h)],
+            radius=20,
+            fill=(255, 255, 255),
+            outline=(226, 232, 240),
+            width=2
+        )
+        # Step Number Badge
+        draw.ellipse([(right_x + 28, step_y + 28), (right_x + 106, step_y + 106)], fill=(37, 99, 235))
+        f_num = get_font(44, bold=True)
+        draw.text((right_x + 51, step_y + 38), num, fill=(255, 255, 255), font=f_num)
+
+        # Step Text
+        f_st = get_font(35, bold=True)
+        draw.text((right_x + 132, step_y + 24), title, fill=(15, 23, 42), font=f_st)
+        f_sd = get_font(27, semibold=True)
+        draw.text((right_x + 132, step_y + 74), desc, fill=(100, 116, 139), font=f_sd)
+
+        step_y += step_card_h + step_gap
+
+    # Physical Pickup Banner
+    pickup_card_y = step_y + 18
+    pickup_card_h = 360
+    draw.rounded_rectangle(
+        [(right_x, pickup_card_y), (right_x + right_w, pickup_card_y + pickup_card_h)],
+        radius=26,
+        fill=(15, 23, 42), # Obsidian Slate 900
+        outline=(59, 130, 246), # Blue 500
+        width=3
+    )
+
+    # Location pill tag with vector pin
+    tag_w = 340
+    tag_h = 54
+    draw.rounded_rectangle([(right_x + 36, pickup_card_y + 30), (right_x + 36 + tag_w, pickup_card_y + 30 + tag_h)], radius=14, fill=(30, 41, 59))
+    draw_pin_icon(draw, right_x + 65, pickup_card_y + 57, size=28, color=(248, 113, 113))
+    draw.text((right_x + 92, pickup_card_y + 42), "PICKUP LOCATION", fill=(226, 232, 240), font=get_font(26, bold=True))
+
+    # Room Address
+    f_room = get_font(84, bold=True)
+    draw.text((right_x + 36, pickup_card_y + 112), "Block B, Room 29", fill=(255, 255, 255), font=f_room)
+
+    # Fast pickup details with vector bolt
+    draw_bolt_icon(draw, right_x + 55, pickup_card_y + 242, size=36, color=(250, 204, 21))
+    f_room_sub = get_font(33, semibold=True)
+    draw.text((right_x + 85, pickup_card_y + 225), "Prints ready in ~30s   •   Collect with your 4-digit code", fill=(199, 210, 254), font=f_room_sub)
+
+    f_room_sub2 = get_font(27, semibold=True)
+    draw.text((right_x + 85, pickup_card_y + 280), "Fully automated laser kiosk — no waiting in counter queues", fill=(148, 163, 184), font=f_room_sub2)
+
+    # 5. Middle Feature Highlight Bar
+    y_cursor = hero_box_y + hero_box_h + 55
+    feat_bar_w = hero_box_w
+    feat_bar_x = hero_box_x
+    feat_bar_h = 108
+
+    features = [
+        ("FILE SUPPORT", "PDF, Word, PPTX, Images"),
+        ("HIGH-SPEED LASER", "Automated Duplex Printing"),
+        ("DATA PRIVACY", "Auto-Purged Post Printing"),
+        ("UNIVERSAL ACCESS", "Any Phone or Browser")
+    ]
+    f_w = (feat_bar_w - 3 * 20) // 4
+    for idx, (f_title, f_sub) in enumerate(features):
+        fx = feat_bar_x + idx * (f_w + 20)
+        draw.rounded_rectangle(
+            [(fx, y_cursor), (fx + f_w, y_cursor + feat_bar_h)],
+            radius=18,
+            fill=(241, 245, 249),
+            outline=(226, 232, 240),
+            width=2
+        )
+        draw.text((fx + 28, y_cursor + 22), f_title, fill=(37, 99, 235), font=get_font(26, bold=True))
+        draw.text((fx + 28, y_cursor + 60), f_sub, fill=(15, 23, 42), font=get_font(25, bold=True))
+
+    # 6. Comparative Pricing & Bulk Matrix
+    y_cursor += feat_bar_h + 65
+
+    f_price_head = get_font(60, bold=True)
+    price_head_text = "TRANSPARENT PRICING & BULK SAVINGS"
+    bbox = draw.textbbox((0, 0), price_head_text, font=f_price_head)
+    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), price_head_text, fill=(15, 23, 42), font=f_price_head)
+
+    y_cursor += 74
+    f_price_sub = get_font(34, semibold=True)
+    price_sub_text = "Volume discounts apply automatically at checkout based on total sheet count"
+    bbox = draw.textbbox((0, 0), price_sub_text, font=f_price_sub)
+    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), price_sub_text, fill=(100, 116, 139), font=f_price_sub)
+
+    # Pricing Table Dimensions
+    y_cursor += 50
+    tbl_x = margin + 40
+    tbl_w = WIDTH - 2 * (margin + 40)
+    tbl_y = y_cursor
+
+    col_w = [620, 500, 540, 580]
+    col_x = [tbl_x, tbl_x + col_w[0], tbl_x + col_w[0] + col_w[1], tbl_x + col_w[0] + col_w[1] + col_w[2]]
+
+    header_h = 150
+    row_h = 160
+    total_tbl_h = header_h + 4 * row_h
+
+    # Outer table container
+    draw.rounded_rectangle(
+        [(tbl_x, tbl_y), (tbl_x + tbl_w, tbl_y + total_tbl_h)],
+        radius=28,
+        fill=(255, 255, 255),
+        outline=(203, 213, 225),
+        width=3
+    )
+
+    # Column background tints for tiers 2 and 3
+    draw.rectangle([(col_x[2], tbl_y + header_h), (col_x[3], tbl_y + total_tbl_h - 1)], fill=(248, 250, 252))
+    draw.rectangle([(col_x[3], tbl_y + header_h), (tbl_x + tbl_w - 2, tbl_y + total_tbl_h - 1)], fill=(240, 253, 244))
+
+    # Table Header Dark Band
+    draw.rounded_rectangle([(tbl_x, tbl_y), (tbl_x + tbl_w, tbl_y + header_h)], radius=28, fill=(15, 23, 42))
+    draw.rectangle([(tbl_x, tbl_y + 80), (tbl_x + tbl_w, tbl_y + header_h)], fill=(15, 23, 42))
+
+    # Header Column 1: Config
+    draw.text((col_x[0] + 40, tbl_y + 54), "PRINT CONFIGURATION", fill=(148, 163, 184), font=get_font(30, bold=True))
+
+    # Header Column 2: Standard
+    draw.text((col_x[1] + 35, tbl_y + 34), "STANDARD", fill=(255, 255, 255), font=get_font(36, bold=True))
+    draw.text((col_x[1] + 35, tbl_y + 88), "1 – 9 Sheets  •  Regular", fill=(148, 163, 184), font=get_font(26, semibold=True))
+
+    # Header Column 3: Assignment Saver
+    draw.text((col_x[2] + 35, tbl_y + 34), "ASSIGNMENT SAVER", fill=(255, 255, 255), font=get_font(36, bold=True))
+    draw_pill(draw, col_x[2] + 35, tbl_y + 82, col_x[2] + 310, tbl_y + 126, fill=(37, 99, 235), outline=None)
+    draw.text((col_x[2] + 55, tbl_y + 90), "SAVE 25%   •   10-29", fill=(255, 255, 255), font=get_font(24, bold=True))
+
+    # Header Column 4: Mega Bulk Saver
+    draw.text((col_x[3] + 35, tbl_y + 34), "MEGA BULK SAVER", fill=(255, 255, 255), font=get_font(36, bold=True))
+    draw_pill(draw, col_x[3] + 35, tbl_y + 82, col_x[3] + 360, tbl_y + 126, fill=(22, 163, 74), outline=None)
+    draw.text((col_x[3] + 55, tbl_y + 90), "BEST VALUE   •   30+ PGS", fill=(255, 255, 255), font=get_font(24, bold=True))
+
+    # Rows Data
+    rows_data = [
+        ("Black & White", "Single-Sided (1 Side)", "₹4.00", "/ sheet", "₹3.00", "/ sheet (was ₹4)", "₹2.50", "/ sheet (was ₹4)"),
+        ("Black & White", "Double-Sided (Duplex)", "₹6.00", "/ sheet (₹3/side)", "₹5.00", "/ sheet (₹2.50/side)", "₹4.00", "/ sheet (₹2/side!)"),
+        ("Full Vibrant Color", "Single-Sided (1 Side)", "₹7.00", "/ sheet", "₹6.00", "/ sheet (was ₹7)", "₹5.00", "/ sheet (was ₹7)"),
+        ("Full Vibrant Color", "Double-Sided (Duplex)", "₹10.00", "/ sheet (₹5/side)", "₹8.00", "/ sheet (₹4/side)", "₹7.00", "/ sheet (₹3.50/side)"),
+    ]
+
+    cur_row_y = tbl_y + header_h
+    for i, (cat, mode, c1, c1_s, c2, c2_s, c3, c3_s) in enumerate(rows_data):
+        draw.line([(tbl_x, cur_row_y), (tbl_x + tbl_w, cur_row_y)], fill=(226, 232, 240), width=2)
+
+        is_color = "Color" in cat
+        cat_color = (190, 24, 93) if is_color else (15, 23, 42)
+        draw.text((col_x[0] + 40, cur_row_y + 38), cat, fill=cat_color, font=get_font(38, bold=True))
+        draw.text((col_x[0] + 40, cur_row_y + 94), mode, fill=(100, 116, 139), font=get_font(28, semibold=True))
+
+        # Col 1: Standard
+        draw.text((col_x[1] + 35, cur_row_y + 34), c1, fill=(15, 23, 42), font=get_font(54, bold=True))
+        draw.text((col_x[1] + 35, cur_row_y + 98), c1_s, fill=(100, 116, 139), font=get_font(26, semibold=True))
+
+        # Col 2: Assignment Saver
+        draw.text((col_x[2] + 35, cur_row_y + 34), c2, fill=(29, 78, 216), font=get_font(54, bold=True))
+        draw.text((col_x[2] + 35, cur_row_y + 98), c2_s, fill=(37, 99, 235), font=get_font(26, bold=True))
+
+        # Col 3: Mega Bulk Saver
+        draw.text((col_x[3] + 35, cur_row_y + 34), c3, fill=(21, 128, 61), font=get_font(54, bold=True))
+        draw.text((col_x[3] + 35, cur_row_y + 98), c3_s, fill=(22, 163, 74), font=get_font(26, bold=True))
+
+        cur_row_y += row_h
+
+    # Table Column Vertical Dividers
+    for x in [col_x[1], col_x[2], col_x[3]]:
+        draw.line([(x, tbl_y), (x, tbl_y + total_tbl_h)], fill=(226, 232, 240), width=2)
+
+    # 7. Footer Trust & Security
+    y_cursor = tbl_y + total_tbl_h + 65
     draw.line([(margin + 60, y_cursor), (WIDTH - margin - 60, y_cursor)], fill=(226, 232, 240), width=2)
 
-    y_cursor += 35
+    y_cursor += 42
     f_pay = get_font(32, bold=True)
-    pay_text = "Accepted: Google Pay  •  PhonePe  •  Paytm  •  BHIM UPI  •  All Credit & Debit Cards"
+    pay_text = "All Payment Methods Accepted:   Google Pay   •   PhonePe   •   Paytm   •   BHIM UPI   •   Cards & Net Banking"
     bbox = draw.textbbox((0, 0), pay_text, font=f_pay)
     draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), pay_text, fill=(71, 85, 105), font=f_pay)
 
-    y_cursor += 50
+    y_cursor += 55
     f_sec = get_font(28, semibold=True)
-    sec_text = "256-Bit SSL Encrypted  •  Privacy Guaranteed: Documents automatically purged after printing"
+    sec_text = "256-Bit SSL Encrypted   •   Privacy Guaranteed: All uploaded documents are automatically purged after printing"
     bbox = draw.textbbox((0, 0), sec_text, font=f_sec)
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), sec_text, fill=(148, 163, 184), font=f_sec)
+    text_x = (WIDTH - (bbox[2] - bbox[0])) // 2
+    # Draw vector lock icon before text
+    draw_lock_icon(draw, text_x - 30, y_cursor + 16, size=28, color=(100, 116, 139))
+    draw.text((text_x, y_cursor), sec_text, fill=(148, 163, 184), font=f_sec)
 
-    y_cursor += 48
-    f_support = get_font(26, semibold=True)
-    sup_text = "Need Assistance? Visit Room 29  •  Fast Self-Service High-Speed Duplex Laser Printing"
-    bbox = draw.textbbox((0, 0), sup_text, font=f_support)
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y_cursor), sup_text, fill=(160, 174, 192), font=f_support)
-
-    # 11. Save PNG & PDF
+    # Save High-Res PNG & PDF
     os.makedirs("public", exist_ok=True)
     png_path = "public/printkurox_qr_poster.png"
     pdf_path = "public/printkurox_qr_poster.pdf"
