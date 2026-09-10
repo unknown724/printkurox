@@ -78,19 +78,85 @@ export async function POST(req: NextRequest) {
 
     if (action === 'refill_black') {
       const topUp = typeof amount === 'number' ? amount : current.black_capacity;
+      const pct = Math.min(100, Math.round((topUp / current.black_capacity) * 100));
       await executeD1(
         `UPDATE printer_supplies 
-         SET black_pages_remaining = ?, last_black_refill = datetime('now'), updated_at = datetime('now')
+         SET black_pages_remaining = ?, bk_pages_remaining = ?, bk_pct = ?, last_black_refill = datetime('now'), updated_at = datetime('now')
          WHERE id = 1`,
-        [topUp]
+        [topUp, topUp, pct]
       );
     } else if (action === 'refill_color') {
       const topUp = typeof amount === 'number' ? amount : current.color_capacity;
+      const pct = Math.min(100, Math.round((topUp / current.color_capacity) * 100));
       await executeD1(
         `UPDATE printer_supplies 
-         SET color_pages_remaining = ?, last_color_refill = datetime('now'), updated_at = datetime('now')
+         SET color_pages_remaining = ?, c_pages_remaining = ?, m_pages_remaining = ?, y_pages_remaining = ?,
+             c_pct = ?, m_pct = ?, y_pct = ?, last_color_refill = datetime('now'), updated_at = datetime('now')
          WHERE id = 1`,
-        [topUp]
+        [topUp, topUp, topUp, topUp, pct, pct, pct]
+      );
+    } else if (action === 'refill_tank') {
+      const tank = body.tank; // 'bk' | 'c' | 'm' | 'y'
+      if (tank === 'bk') {
+        await executeD1(
+          `UPDATE printer_supplies 
+           SET bk_pct = 100.0, bk_pages_remaining = 4500, black_pages_remaining = 4500, last_black_refill = datetime('now'), updated_at = datetime('now')
+           WHERE id = 1`
+        );
+      } else if (tank === 'c') {
+        await executeD1(
+          `UPDATE printer_supplies 
+           SET c_pct = 100.0, c_pages_remaining = 7500, last_color_refill = datetime('now'), updated_at = datetime('now')
+           WHERE id = 1`
+        );
+      } else if (tank === 'm') {
+        await executeD1(
+          `UPDATE printer_supplies 
+           SET m_pct = 100.0, m_pages_remaining = 7500, last_color_refill = datetime('now'), updated_at = datetime('now')
+           WHERE id = 1`
+        );
+      } else if (tank === 'y') {
+        await executeD1(
+          `UPDATE printer_supplies 
+           SET y_pct = 100.0, y_pages_remaining = 7500, last_color_refill = datetime('now'), updated_at = datetime('now')
+           WHERE id = 1`
+        );
+      }
+    } else if (action === 'calibrate_tanks') {
+      const bkPct = Math.max(0, Math.min(100, Number(body.bkPct ?? current.bk_pct ?? 18)));
+      const cPct = Math.max(0, Math.min(100, Number(body.cPct ?? current.c_pct ?? 55)));
+      const mPct = Math.max(0, Math.min(100, Number(body.mPct ?? current.m_pct ?? 38)));
+      const yPct = Math.max(0, Math.min(100, Number(body.yPct ?? current.y_pct ?? 18)));
+
+      const bkPages = Math.round((bkPct / 100) * 4500);
+      const cPages = Math.round((cPct / 100) * 7500);
+      const mPages = Math.round((mPct / 100) * 7500);
+      const yPages = Math.round((yPct / 100) * 7500);
+      const minColorPages = Math.min(cPages, mPages, yPages);
+
+      await executeD1(
+        `UPDATE printer_supplies 
+         SET bk_pct = ?, c_pct = ?, m_pct = ?, y_pct = ?,
+             bk_pages_remaining = ?, c_pages_remaining = ?, m_pages_remaining = ?, y_pages_remaining = ?,
+             black_pages_remaining = ?, color_pages_remaining = ?,
+             updated_at = datetime('now')
+         WHERE id = 1`,
+        [bkPct, cPct, mPct, yPct, bkPages, cPages, mPages, yPages, bkPages, minColorPages]
+      );
+    } else if (action === 'calibrate_baseline') {
+      const { totalPages, colorPages, bwPages, serial, firmware, firstPrinted } = body;
+      await executeD1(
+        `UPDATE printer_supplies 
+         SET hardware_total_pages = COALESCE(?, hardware_total_pages),
+             hardware_color_pages = COALESCE(?, hardware_color_pages),
+             hardware_bw_pages = COALESCE(?, hardware_bw_pages),
+             hardware_serial = COALESCE(?, hardware_serial),
+             hardware_firmware = COALESCE(?, hardware_firmware),
+             hardware_first_printed = COALESCE(?, hardware_first_printed),
+             hardware_synced_at = datetime('now'),
+             updated_at = datetime('now')
+         WHERE id = 1`,
+        [totalPages || null, colorPages || null, bwPages || null, serial || null, firmware || null, firstPrinted || null]
       );
     } else if (action === 'refill_paper') {
       const topUp = typeof amount === 'number' ? amount : current.paper_capacity;

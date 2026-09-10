@@ -38,6 +38,23 @@ export interface PrinterSuppliesRecord {
   last_color_refill: string | null;
   last_paper_refill: string | null;
   updated_at: string;
+  // Hardware EEPROM & 4-Chamber EcoTank calibration:
+  hardware_total_pages?: number;
+  hardware_color_pages?: number;
+  hardware_bw_pages?: number;
+  hardware_serial?: string;
+  hardware_firmware?: string;
+  hardware_first_printed?: string;
+  hardware_synced_at?: string;
+  printer_model?: string;
+  bk_pct?: number;
+  c_pct?: number;
+  m_pct?: number;
+  y_pct?: number;
+  bk_pages_remaining?: number;
+  c_pages_remaining?: number;
+  m_pages_remaining?: number;
+  y_pages_remaining?: number;
 }
 
 export interface PrinterTelemetryRecord {

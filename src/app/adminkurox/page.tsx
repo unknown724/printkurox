@@ -70,6 +70,37 @@ interface SuppliesData {
   last_color_refill: string | null;
   last_paper_refill: string | null;
   updated_at: string;
+  // 4-Chamber EcoTank & Hardware EEPROM:
+  hardware_total_pages?: number;
+  hardware_color_pages?: number;
+  hardware_bw_pages?: number;
+  hardware_serial?: string;
+  hardware_firmware?: string;
+  hardware_first_printed?: string;
+  hardware_synced_at?: string;
+  printer_model?: string;
+  bk_pct?: number;
+  c_pct?: number;
+  m_pct?: number;
+  y_pct?: number;
+  bk_pages_remaining?: number;
+  c_pages_remaining?: number;
+  m_pages_remaining?: number;
+  y_pages_remaining?: number;
+}
+
+interface LifetimeMachineData {
+  total_pages: number;
+  bw_pages: number;
+  color_pages: number;
+  hardware_baseline_total: number;
+  hardware_baseline_bw: number;
+  hardware_baseline_color: number;
+  serial: string;
+  firmware: string;
+  first_printed: string;
+  synced_at: string;
+  model: string;
 }
 
 interface TelemetryData {
@@ -108,6 +139,7 @@ interface PeriodBreakdown {
 interface AdminStatsResponse {
   supplies: SuppliesData;
   telemetry: TelemetryData;
+  lifetimeMachine?: LifetimeMachineData;
   allTime: MetricSummary;
   period: MetricSummary & { selected: string };
   history: {
@@ -136,7 +168,22 @@ export default function AdminKuroxPage() {
   const [period, setPeriod] = useState<'all' | 'today' | 'week' | 'month' | 'year'>('all');
   const [historyTab, setHistoryTab] = useState<'monthly' | 'daily'>('monthly');
   const [showRefillModal, setShowRefillModal] = useState(false);
+  const [showCalibrateModal, setShowCalibrateModal] = useState(false);
+  const [showInkSlidersModal, setShowInkSlidersModal] = useState(false);
   const [refilling, setRefilling] = useState(false);
+
+  // Hardware Calibration Inputs
+  const [calibTotal, setCalibTotal] = useState<number>(24741);
+  const [calibBw, setCalibBw] = useState<number>(13845);
+  const [calibColor, setCalibColor] = useState<number>(10828);
+  const [calibSerial, setCalibSerial] = useState<string>('X8HY012040');
+  const [calibFirmware, setCalibFirmware] = useState<string>('XH19P5');
+
+  // Physical Ink Level Sliders (Order: BK, Y, M, C)
+  const [sliderBk, setSliderBk] = useState<number>(18);
+  const [sliderY, setSliderY] = useState<number>(18);
+  const [sliderM, setSliderM] = useState<number>(38);
+  const [sliderC, setSliderC] = useState<number>(55);
 
   useEffect(() => {
     getClientDetailedDevice().then((name) => {
@@ -187,6 +234,20 @@ export default function AdminKuroxPage() {
     fetchStats(newPeriod);
   };
 
+  useEffect(() => {
+    if (stats?.supplies) {
+      if (stats.supplies.bk_pct !== undefined) setSliderBk(Number(stats.supplies.bk_pct));
+      if (stats.supplies.y_pct !== undefined) setSliderY(Number(stats.supplies.y_pct));
+      if (stats.supplies.m_pct !== undefined) setSliderM(Number(stats.supplies.m_pct));
+      if (stats.supplies.c_pct !== undefined) setSliderC(Number(stats.supplies.c_pct));
+      if (stats.supplies.hardware_total_pages !== undefined) setCalibTotal(Number(stats.supplies.hardware_total_pages));
+      if (stats.supplies.hardware_bw_pages !== undefined) setCalibBw(Number(stats.supplies.hardware_bw_pages));
+      if (stats.supplies.hardware_color_pages !== undefined) setCalibColor(Number(stats.supplies.hardware_color_pages));
+      if (stats.supplies.hardware_serial) setCalibSerial(stats.supplies.hardware_serial);
+      if (stats.supplies.hardware_firmware) setCalibFirmware(stats.supplies.hardware_firmware);
+    }
+  }, [stats]);
+
   const handleRefillAction = async (action: 'refill_black' | 'refill_color' | 'refill_paper') => {
     try {
       setRefilling(true);
@@ -201,6 +262,75 @@ export default function AdminKuroxPage() {
       }
     } catch (err) {
       console.error('Failed to refill supplies:', err);
+    } finally {
+      setRefilling(false);
+    }
+  };
+
+  const handleRefillTank = async (tank: 'bk' | 'c' | 'm' | 'y') => {
+    try {
+      setRefilling(true);
+      const res = await fetch('/api/admin/supplies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'refill_tank', tank }),
+      });
+      if (res.ok) {
+        await fetchStats(period);
+      }
+    } catch (err) {
+      console.error('Failed to refill tank:', err);
+    } finally {
+      setRefilling(false);
+    }
+  };
+
+  const handleSaveCalibration = async () => {
+    try {
+      setRefilling(true);
+      const res = await fetch('/api/admin/supplies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'calibrate_baseline',
+          totalPages: Number(calibTotal),
+          colorPages: Number(calibColor),
+          bwPages: Number(calibBw),
+          serial: calibSerial,
+          firmware: calibFirmware,
+        }),
+      });
+      if (res.ok) {
+        await fetchStats(period);
+        setShowCalibrateModal(false);
+      }
+    } catch (err) {
+      console.error('Failed to save calibration:', err);
+    } finally {
+      setRefilling(false);
+    }
+  };
+
+  const handleSaveInkSliders = async () => {
+    try {
+      setRefilling(true);
+      const res = await fetch('/api/admin/supplies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'calibrate_tanks',
+          bkPct: Number(sliderBk),
+          cPct: Number(sliderC),
+          mPct: Number(sliderM),
+          yPct: Number(sliderY),
+        }),
+      });
+      if (res.ok) {
+        await fetchStats(period);
+        setShowInkSlidersModal(false);
+      }
+    } catch (err) {
+      console.error('Failed to save ink sliders:', err);
     } finally {
       setRefilling(false);
     }
@@ -407,33 +537,58 @@ export default function AdminKuroxPage() {
       ) : (
         /* Authenticated Admin Dashboard */
         <div className="space-y-6">
-          {/* SECTION 1: INK QUANTITY & PRINTER CAPACITY COMMAND CENTER */}
-          <div className="rounded-2xl p-5 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-4 shadow-2xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-zinc-100 dark:border-[#282a2c] gap-2">
+          {/* SECTION 1: EPSON ECOTANK L3212 HARDWARE & SUPPLIES TELEMETRY */}
+          <div className="rounded-2xl p-5 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-5 shadow-2xs">
+            {/* Header with real hardware identity */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between pb-4 border-b border-zinc-100 dark:border-[#282a2c] gap-3">
               <div>
-                <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Droplet className="w-4 h-4 text-blue-500" />
-                  <span>Printer Supplies & Capacity Telemetry</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                    Live EcoTank Model
+                  <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
+                    Epson EcoTank L3212 Hardware & Supplies
                   </span>
-                </span>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Calculates exact remaining printable page capacity based on Epson 003 bottle yields and real completed jobs.
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                    Serial: {stats?.supplies.hardware_serial || 'X8HY012040'}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
+                    Firmware: {stats?.supplies.hardware_firmware || 'XH19P5'}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    In Service Since: {stats?.supplies.hardware_first_printed || '2022/12/13'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
+                  Calibrated against physical printer front windows and motherboard EEPROM counters.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setShowInkSlidersModal(true)}
+                  className="px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-50 dark:hover:bg-[#131314] text-zinc-700 dark:text-zinc-200 text-[11px] font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Calibrate digital levels with physical transparent windows"
+                >
+                  <Settings className="w-3.5 h-3.5 text-zinc-500" />
+                  <span>Calibrate Ink Levels</span>
+                </button>
+                <button
+                  onClick={() => setShowCalibrateModal(true)}
+                  className="px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-50 dark:hover:bg-[#131314] text-zinc-700 dark:text-zinc-200 text-[11px] font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Update hardware baseline from printed status sheet"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Audit Nozzle Check</span>
+                </button>
                 <button
                   onClick={() => setShowRefillModal(true)}
-                  className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition-all flex items-center gap-1.5 shadow-xs"
+                  className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Refill Supplies</span>
+                  <span>Refill Bottles</span>
                 </button>
                 <button
                   onClick={() => fetchStats(period)}
-                  className="p-1.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-100 dark:hover:bg-[#131314] text-zinc-600 dark:text-zinc-300 transition-colors"
+                  className="p-1.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-100 dark:hover:bg-[#131314] text-zinc-600 dark:text-zinc-300 transition-colors cursor-pointer"
                   title="Refresh Telemetry"
                 >
                   <RotateCcw className={`w-3.5 h-3.5 ${loadingStats ? 'animate-spin' : ''}`} />
@@ -441,122 +596,269 @@ export default function AdminKuroxPage() {
               </div>
             </div>
 
-            {/* Ink & Paper Gauges Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {/* Black & White Ink Gauge */}
-              <div className="p-4 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-3">
+            {/* REAL HARDWARE EEPROM AUDIT BANNER */}
+            <div className="p-4 rounded-xl border border-zinc-200/80 dark:border-[#282a2c] bg-zinc-50/50 dark:bg-[#131314]/50 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 block tracking-wider">Printer Lifetime Total</span>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className="text-xl font-extrabold text-zinc-900 dark:text-white font-mono">
+                      {(stats?.lifetimeMachine?.total_pages ?? (24741 + (stats?.allTime.total_pages || 0))).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] font-semibold text-zinc-500">pages</span>
+                  </div>
+                  <span className="text-[9px] text-zinc-400">Motherboard EEPROM</span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 block tracking-wider">Hardware B&W Total</span>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className="text-xl font-extrabold text-zinc-800 dark:text-zinc-200 font-mono">
+                      {(stats?.lifetimeMachine?.bw_pages ?? (13845 + (stats?.allTime.bw_pages || 0))).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] font-semibold text-zinc-500">pages</span>
+                  </div>
+                  <span className="text-[9px] text-zinc-400">B&W laser engine</span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 block tracking-wider">Hardware Color Total</span>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className="text-xl font-extrabold text-pink-600 dark:text-pink-400 font-mono">
+                      {(stats?.lifetimeMachine?.color_pages ?? (10828 + (stats?.allTime.color_pages || 0))).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] font-semibold text-zinc-500">pages</span>
+                  </div>
+                  <span className="text-[9px] text-zinc-400">Color nozzles</span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 block tracking-wider">Kiosk Online Orders</span>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className="text-xl font-extrabold text-blue-600 dark:text-blue-400 font-mono">
+                      {(stats?.allTime.total_pages || 0).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] font-semibold text-zinc-500">pages</span>
+                  </div>
+                  <span className="text-[9px] text-zinc-400">{stats?.allTime.total_jobs || 0} cloud print orders</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 4-CHAMBER ECOTANK GAUGES GRID (Order matching physical printer: BK, Y, M, C + Paper Tray) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+              {/* TANK 1: BK (Black) */}
+              <div className="p-3.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-2.5 relative overflow-hidden">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-zinc-900 dark:bg-white border border-zinc-700" />
-                    Black Ink Capacity
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-900 dark:text-white flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-zinc-900 dark:bg-zinc-100 border border-zinc-700" />
+                    BK • Black
                   </span>
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      (stats?.supplies.blackPercent || 100) < 15
-                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                      (stats?.supplies.bk_pct ?? 18) <= 20
+                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20'
                         : 'bg-zinc-200/70 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
                     }`}
                   >
-                    {stats?.supplies.blackPercent || 100}% Left
+                    {stats?.supplies.bk_pct ?? 18}% Left
                   </span>
                 </div>
 
                 <div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-extrabold text-zinc-900 dark:text-white font-mono">
-                      {(stats?.supplies.black_pages_remaining ?? 4500).toLocaleString()}
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-extrabold text-zinc-900 dark:text-white font-mono">
+                      {(stats?.supplies.bk_pages_remaining ?? 810).toLocaleString()}
                     </span>
-                    <span className="text-xs font-semibold text-zinc-500">pages remaining</span>
+                    <span className="text-[11px] font-semibold text-zinc-500">pages left</span>
                   </div>
-                  <p className="text-[10px] text-zinc-400 mt-0.5">
-                    Of {(stats?.supplies.black_capacity ?? 4500).toLocaleString()} max pages (Epson 003 Black 65ml)
-                  </p>
+                  <p className="text-[10px] text-zinc-400 mt-0.5">Epson 003 Black 65ml</p>
                 </div>
 
                 {/* Progress bar */}
-                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
+                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2.5 rounded-full overflow-hidden">
                   <div
                     className={`h-full transition-all duration-500 ${
-                      (stats?.supplies.blackPercent || 100) < 15 ? 'bg-rose-500' : 'bg-zinc-900 dark:bg-white'
+                      (stats?.supplies.bk_pct ?? 18) <= 20 ? 'bg-rose-500' : 'bg-zinc-900 dark:bg-zinc-100'
                     }`}
-                    style={{ width: `${stats?.supplies.blackPercent || 100}%` }}
+                    style={{ width: `${stats?.supplies.bk_pct ?? 18}%` }}
                   />
                 </div>
 
                 <div className="flex items-center justify-between pt-1">
-                  <span className="text-[10px] text-zinc-500">
-                    Last Refill: {stats?.supplies.last_black_refill ? new Date(stats.supplies.last_black_refill).toLocaleDateString() : 'Initial'}
-                  </span>
+                  {(stats?.supplies.bk_pct ?? 18) <= 20 ? (
+                    <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> Near Min Line
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-zinc-500">Tank Normal</span>
+                  )}
                   <button
-                    onClick={() => handleRefillAction('refill_black')}
+                    onClick={() => handleRefillTank('bk')}
                     disabled={refilling}
-                    className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                    className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                   >
-                    Reset Bottle
+                    Refill 100%
                   </button>
                 </div>
               </div>
 
-              {/* Full Color Inks Gauge */}
-              <div className="p-4 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-3">
+              {/* TANK 2: Y (Yellow) */}
+              <div className="p-3.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-2.5 relative overflow-hidden">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5">
-                    <span className="flex items-center -space-x-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-                      <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                    </span>
-                    Color Inks Capacity
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-amber-400 border border-amber-500" />
+                    Y • Yellow
                   </span>
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      (stats?.supplies.colorPercent || 100) < 15
-                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-                        : 'bg-pink-500/15 text-pink-600 dark:text-pink-400'
+                      (stats?.supplies.y_pct ?? 18) <= 20
+                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                        : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
                     }`}
                   >
-                    {stats?.supplies.colorPercent || 100}% Left
+                    {stats?.supplies.y_pct ?? 18}% Left
                   </span>
                 </div>
 
                 <div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-extrabold text-pink-600 dark:text-pink-400 font-mono">
-                      {(stats?.supplies.color_pages_remaining ?? 7500).toLocaleString()}
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 font-mono">
+                      {(stats?.supplies.y_pages_remaining ?? 1350).toLocaleString()}
                     </span>
-                    <span className="text-xs font-semibold text-zinc-500">pages remaining</span>
+                    <span className="text-[11px] font-semibold text-zinc-500">pages left</span>
                   </div>
-                  <p className="text-[10px] text-zinc-400 mt-0.5">
-                    Of {(stats?.supplies.color_capacity ?? 7500).toLocaleString()} max pages (Epson 003 C/M/Y Set)
-                  </p>
+                  <p className="text-[10px] text-zinc-400 mt-0.5">Epson 003 Yellow 65ml</p>
                 </div>
 
                 {/* Progress bar */}
-                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
+                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2.5 rounded-full overflow-hidden">
                   <div
-                    className="h-full transition-all duration-500 bg-gradient-to-r from-cyan-400 via-pink-500 to-amber-400"
-                    style={{ width: `${stats?.supplies.colorPercent || 100}%` }}
+                    className={`h-full transition-all duration-500 ${
+                      (stats?.supplies.y_pct ?? 18) <= 20 ? 'bg-rose-500' : 'bg-amber-400'
+                    }`}
+                    style={{ width: `${stats?.supplies.y_pct ?? 18}%` }}
                   />
                 </div>
 
                 <div className="flex items-center justify-between pt-1">
-                  <span className="text-[10px] text-zinc-500">
-                    Last Refill: {stats?.supplies.last_color_refill ? new Date(stats.supplies.last_color_refill).toLocaleDateString() : 'Initial'}
-                  </span>
+                  {(stats?.supplies.y_pct ?? 18) <= 20 ? (
+                    <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> Near Min Line
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-zinc-500">Tank Normal</span>
+                  )}
                   <button
-                    onClick={() => handleRefillAction('refill_color')}
+                    onClick={() => handleRefillTank('y')}
                     disabled={refilling}
-                    className="text-[10px] font-bold text-pink-600 dark:text-pink-400 hover:underline"
+                    className="text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
                   >
-                    Reset Colors
+                    Refill 100%
                   </button>
                 </div>
               </div>
 
-              {/* Paper Inventory Gauge */}
-              <div className="p-4 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-3">
+              {/* TANK 3: M (Magenta) */}
+              <div className="p-3.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-2.5 relative overflow-hidden">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-pink-600 dark:text-pink-400 flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-pink-500 border border-pink-600" />
+                    M • Magenta
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      (stats?.supplies.m_pct ?? 38) <= 20
+                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                        : 'bg-pink-500/15 text-pink-700 dark:text-pink-300'
+                    }`}
+                  >
+                    {stats?.supplies.m_pct ?? 38}% Left
+                  </span>
+                </div>
+
+                <div>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-extrabold text-pink-600 dark:text-pink-400 font-mono">
+                      {(stats?.supplies.m_pages_remaining ?? 2850).toLocaleString()}
+                    </span>
+                    <span className="text-[11px] font-semibold text-zinc-500">pages left</span>
+                  </div>
+                  <p className="text-[10px] text-zinc-400 mt-0.5">Epson 003 Magenta 65ml</p>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2.5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-500 bg-pink-500"
+                    style={{ width: `${stats?.supplies.m_pct ?? 38}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-zinc-500">Tank Normal</span>
+                  <button
+                    onClick={() => handleRefillTank('m')}
+                    disabled={refilling}
+                    className="text-[10px] font-bold text-pink-600 dark:text-pink-400 hover:underline cursor-pointer"
+                  >
+                    Refill 100%
+                  </button>
+                </div>
+              </div>
+
+              {/* TANK 4: C (Cyan) */}
+              <div className="p-3.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-2.5 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-cyan-400 border border-cyan-500" />
+                    C • Cyan
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      (stats?.supplies.c_pct ?? 55) <= 20
+                        ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                        : 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300'
+                    }`}
+                  >
+                    {stats?.supplies.c_pct ?? 55}% Left
+                  </span>
+                </div>
+
+                <div>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-extrabold text-cyan-600 dark:text-cyan-400 font-mono">
+                      {(stats?.supplies.c_pages_remaining ?? 4125).toLocaleString()}
+                    </span>
+                    <span className="text-[11px] font-semibold text-zinc-500">pages left</span>
+                  </div>
+                  <p className="text-[10px] text-zinc-400 mt-0.5">Epson 003 Cyan 65ml</p>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2.5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-500 bg-cyan-400"
+                    style={{ width: `${stats?.supplies.c_pct ?? 55}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-zinc-500">Tank Normal</span>
+                  <button
+                    onClick={() => handleRefillTank('c')}
+                    disabled={refilling}
+                    className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 hover:underline cursor-pointer"
+                  >
+                    Refill 100%
+                  </button>
+                </div>
+              </div>
+
+              {/* TANK 5: Paper Tray */}
+              <div className="p-3.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-zinc-50/70 dark:bg-[#131314]/70 space-y-2.5 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
                     <Layers className="w-3.5 h-3.5 text-emerald-500" />
                     Paper Ream / Tray
                   </span>
@@ -572,19 +874,17 @@ export default function AdminKuroxPage() {
                 </div>
 
                 <div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">
                       {(stats?.supplies.paper_sheets_remaining ?? 500).toLocaleString()}
                     </span>
-                    <span className="text-xs font-semibold text-zinc-500">sheets in tray</span>
+                    <span className="text-[11px] font-semibold text-zinc-500">sheets in tray</span>
                   </div>
-                  <p className="text-[10px] text-zinc-400 mt-0.5">
-                    Of {(stats?.supplies.paper_capacity ?? 500).toLocaleString()} sheets (75 GSM Standard A4)
-                  </p>
+                  <p className="text-[10px] text-zinc-400 mt-0.5">Standard A4 (75 GSM)</p>
                 </div>
 
                 {/* Progress bar */}
-                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
+                <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-2.5 rounded-full overflow-hidden">
                   <div
                     className={`h-full transition-all duration-500 ${
                       (stats?.supplies.paperPercent || 100) < 15 ? 'bg-rose-500' : 'bg-emerald-500'
@@ -595,12 +895,12 @@ export default function AdminKuroxPage() {
 
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[10px] text-zinc-500">
-                    Last Load: {stats?.supplies.last_paper_refill ? new Date(stats.supplies.last_paper_refill).toLocaleDateString() : 'Initial'}
+                    Tray: {stats?.supplies.last_paper_refill ? new Date(stats.supplies.last_paper_refill).toLocaleDateString() : 'Active'}
                   </span>
                   <button
                     onClick={() => handleRefillAction('refill_paper')}
                     disabled={refilling}
-                    className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
+                    className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
                   >
                     +500 Ream
                   </button>
@@ -1047,9 +1347,227 @@ export default function AdminKuroxPage() {
             <div className="pt-2 flex justify-end">
               <button
                 onClick={() => setShowRefillModal(false)}
-                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all"
+                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CALIBRATE PHYSICAL INK SLIDERS MODAL */}
+      {showInkSlidersModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-[#282a2c] rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-[#282a2c]">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-blue-500" />
+                <h3 className="font-bold text-sm text-zinc-900 dark:text-white">Calibrate Physical EcoTank Ink Levels</h3>
+              </div>
+              <button
+                onClick={() => setShowInkSlidersModal(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+              Epson EcoTank printers do not have electronic liquid sensors. Look at the transparent windows on the front of your printer and align the sliders with the physical ink line:
+            </p>
+
+            <div className="space-y-4 pt-1">
+              {/* BK Slider */}
+              <div className="space-y-1.5 p-3 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200/80 dark:border-[#282a2c]">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-zinc-900 dark:bg-white" />
+                    BK • Black Tank
+                  </span>
+                  <span className="font-mono font-bold text-zinc-900 dark:text-white">
+                    {sliderBk}% ({Math.round((sliderBk / 100) * 4500).toLocaleString()} pgs)
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={sliderBk}
+                  onChange={(e) => setSliderBk(Number(e.target.value))}
+                  className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-900 dark:accent-white"
+                />
+              </div>
+
+              {/* Y Slider */}
+              <div className="space-y-1.5 p-3 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200/80 dark:border-[#282a2c]">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                    Y • Yellow Tank
+                  </span>
+                  <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                    {sliderY}% ({Math.round((sliderY / 100) * 7500).toLocaleString()} pgs)
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={sliderY}
+                  onChange={(e) => setSliderY(Number(e.target.value))}
+                  className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+              </div>
+
+              {/* M Slider */}
+              <div className="space-y-1.5 p-3 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200/80 dark:border-[#282a2c]">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-pink-600 dark:text-pink-400 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+                    M • Magenta Tank
+                  </span>
+                  <span className="font-mono font-bold text-pink-600 dark:text-pink-400">
+                    {sliderM}% ({Math.round((sliderM / 100) * 7500).toLocaleString()} pgs)
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={sliderM}
+                  onChange={(e) => setSliderM(Number(e.target.value))}
+                  className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                />
+              </div>
+
+              {/* C Slider */}
+              <div className="space-y-1.5 p-3 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200/80 dark:border-[#282a2c]">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-cyan-600 dark:text-cyan-400 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
+                    C • Cyan Tank
+                  </span>
+                  <span className="font-mono font-bold text-cyan-600 dark:text-cyan-400">
+                    {sliderC}% ({Math.round((sliderC / 100) * 7500).toLocaleString()} pgs)
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={sliderC}
+                  onChange={(e) => setSliderC(Number(e.target.value))}
+                  className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                onClick={() => setShowInkSlidersModal(false)}
+                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveInkSliders}
+                disabled={refilling}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                {refilling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Save Tank Levels</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CALIBRATE NOZZLE CHECK HARDWARE BASELINE MODAL */}
+      {showCalibrateModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-[#282a2c] rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-[#282a2c]">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-500" />
+                <h3 className="font-bold text-sm text-zinc-900 dark:text-white">Audit Nozzle Check Hardware Baseline</h3>
+              </div>
+              <button
+                onClick={() => setShowCalibrateModal(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+              Whenever you print a Nozzle Check sheet from the printer hardware (hold Stop + Power button for 5 seconds), update the exact EEPROM lifetime values below:
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                  Total Pages (Hardware)
+                </label>
+                <input
+                  type="number"
+                  value={calibTotal}
+                  onChange={(e) => setCalibTotal(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                  B&W Pages (Hardware)
+                </label>
+                <input
+                  type="number"
+                  value={calibBw}
+                  onChange={(e) => setCalibBw(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                  Color Pages (Hardware)
+                </label>
+                <input
+                  type="number"
+                  value={calibColor}
+                  onChange={(e) => setCalibColor(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                  Printer Serial Number
+                </label>
+                <input
+                  type="text"
+                  value={calibSerial}
+                  onChange={(e) => setCalibSerial(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                onClick={() => setShowCalibrateModal(false)}
+                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveCalibration}
+                disabled={refilling}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                {refilling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Save Hardware Baseline</span>
               </button>
             </div>
           </div>

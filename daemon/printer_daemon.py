@@ -475,19 +475,28 @@ def record_supplies_depletion(job):
             sql = """
                 UPDATE printer_supplies 
                 SET color_pages_remaining = MAX(0, color_pages_remaining - ?),
+                    c_pages_remaining = MAX(0, COALESCE(c_pages_remaining, color_pages_remaining) - ?),
+                    m_pages_remaining = MAX(0, COALESCE(m_pages_remaining, color_pages_remaining) - ?),
+                    y_pages_remaining = MAX(0, COALESCE(y_pages_remaining, color_pages_remaining) - ?),
+                    c_pct = ROUND(MAX(0.0, (COALESCE(c_pages_remaining, color_pages_remaining) - ?) * 100.0 / 7500.0), 1),
+                    m_pct = ROUND(MAX(0.0, (COALESCE(m_pages_remaining, color_pages_remaining) - ?) * 100.0 / 7500.0), 1),
+                    y_pct = ROUND(MAX(0.0, (COALESCE(y_pages_remaining, color_pages_remaining) - ?) * 100.0 / 7500.0), 1),
                     paper_sheets_remaining = MAX(0, paper_sheets_remaining - ?),
                     updated_at = datetime('now')
                 WHERE id = 1
             """
+            query_d1(sql, [pages, pages, pages, pages, pages, pages, pages, total_sheets])
         else:
             sql = """
                 UPDATE printer_supplies 
                 SET black_pages_remaining = MAX(0, black_pages_remaining - ?),
+                    bk_pages_remaining = MAX(0, COALESCE(bk_pages_remaining, black_pages_remaining) - ?),
+                    bk_pct = ROUND(MAX(0.0, (COALESCE(bk_pages_remaining, black_pages_remaining) - ?) * 100.0 / 4500.0), 1),
                     paper_sheets_remaining = MAX(0, paper_sheets_remaining - ?),
                     updated_at = datetime('now')
                 WHERE id = 1
             """
-        query_d1(sql, [pages, total_sheets])
+            query_d1(sql, [pages, pages, pages, total_sheets])
         log(f"Supplies updated: -{pages} {color_mode.upper()} pages, -{total_sheets} paper sheets", "INFO")
     except Exception as e:
         log(f"Supplies depletion update warning: {e}", "WARN")

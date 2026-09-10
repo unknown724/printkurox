@@ -215,6 +215,25 @@ export async function GET(req: NextRequest) {
     `;
     const hourlyRows = await queryD1<HourlyBreakdownRow>(hourlySql);
 
+    // Hardware Lifetime Totals (EEPROM baseline + online kiosk jobs)
+    const hwBaselineTotal = Number(supplies.hardware_total_pages ?? 24741);
+    const hwBaselineBw = Number(supplies.hardware_bw_pages ?? 13845);
+    const hwBaselineColor = Number(supplies.hardware_color_pages ?? 10828);
+
+    const lifetimeMachine = {
+      total_pages: hwBaselineTotal + Number(allTime.total_pages),
+      bw_pages: hwBaselineBw + Number(allTime.bw_pages),
+      color_pages: hwBaselineColor + Number(allTime.color_pages),
+      hardware_baseline_total: hwBaselineTotal,
+      hardware_baseline_bw: hwBaselineBw,
+      hardware_baseline_color: hwBaselineColor,
+      serial: supplies.hardware_serial || 'X8HY012040',
+      firmware: supplies.hardware_firmware || 'XH19P5',
+      first_printed: supplies.hardware_first_printed || '2022/12/13',
+      synced_at: supplies.hardware_synced_at || new Date().toISOString(),
+      model: supplies.printer_model || 'Epson EcoTank L3212',
+    };
+
     return NextResponse.json({
       success: true,
       supplies: {
@@ -224,6 +243,7 @@ export async function GET(req: NextRequest) {
         paperPercent,
       },
       telemetry,
+      lifetimeMachine,
       allTime: {
         ...allTime,
         ...allTimeFinance,
