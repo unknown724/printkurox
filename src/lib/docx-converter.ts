@@ -40,7 +40,7 @@ export async function getDocxMetadata(buffer: Buffer): Promise<{ pageCount: numb
  * Converts a DOCX buffer into a standard printable A4 PDF document
  */
 export async function convertDocxToPdf(buffer: Buffer): Promise<DocxConversionResult> {
-  const metadata = await getDocxMetadata(buffer);
+  const _metadata = await getDocxMetadata(buffer);
   const rawTextResult = await mammoth.extractRawText({ buffer });
   const rawText = rawTextResult.value || '';
 
@@ -55,7 +55,6 @@ export async function convertDocxToPdf(buffer: Buffer): Promise<DocxConversionRe
   const MARGIN_TOP = 50;
   const MARGIN_BOTTOM = 50;
   const USABLE_WIDTH = PAGE_WIDTH - MARGIN_X * 2;
-  const USABLE_HEIGHT = PAGE_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM;
 
   const FONT_SIZE = 11;
   const LINE_HEIGHT = 16;

@@ -26,23 +26,30 @@ export async function POST(req: NextRequest) {
       copies = 1,
       orientation = 'portrait',
       pageConfigs,
+      layoutMode,
+      customCols,
+      customRows,
+      textOverlay,
     } = body;
 
     let amountInPaise = 0;
-    let currency = directCurrency || 'INR';
+    const currency = directCurrency || 'INR';
     let receipt = directReceipt;
     let orderNotes = directNotes || {};
 
     let jobId: string | undefined;
     let pickupCode: string | undefined;
     let pricing: ReturnType<typeof calculatePricing> | undefined;
+    let effectivePageRange = pageRange;
 
     // Check if this is a direct amount request or a print kiosk order
     if (directAmount !== undefined && directAmount !== null) {
       amountInPaise = Math.round(Number(directAmount));
-      if (!receipt) {
-        receipt = `rcpt_direct_${Date.now()}`;
-      }
+      receipt = directReceipt || `rcpt_direct_${Date.now().toString().slice(-8)}`;
+      orderNotes = {
+        ...orderNotes,
+        type: 'direct_payment',
+      };
     } else {
       // Print Kiosk Order validation
       if (!fileKey || !fileName || !docPages) {
@@ -54,7 +61,6 @@ export async function POST(req: NextRequest) {
 
       // 1. Calculate actual billable pages from page range or pageConfigs
       let activePagesCount = docPages;
-      let effectivePageRange = pageRange;
 
       if (pageConfigs && Array.isArray(pageConfigs) && pageConfigs.length > 0) {
         const included = pageConfigs.filter((p: { included: boolean }) => p.included);
@@ -83,6 +89,9 @@ export async function POST(req: NextRequest) {
         isDuplex: Boolean(isDuplex),
         copies: Math.max(1, Math.floor(copies)),
         pageConfigs: pageConfigs && Array.isArray(pageConfigs) && pageConfigs.length > 0 ? pageConfigs : undefined,
+        layoutMode,
+        customCols,
+        customRows,
       });
 
       amountInPaise = Math.round(pricing.totalPrice * 100);
@@ -107,6 +116,7 @@ export async function POST(req: NextRequest) {
         copies: String(copies),
         pages: String(activePagesCount),
         is_duplex: String(isDuplex),
+        ...(textOverlay?.enabled && textOverlay.text ? { text_overlay: textOverlay.text } : {}),
       };
     }
 
@@ -173,7 +183,7 @@ export async function POST(req: NextRequest) {
           fileKey,
           fileName,
           pricing.totalPages,
-          pageRange,
+          effectivePageRange,
           pricing.colorPagesCount > 0 ? 'color' : 'bw',
           pricing.isDuplex ? 1 : 0,
           pricing.copies,

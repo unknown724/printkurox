@@ -1,7 +1,7 @@
 'use client';
 
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
-import { Wifi, WifiOff } from 'lucide-react';
+import { WifiOff } from 'lucide-react';
 
 export function PrinterStatusPill() {
   const { online, loading, ageSeconds } = usePrinterStatus(30_000);

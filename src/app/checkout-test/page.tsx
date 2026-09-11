@@ -30,8 +30,8 @@ export default function CheckoutTestPage() {
   const [currency] = useState<string>('INR');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusLog, setStatusLog] = useState<string[]>([]);
-  const [createdOrder, setCreatedOrder] = useState<{ order_id: string; amount: number; currency: string } | null>(null);
-  const [paymentSuccessData, setPaymentSuccessData] = useState<RazorpayResponse | null>(null);
+  const [_createdOrder, setCreatedOrder] = useState<{ order_id: string; amount: number; currency: string } | null>(null);
+  const [_paymentSuccessData, setPaymentSuccessData] = useState<RazorpayResponse | null>(null);
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Crown, ShieldCheck } from 'lucide-react';
+import { Crown } from 'lucide-react';
 
 export function AdminBadge() {
   const [isAdmin, setIsAdmin] = useState(false);

@@ -27,6 +27,9 @@ export async function POST(req: NextRequest) {
       copies = 1,
       orientation = 'portrait',
       pageConfigs,
+      layoutMode,
+      customCols,
+      customRows,
       pin,
     } = body;
 
@@ -89,6 +92,9 @@ export async function POST(req: NextRequest) {
       isDuplex: Boolean(isDuplex),
       copies: Math.max(1, Math.floor(copies)),
       pageConfigs: pageConfigs && Array.isArray(pageConfigs) && pageConfigs.length > 0 ? pageConfigs : undefined,
+      layoutMode,
+      customCols,
+      customRows,
     });
 
     // Generate unique pickup code

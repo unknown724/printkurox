@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import {
   ShieldCheck,
   Lock,
-  Printer,
   RotateCcw,
   ArrowLeft,
   KeyRound,
@@ -18,14 +17,12 @@ import {
   PlusCircle,
   Eye,
   EyeOff,
-  CheckCircle2,
   IndianRupee,
   Droplet,
   Layers,
   Calendar,
   Download,
   TrendingUp,
-  AlertCircle,
   Plus,
   Settings,
   Sparkles,
@@ -184,17 +181,52 @@ export default function AdminKuroxPage() {
   const [sliderY, setSliderY] = useState<number>(18);
   const [sliderM, setSliderM] = useState<number>(38);
   const [sliderC, setSliderC] = useState<number>(55);
+  const [prevSupplies, setPrevSupplies] = useState(stats?.supplies);
 
-  useEffect(() => {
-    getClientDetailedDevice().then((name) => {
-      setCustomDeviceName(name);
-    });
-    checkAuthAndLoad();
+  // Sync supplies to sliders without cascading renders
+  if (stats?.supplies && stats.supplies !== prevSupplies) {
+    setPrevSupplies(stats.supplies);
+    if (stats.supplies.bk_pct !== undefined) setSliderBk(Number(stats.supplies.bk_pct));
+    if (stats.supplies.y_pct !== undefined) setSliderY(Number(stats.supplies.y_pct));
+    if (stats.supplies.m_pct !== undefined) setSliderM(Number(stats.supplies.m_pct));
+    if (stats.supplies.c_pct !== undefined) setSliderC(Number(stats.supplies.c_pct));
+    if (stats.supplies.hardware_total_pages !== undefined) setCalibTotal(Number(stats.supplies.hardware_total_pages));
+    if (stats.supplies.hardware_bw_pages !== undefined) setCalibBw(Number(stats.supplies.hardware_bw_pages));
+    if (stats.supplies.hardware_color_pages !== undefined) setCalibColor(Number(stats.supplies.hardware_color_pages));
+    if (stats.supplies.hardware_serial) setCalibSerial(stats.supplies.hardware_serial);
+    if (stats.supplies.hardware_firmware) setCalibFirmware(stats.supplies.hardware_firmware);
+  }
+
+  const fetchRecentJobs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/jobs');
+      if (res.ok) {
+        const data = await res.json();
+        setJobs(data.jobs || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingJobs(false);
+    }
   }, []);
 
-  const checkAuthAndLoad = async () => {
+  const fetchStats = useCallback(async (selectedPeriod = period) => {
     try {
-      setLoading(true);
+      const res = await fetch(`/api/admin/stats?period=${selectedPeriod}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch admin stats:', err);
+    } finally {
+      setLoadingStats(false);
+    }
+  }, [period]);
+
+  const checkAuthAndLoad = useCallback(async () => {
+    try {
       const res = await fetch('/api/admin/auth?action=devices');
       if (res.ok) {
         const data = await res.json();
@@ -212,41 +244,48 @@ export default function AdminKuroxPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchRecentJobs, fetchStats]);
 
-  const fetchStats = async (selectedPeriod = period) => {
-    try {
-      setLoadingStats(true);
-      const res = await fetch(`/api/admin/stats?period=${selectedPeriod}`);
-      if (res.ok) {
-        const data = await res.json();
-        setStats(data);
+  useEffect(() => {
+    let active = true;
+    getClientDetailedDevice().then((name) => {
+      if (active) setCustomDeviceName(name);
+    });
+
+    const init = async () => {
+      try {
+        const res = await fetch('/api/admin/auth?action=devices');
+        if (!active) return;
+        if (res.ok) {
+          const data = await res.json();
+          setIsAdmin(true);
+          setDevices(data.devices || []);
+          if (data.maxDevices) setMaxDevices(data.maxDevices);
+          setCurrentDeviceId(data.currentDeviceId || null);
+          fetchRecentJobs();
+          fetchStats('all');
+        } else {
+          setIsAdmin(false);
+        }
+      } catch {
+        if (active) setIsAdmin(false);
+      } finally {
+        if (active) setLoading(false);
       }
-    } catch (err) {
-      console.error('Failed to fetch admin stats:', err);
-    } finally {
-      setLoadingStats(false);
-    }
-  };
+    };
+
+    void init();
+
+    return () => {
+      active = false;
+    };
+  }, [fetchRecentJobs, fetchStats]);
 
   const handlePeriodChange = (newPeriod: 'all' | 'today' | 'week' | 'month' | 'year') => {
     setPeriod(newPeriod);
+    setLoadingStats(true);
     fetchStats(newPeriod);
   };
-
-  useEffect(() => {
-    if (stats?.supplies) {
-      if (stats.supplies.bk_pct !== undefined) setSliderBk(Number(stats.supplies.bk_pct));
-      if (stats.supplies.y_pct !== undefined) setSliderY(Number(stats.supplies.y_pct));
-      if (stats.supplies.m_pct !== undefined) setSliderM(Number(stats.supplies.m_pct));
-      if (stats.supplies.c_pct !== undefined) setSliderC(Number(stats.supplies.c_pct));
-      if (stats.supplies.hardware_total_pages !== undefined) setCalibTotal(Number(stats.supplies.hardware_total_pages));
-      if (stats.supplies.hardware_bw_pages !== undefined) setCalibBw(Number(stats.supplies.hardware_bw_pages));
-      if (stats.supplies.hardware_color_pages !== undefined) setCalibColor(Number(stats.supplies.hardware_color_pages));
-      if (stats.supplies.hardware_serial) setCalibSerial(stats.supplies.hardware_serial);
-      if (stats.supplies.hardware_firmware) setCalibFirmware(stats.supplies.hardware_firmware);
-    }
-  }, [stats]);
 
   const handleRefillAction = async (action: 'refill_black' | 'refill_color' | 'refill_paper') => {
     try {
@@ -408,21 +447,6 @@ export default function AdminKuroxPage() {
       }
     } catch (err) {
       console.error(err);
-    }
-  };
-
-  const fetchRecentJobs = async () => {
-    try {
-      setLoadingJobs(true);
-      const res = await fetch('/api/admin/jobs');
-      if (res.ok) {
-        const data = await res.json();
-        setJobs(data.jobs || []);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingJobs(false);
     }
   };
 

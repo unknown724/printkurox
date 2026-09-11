@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Check, X, AlertCircle, ListFilter } from 'lucide-react';
-import { parsePageRange, pagesToRangeString, validatePageRangeInput } from '@/lib/pdf-utils';
+import { pagesToRangeString, validatePageRangeInput } from '@/lib/pdf-utils';
 import { PageConfig } from '@/lib/pricing';
 
 interface PageRangeSelectorProps {

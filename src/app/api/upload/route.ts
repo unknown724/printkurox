@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { uploadToR2, getDownloadUrl } from '@/lib/cloudflare-r2';
-import { getPdfPageCount, mergeFilesToPdf } from '@/lib/pdf-utils';
+import { getPdfPageCount, mergeFilesToPdf, PrintLayoutOptions } from '@/lib/pdf-utils';
 import crypto from 'crypto';
 
 export const runtime = 'nodejs';
@@ -73,18 +73,36 @@ export async function POST(req: NextRequest) {
     const fileItems = processedFiles.map((p) => p.item);
     const filesToMerge = processedFiles.map((p) => p.toMerge);
 
+    const layoutMode = (formData.get('layoutMode') as PrintLayoutOptions['layoutMode']) || '1-up';
+    const customCols = parseInt(formData.get('customCols') as string, 10) || 2;
+    const customRows = parseInt(formData.get('customRows') as string, 10) || 2;
+    const fitMode = (formData.get('fitMode') as PrintLayoutOptions['fitMode']) || 'fill';
+    const drawBorder = formData.get('drawBorder') === 'true';
+    const orientation = (formData.get('orientation') as PrintLayoutOptions['orientation']) || 'auto';
+    const autoRotate = formData.get('autoRotate') !== 'false';
+    const pageOrder = (formData.get('pageOrder') as PrintLayoutOptions['pageOrder']) || 'horizontal';
+
     let finalBuffer: Buffer;
     let finalTotalPages = 0;
     const primaryName = fileList.length === 1 
       ? fileList[0].name 
       : `${fileList[0].name.split('.')[0]} + ${fileList.length - 1} more`;
 
-    if (fileList.length === 1 && fileList[0].name.toLowerCase().endsWith('.pdf')) {
+    if (fileList.length === 1 && fileList[0].name.toLowerCase().endsWith('.pdf') && layoutMode === '1-up') {
       finalBuffer = filesToMerge[0].buffer;
       finalTotalPages = fileItems[0].pages;
     } else {
-      // Merge all documents/images into a single unified A4 PDF
-      const mergeResult = await mergeFilesToPdf(filesToMerge);
+      // Merge all documents/images into a single unified A4 PDF with layout options
+      const mergeResult = await mergeFilesToPdf(filesToMerge, {
+        layoutMode,
+        customCols,
+        customRows,
+        fitMode,
+        drawBorder,
+        orientation,
+        autoRotate,
+        pageOrder,
+      });
       finalBuffer = mergeResult.mergedBuffer;
       finalTotalPages = mergeResult.totalPages;
       if (fileItems.length === 1) {

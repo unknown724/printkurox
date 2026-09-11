@@ -55,7 +55,7 @@ export default function JobStatusPage({
 
   // Poll status every 2 seconds
   useEffect(() => {
-    let intervalId: NodeJS.Timeout;
+    let active = true;
 
     const fetchStatus = async () => {
       try {
@@ -64,11 +64,12 @@ export default function JobStatusPage({
           throw new Error('Failed to load job status');
         }
         const data: JobStatusData = await res.json();
+        if (!active) return;
         setJob(data);
 
         // Stop polling when job reaches terminal state
         if (data.status === 'COMPLETED' || data.status === 'FAILED') {
-          if (intervalId) clearInterval(intervalId);
+          clearInterval(intervalId);
         }
 
         // Trigger celebratory confetti once on completion or initial paid
@@ -83,17 +84,18 @@ export default function JobStatusPage({
         }
       } catch (err: unknown) {
         console.error(err);
-        setError('Could not connect to printer queue.');
+        if (active) setError('Could not connect to printer queue.');
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     fetchStatus();
-    intervalId = setInterval(fetchStatus, 2000);
+    const intervalId = setInterval(fetchStatus, 2000);
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      active = false;
+      clearInterval(intervalId);
     };
   }, [jobId]);
 
@@ -215,10 +217,12 @@ export default function JobStatusPage({
   };
 
   const statusInfo = getStatusBadge();
-  const formattedDate = new Date(job.createdAt || Date.now()).toLocaleString('en-IN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  const formattedDate = job.createdAt
+    ? new Date(job.createdAt).toLocaleString('en-IN', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      })
+    : 'Recent';
 
   return (
     <div className="w-full max-w-xl mx-auto px-3.5 sm:px-4 py-4 sm:py-6 space-y-4 print:p-0 print:space-y-3">

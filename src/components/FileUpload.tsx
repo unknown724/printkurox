@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, ChangeEvent, DragEvent } from 'react';
+import React, { useState, useRef, ChangeEvent, DragEvent } from 'react';
 import {
   UploadCloud,
   FileText,
@@ -227,16 +227,16 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Local list of staged raw Files
-  const [rawFiles, setRawFiles] = useState<File[]>([]);
+  const [rawFiles, setRawFiles] = useState<File[]>(uploadedBatch?.rawFiles || []);
+  const [prevBatch, setPrevBatch] = useState(uploadedBatch);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isAddingMoreRef = useRef(false);
 
-  // Synchronize local rawFiles when uploadedBatch is cleared or reset
-  useEffect(() => {
-    if (!uploadedBatch) {
-      setRawFiles([]);
-    }
-  }, [uploadedBatch]);
+  // Synchronize local rawFiles when uploadedBatch is cleared or updated
+  if (prevBatch !== uploadedBatch) {
+    setPrevBatch(uploadedBatch);
+    setRawFiles(uploadedBatch?.rawFiles || []);
+  }
 
   const processAndUploadFiles = async (newFileList: File[]) => {
     setErrorMessage(null);
@@ -408,15 +408,17 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
     }
   };
 
-  const handleFilesAdded = (incomingFiles: FileList | File[], isAddMore = false) => {
+  const handleFilesAdded = (incomingFiles: FileList | File[], _isAddMore = false) => {
     const arr = Array.from(incomingFiles);
     if (arr.length === 0) return;
 
-    // Only merge with previous files if user explicitly requested 'Add More Files'
-    const base = (isAddMore && uploadedBatch) ? rawFiles : [];
-    const merged = [...base];
+    // Preserve existing uploaded files whenever a batch is already active
+    const existing = (uploadedBatch && rawFiles.length > 0)
+      ? rawFiles
+      : (uploadedBatch?.rawFiles || []);
+    const merged = [...existing];
     for (const f of arr) {
-      if (!merged.some((existing) => existing.name === f.name && existing.size === f.size)) {
+      if (!merged.some((existingFile) => existingFile.name === f.name && existingFile.size === f.size)) {
         merged.push(f);
       }
     }
@@ -507,7 +509,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
                       {isImg ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[200px] sm:max-w-[260px]">
+                      <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[220px] sm:max-w-[380px] md:max-w-[520px] lg:max-w-[700px]" title={item.name}>
                         {item.name}
                       </p>
                       <p className="text-[10px] text-zinc-500">

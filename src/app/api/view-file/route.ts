@@ -19,13 +19,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
-    const byteArray = await (fileBody as any).transformToByteArray();
+    const byteArray = await (fileBody as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
     const headers = new Headers();
     headers.set('Content-Type', 'application/pdf');
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cache-Control', 'public, max-age=900');
 
-    return new Response(byteArray, { headers });
+    return new Response(Buffer.from(byteArray), { headers });
   } catch (err) {
     console.error('View file error:', err);
     return NextResponse.json({ error: 'Failed to retrieve file stream' }, { status: 500 });

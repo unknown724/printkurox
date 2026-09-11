@@ -167,8 +167,8 @@ def locate_sumatra():
 
 from PIL import Image, ImageOps
 
-def ensure_printable_pdf(file_path, orientation=None):
-    """If file is an image (jpg, png, etc.), convert it to A4 PDF for SumatraPDF respecting orientation."""
+def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
+    """If file is an image (jpg, png, etc.), convert it to A4 PDF for SumatraPDF respecting orientation and fit mode."""
     try:
         with open(file_path, 'rb') as f:
             header = f.read(5)
@@ -206,21 +206,34 @@ def ensure_printable_pdf(file_path, orientation=None):
             a4_width, a4_height = (3508, 2480) if is_landscape else (2480, 3508)
             canvas = Image.new("RGB", (a4_width, a4_height), (255, 255, 255))
 
-            # Scale to fit with standard printer margin
-            margin_w = int(a4_width * 0.04)
-            margin_h = int(a4_height * 0.04)
+            # Standard printer safe margin (2.5% margin)
+            margin_w = int(a4_width * 0.025)
+            margin_h = int(a4_height * 0.025)
             max_w = a4_width - (margin_w * 2)
             max_h = a4_height - (margin_h * 2)
 
-            img_copy = image.copy()
-            img_copy.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-
-            offset_x = (a4_width - img_copy.width) // 2
-            offset_y = (a4_height - img_copy.height) // 2
-            canvas.paste(img_copy, (offset_x, offset_y))
+            if fit_mode == 'fill':
+                # Windows "Fit picture to frame": scale to fill the full printable area without small box effect
+                w_ratio = max_w / image.width
+                h_ratio = max_h / image.height
+                scale = max(w_ratio, h_ratio)
+                new_w = int(image.width * scale)
+                new_h = int(image.height * scale)
+                img_resized = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                # Crop center to match printable rectangle
+                crop_x = (new_w - max_w) // 2
+                crop_y = (new_h - max_h) // 2
+                img_cropped = img_resized.crop((crop_x, crop_y, crop_x + max_w, crop_y + max_h))
+                canvas.paste(img_cropped, (margin_w, margin_h))
+            else:
+                img_copy = image.copy()
+                img_copy.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+                offset_x = (a4_width - img_copy.width) // 2
+                offset_y = (a4_height - img_copy.height) // 2
+                canvas.paste(img_copy, (offset_x, offset_y))
 
             canvas.save(pdf_path, "PDF", resolution=300.0)
-            log(f"Converted {os.path.basename(file_path)} to professional A4 {'Landscape' if is_landscape else 'Portrait'} PDF", "INFO")
+            log(f"Converted {os.path.basename(file_path)} to professional A4 {'Landscape' if is_landscape else 'Portrait'} PDF (Fit: {fit_mode})", "INFO")
             return pdf_path
         except Exception as e:
             log(f"Image to PDF conversion warning: {e}", "WARN")
@@ -307,10 +320,10 @@ def process_single_sided_job(job, local_file_path):
         update_job_status(job["id"], "FAILED")
 
 def parse_page_range_list(range_str, total_pages):
-    """Parses range string like '1-3, 5' into sorted list of page numbers."""
+    """Parses range string like '1-3, 5' or '1,1,2' into ordered list of page numbers, preserving copies."""
     if not range_str or range_str.lower() == 'all':
         return list(range(1, total_pages + 1))
-    pages = set()
+    pages = []
     for part in range_str.split(','):
         part = part.strip()
         if '-' in part:
@@ -318,17 +331,17 @@ def parse_page_range_list(range_str, total_pages):
                 s, e = part.split('-')
                 start = max(1, min(int(s.strip()), int(e.strip())))
                 end = min(total_pages, max(int(s.strip()), int(e.strip())))
-                pages.update(range(start, end + 1))
+                pages.extend(range(start, end + 1))
             except Exception:
                 pass
         else:
             try:
                 p = int(part)
                 if 1 <= p <= total_pages:
-                    pages.add(p)
+                    pages.append(p)
             except Exception:
                 pass
-    return sorted(list(pages)) if pages else list(range(1, total_pages + 1))
+    return pages if pages else list(range(1, total_pages + 1))
 
 def process_manual_duplex_job(job, local_file_path):
     """

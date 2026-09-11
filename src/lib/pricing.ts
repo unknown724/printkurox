@@ -22,6 +22,7 @@ export interface PageConfig {
   orientation?: 'portrait' | 'landscape';
   rotation?: number; // 0, 90, 180, 270
   copies?: number; // Specific copies for this page (min 1, default 1)
+  customScale?: number; // Per-page custom scale percentage (e.g. 100 = 100%)
 }
 
 export interface PricingInput {
@@ -30,6 +31,9 @@ export interface PricingInput {
   isDuplex: boolean;
   copies: number;
   pageConfigs?: PageConfig[];
+  layoutMode?: '1-up' | '2-up' | 'id-card' | '4-up' | '6-up' | '8-up' | '9-up' | '16-up' | 'custom' | 'booklet' | 'poster';
+  customCols?: number;
+  customRows?: number;
 }
 
 export interface PricingResult {
@@ -98,8 +102,26 @@ function getActiveTier(sheetCount: number) {
 }
 
 export function calculatePricing(input: PricingInput): PricingResult {
-  const { totalPages, colorMode, isDuplex, copies = 1, pageConfigs } = input;
+  const { totalPages, colorMode, isDuplex, copies = 1, pageConfigs, layoutMode = '1-up' } = input;
   const safeCopies = Math.max(1, Math.floor(copies));
+
+  // Determine page division factor based on layout mode
+  const pagesPerSide =
+    layoutMode === 'custom' && input.customCols && input.customRows
+      ? Math.max(1, input.customCols * input.customRows)
+      : layoutMode === '2-up' || layoutMode === 'id-card' || layoutMode === 'booklet'
+      ? 2
+      : layoutMode === '4-up'
+      ? 4
+      : layoutMode === '6-up'
+      ? 6
+      : layoutMode === '8-up'
+      ? 8
+      : layoutMode === '9-up'
+      ? 9
+      : layoutMode === '16-up'
+      ? 16
+      : 1;
 
   // If pageConfigs are provided, calculate per-page hybrid pricing
   if (pageConfigs && pageConfigs.length > 0) {
@@ -143,46 +165,73 @@ export function calculatePricing(input: PricingInput): PricingResult {
     });
 
     const totalExpandedCount = expandedPages.length;
+    const isPoster = layoutMode === 'poster';
+
+    // Poster tiles 1 document page into 4 physical A4 sheets (2x2 grid, simplex wall mounted)
+    const effectiveSidesCount = isPoster
+      ? totalExpandedCount * 4
+      : Math.ceil(totalExpandedCount / pagesPerSide);
+
     let duplexSheets = 0;
     let singleSheets = 0;
 
-    if (!isDuplex) {
-      singleSheets = totalExpandedCount;
+    if (!isDuplex || isPoster) {
+      singleSheets = effectiveSidesCount;
     } else {
-      duplexSheets = Math.floor(totalExpandedCount / 2);
-      singleSheets = totalExpandedCount % 2;
+      duplexSheets = Math.floor(effectiveSidesCount / 2);
+      singleSheets = effectiveSidesCount % 2;
     }
 
     const totalSheetsPerCopy = duplexSheets + singleSheets;
     const totalPhysicalSheets = totalSheetsPerCopy * safeCopies;
     const tier = getActiveTier(totalPhysicalSheets);
 
+    // Group pages onto physical sides and accurately detect whether each side contains color
+    const sideColorModes: ('color' | 'bw')[] = [];
+    if (isPoster) {
+      expandedPages.forEach((p) => {
+        for (let tile = 0; tile < 4; tile++) {
+          sideColorModes.push(p.colorMode);
+        }
+      });
+    } else {
+      for (let i = 0; i < totalExpandedCount; i += pagesPerSide) {
+        const sidePages = expandedPages.slice(i, i + pagesPerSide);
+        const hasColor = sidePages.some((p) => p.colorMode === 'color');
+        sideColorModes.push(hasColor ? 'color' : 'bw');
+      }
+    }
+
+    let effectiveBwCount = 0;
+    let effectiveColorCount = 0;
+    sideColorModes.forEach((mode) => {
+      if (mode === 'color') effectiveColorCount++;
+      else effectiveBwCount++;
+    });
+
     // Calculate at active tier rate
     let unitPrice = 0;
     let originalUnitPrice = 0;
     const parts: string[] = [];
 
-    if (!isDuplex) {
-      unitPrice = (bwPagesCount * tier.rates.bw.single) + (colorPagesCount * tier.rates.color.single);
-      originalUnitPrice = (bwPagesCount * TIER_RATES.standard.bw.single) + (colorPagesCount * TIER_RATES.standard.color.single);
+    if (!isDuplex || isPoster) {
+      unitPrice = (effectiveBwCount * tier.rates.bw.single) + (effectiveColorCount * tier.rates.color.single);
+      originalUnitPrice = (effectiveBwCount * TIER_RATES.standard.bw.single) + (effectiveColorCount * TIER_RATES.standard.color.single);
 
-      if (bwPagesCount > 0) {
-        parts.push(`${bwPagesCount} B&W (${tier.rates.bw.single === 4 ? '₹4' : `₹${tier.rates.bw.single}`} ea)`);
+      if (effectiveBwCount > 0) {
+        parts.push(`${effectiveBwCount} B&W Sheet${effectiveBwCount > 1 ? 's' : ''} (₹${tier.rates.bw.single} ea)`);
       }
-      if (colorPagesCount > 0) {
-        parts.push(`${colorPagesCount} Color (₹${tier.rates.color.single} ea)`);
+      if (effectiveColorCount > 0) {
+        parts.push(`${effectiveColorCount} Color Sheet${effectiveColorCount > 1 ? 's' : ''} (₹${tier.rates.color.single} ea)`);
       }
     } else {
       let bwDuplexCount = 0;
       let colorDuplexCount = 0;
 
-      for (let i = 0; i < expandedPages.length; i += 2) {
-        const page1 = expandedPages[i];
-        const page2 = expandedPages[i + 1];
-
-        if (page2) {
-          const isColorSheet = page1.colorMode === 'color' || page2.colorMode === 'color';
-          if (isColorSheet) {
+      for (let i = 0; i < sideColorModes.length; i += 2) {
+        if (i + 1 < sideColorModes.length) {
+          const hasColor = sideColorModes[i] === 'color' || sideColorModes[i + 1] === 'color';
+          if (hasColor) {
             colorDuplexCount++;
             unitPrice += tier.rates.color.duplex;
             originalUnitPrice += TIER_RATES.standard.color.duplex;
@@ -192,12 +241,12 @@ export function calculatePricing(input: PricingInput): PricingResult {
             originalUnitPrice += TIER_RATES.standard.bw.duplex;
           }
         } else {
-          const isColor = page1.colorMode === 'color';
-          const singleRate = isColor ? tier.rates.color.single : tier.rates.bw.single;
-          const origSingleRate = isColor ? TIER_RATES.standard.color.single : TIER_RATES.standard.bw.single;
+          const hasColor = sideColorModes[i] === 'color';
+          const singleRate = hasColor ? tier.rates.color.single : tier.rates.bw.single;
+          const origSingleRate = hasColor ? TIER_RATES.standard.color.single : TIER_RATES.standard.bw.single;
           unitPrice += singleRate;
           originalUnitPrice += origSingleRate;
-          parts.push(`1 Single ${isColor ? 'Color' : 'B&W'} (₹${singleRate})`);
+          parts.push(`1 Single ${hasColor ? 'Color' : 'B&W'} (₹${singleRate})`);
         }
       }
 
@@ -207,6 +256,12 @@ export function calculatePricing(input: PricingInput): PricingResult {
       if (colorDuplexCount > 0) {
         parts.push(`${colorDuplexCount} Color Double-Sided (₹${tier.rates.color.duplex} ea)`);
       }
+    }
+
+    if (isPoster) {
+      parts.push(`[2x2 Poster Layout · 4 Sheets/pg]`);
+    } else if (pagesPerSide > 1) {
+      parts.push(`[${layoutMode === 'id-card' ? '2-in-1 ID Card' : `${pagesPerSide}-on-1`} Layout]`);
     }
 
     const finalTotalPrice = unitPrice * safeCopies;
@@ -245,14 +300,16 @@ export function calculatePricing(input: PricingInput): PricingResult {
   // Uniform pricing fallback
   const safePages = Math.max(1, Math.floor(totalPages));
   const effectiveMode = colorMode === 'color' ? 'color' : 'bw';
+  const isPoster = layoutMode === 'poster';
+  const effectivePhysicalPages = isPoster ? safePages * 4 : Math.ceil(safePages / pagesPerSide);
 
   let duplexSheets = 0;
   let singleSheets = 0;
-  if (isDuplex) {
-    duplexSheets = Math.floor(safePages / 2);
-    singleSheets = safePages % 2;
+  if (isDuplex && !isPoster) {
+    duplexSheets = Math.floor(effectivePhysicalPages / 2);
+    singleSheets = effectivePhysicalPages % 2;
   } else {
-    singleSheets = safePages;
+    singleSheets = effectivePhysicalPages;
   }
 
   const totalSheetsPerCopy = duplexSheets + singleSheets;

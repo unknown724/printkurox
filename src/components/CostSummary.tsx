@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  IndianRupee,
   Printer,
   ArrowRight,
   Loader2,
@@ -15,12 +14,12 @@ import {
   Eye,
   EyeOff,
   WifiOff,
-  Clock,
 } from 'lucide-react';
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
 import { useRouter } from 'next/navigation';
 import { BorderBeam } from '@/components/ui/BorderBeam';
+import { TextOverlayConfig } from '@/components/studio/PhotoLayoutSelector';
 
 declare global {
   interface Window {
@@ -36,6 +35,10 @@ interface CostSummaryProps {
   totalPages: number;
   pageRange: string;
   pageConfigs?: PageConfig[];
+  layoutMode?: string;
+  customCols?: number;
+  customRows?: number;
+  textOverlay?: TextOverlayConfig;
 }
 
 export function CostSummary({
@@ -45,6 +48,10 @@ export function CostSummary({
   totalPages,
   pageRange,
   pageConfigs,
+  layoutMode,
+  customCols,
+  customRows,
+  textOverlay,
 }: CostSummaryProps) {
   const router = useRouter();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -91,6 +98,10 @@ export function CostSummary({
           copies: pricing.copies,
           orientation: getEffectiveOrientation(),
           pageConfigs,
+          layoutMode,
+          customCols,
+          customRows,
+          textOverlay,
         }),
       });
       const data = await res.json();
@@ -120,6 +131,10 @@ export function CostSummary({
           copies: pricing.copies,
           orientation: getEffectiveOrientation(),
           pageConfigs,
+          layoutMode,
+          customCols,
+          customRows,
+          textOverlay,
           pin: staffPin,
         }),
       });
@@ -151,6 +166,10 @@ export function CostSummary({
           copies: pricing.copies,
           orientation: getEffectiveOrientation(),
           pageConfigs,
+          layoutMode,
+          customCols,
+          customRows,
+          textOverlay,
         }),
       });
 
@@ -254,7 +273,7 @@ export function CostSummary({
         <BorderBeam duration={14} borderWidth={1.5} borderRadius={16} colorFrom="rgba(255, 255, 255, 0.85)" />
 
         {/* Header bar */}
-        <div className="px-4 py-3 border-b border-zinc-100 dark:border-white/[0.06] flex items-center justify-between relative z-10">
+        <div className="px-3.5 py-2 border-b border-zinc-100 dark:border-white/[0.06] flex items-center justify-between relative z-10">
           <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             Order Summary
@@ -266,8 +285,8 @@ export function CostSummary({
         </div>
 
         {/* Line items */}
-        <div className="px-4 py-2 space-y-0 divide-y divide-zinc-100 dark:divide-white/[0.06] relative z-10">
-          <div className="flex items-center justify-between py-2.5">
+        <div className="px-3.5 py-1.5 space-y-0 divide-y divide-zinc-100 dark:divide-white/[0.06] relative z-10">
+          <div className="flex items-center justify-between py-1.5">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">Document</span>
             <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
               <span>{pricing.totalPages} Page{pricing.totalPages > 1 ? 's' : ''}</span>
@@ -287,7 +306,7 @@ export function CostSummary({
             </span>
           </div>
 
-          <div className="flex items-center justify-between py-2.5">
+          <div className="flex items-center justify-between py-1.5">
             <span className="text-xs text-zinc-500 dark:text-zinc-400">Paper Layout</span>
             <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 text-right">
               {pricing.isDuplex ? (
@@ -302,7 +321,7 @@ export function CostSummary({
           </div>
 
           {pricing.copies > 1 && (
-            <div className="flex items-center justify-between py-2.5">
+            <div className="flex items-center justify-between py-1.5">
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Copies</span>
               <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 font-mono">
                 {pricing.copies} Sets × ₹{pricing.unitPrice}
@@ -312,7 +331,7 @@ export function CostSummary({
         </div>
 
         {/* Total Row with Golden Highlight */}
-        <div className="px-4 py-3.5 bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent border-t border-amber-500/20 dark:border-amber-400/25 flex items-center justify-between">
+        <div className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent border-t border-amber-500/20 dark:border-amber-400/25 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wide">
@@ -368,7 +387,7 @@ export function CostSummary({
           type="button"
           onClick={handleAdminBypass}
           disabled={isProcessing}
-          className="relative overflow-hidden w-full h-11 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+          className="relative overflow-hidden w-full h-10 sm:h-11 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
         >
           <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer-sheen pointer-events-none" />
           <Zap className="w-4 h-4 fill-zinc-950" />
@@ -381,7 +400,7 @@ export function CostSummary({
         type="button"
         onClick={handlePayAndPrint}
         disabled={isProcessing}
-        className="relative overflow-hidden group w-full h-12 sm:h-13 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(245,158,11,0.38)] hover:shadow-[0_0_36px_rgba(245,158,11,0.58)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        className="relative overflow-hidden group w-full h-11 sm:h-11.5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(245,158,11,0.38)] hover:shadow-[0_0_36px_rgba(245,158,11,0.58)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
       >
         {/* Moving light sheen */}
         <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent animate-shimmer-sheen pointer-events-none" />
@@ -403,7 +422,7 @@ export function CostSummary({
       </button>
 
       {/* Payment methods & Staff trigger */}
-      <div className="p-3 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white/50 dark:bg-[#08080a]/80 backdrop-blur-md space-y-2 text-xs">
+      <div className="p-2.5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white/50 dark:bg-[#08080a]/80 backdrop-blur-md space-y-1.5 text-xs">
         <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
           <button
             type="button"

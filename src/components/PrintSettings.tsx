@@ -107,7 +107,7 @@ export function PrintSettings({
       </div>
 
       {/* 2. Sides - Highlighted Single vs Double Sided Eco */}
-      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-4 shadow-xs space-y-3 overflow-hidden">
+      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-3 sm:p-3.5 shadow-xs space-y-2.5 overflow-hidden">
         {/* Luminous top edge sheen */}
         <span
           aria-hidden="true"
@@ -158,7 +158,7 @@ export function PrintSettings({
       </div>
 
       {/* 3. Copies */}
-      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#08080a]/90 backdrop-blur-xl p-4 shadow-xs flex items-center justify-between overflow-hidden">
+      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#08080a]/90 backdrop-blur-xl p-2.5 sm:p-3 shadow-xs flex items-center justify-between overflow-hidden">
         <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
           <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
             <Copy className="w-3.5 h-3.5" />
