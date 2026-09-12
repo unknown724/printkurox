@@ -207,12 +207,20 @@ export function PageVisualizer({
   onTextOverlayChange,
 }: PageVisualizerProps) {
   const [thumbnails, setThumbnails] = useState<Record<number, string>>({});
+  const [naturalOrientations, setNaturalOrientations] = useState<Record<number, 'portrait' | 'landscape'>>({});
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [zoomPage, setZoomPage] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'pager' | 'grid'>('pager');
   const [internalSheetIdx, setInternalSheetIdx] = useState(0);
   const [selectedPageNum, setSelectedPageNum] = useState<number>(1);
   const lastSourceSigRef = useRef<string>('');
+
+  const recordNaturalOrientation = (pageNumber: number, orient: 'portrait' | 'landscape') => {
+    setNaturalOrientations((prev) => {
+      if (prev[pageNumber] === orient) return prev;
+      return { ...prev, [pageNumber]: orient };
+    });
+  };
   const activeUrlsRef = useRef<string[]>([]);
   const sheetRef = useRef<HTMLDivElement>(null);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
@@ -329,15 +337,20 @@ export function PageVisualizer({
                   const page = await pdf.getPage(p);
                   const unscaled = page.getViewport({ scale: 1.0 });
                   const isNaturalLandscape = unscaled.width > unscaled.height;
+                  const natOrient: 'portrait' | 'landscape' = isNaturalLandscape ? 'landscape' : 'portrait';
+                  recordNaturalOrientation(pageNumber, natOrient);
 
                   const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === pageNumber);
-                  if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
-                    updatedConfigs[targetIdx] = {
-                      ...updatedConfigs[targetIdx],
-                      orientation: isNaturalLandscape ? 'landscape' : 'portrait',
-                      rotation: 0,
-                    };
-                    configsChanged = true;
+                  if (targetIdx !== -1) {
+                    if (updatedConfigs[targetIdx].naturalOrientation !== natOrient || !updatedConfigs[targetIdx].orientation) {
+                      updatedConfigs[targetIdx] = {
+                        ...updatedConfigs[targetIdx],
+                        naturalOrientation: natOrient,
+                        orientation: updatedConfigs[targetIdx].orientation || natOrient,
+                        rotation: updatedConfigs[targetIdx].rotation ?? 0,
+                      };
+                      configsChanged = true;
+                    }
                   }
 
                   // Fast, high-quality thumbnail render (0.6 scale = crisp on mobile, lightweight memory)
@@ -387,14 +400,19 @@ export function PageVisualizer({
                 img.onload = () => {
                   if (!isMounted) return; // guard stale closure
                   const isImgLandscape = img.naturalWidth > img.naturalHeight;
+                  const natOrient: 'portrait' | 'landscape' = isImgLandscape ? 'landscape' : 'portrait';
+                  recordNaturalOrientation(pageNumber, natOrient);
                   const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === pageNumber);
-                  if (targetIdx !== -1 && !updatedConfigs[targetIdx].orientation) {
-                    updatedConfigs[targetIdx] = {
-                      ...updatedConfigs[targetIdx],
-                      orientation: isImgLandscape ? 'landscape' : 'portrait',
-                      rotation: 0,
-                    };
-                    configsChanged = true;
+                  if (targetIdx !== -1) {
+                    if (updatedConfigs[targetIdx].naturalOrientation !== natOrient || !updatedConfigs[targetIdx].orientation) {
+                      updatedConfigs[targetIdx] = {
+                        ...updatedConfigs[targetIdx],
+                        naturalOrientation: natOrient,
+                        orientation: updatedConfigs[targetIdx].orientation || natOrient,
+                        rotation: updatedConfigs[targetIdx].rotation ?? 0,
+                      };
+                      configsChanged = true;
+                    }
                   }
                 };
                 img.src = objectUrl;
@@ -424,6 +442,24 @@ export function PageVisualizer({
             const thisPage = pageNum;
             try {
               const page = await pdf.getPage(thisPage);
+              const unscaled = page.getViewport({ scale: 1.0 });
+              const isNaturalLandscape = unscaled.width > unscaled.height;
+              const natOrient: 'portrait' | 'landscape' = isNaturalLandscape ? 'landscape' : 'portrait';
+              recordNaturalOrientation(thisPage, natOrient);
+
+              const targetIdx = updatedConfigs.findIndex((cfg) => cfg.pageNumber === thisPage);
+              if (targetIdx !== -1) {
+                if (updatedConfigs[targetIdx].naturalOrientation !== natOrient || !updatedConfigs[targetIdx].orientation) {
+                  updatedConfigs[targetIdx] = {
+                    ...updatedConfigs[targetIdx],
+                    naturalOrientation: natOrient,
+                    orientation: updatedConfigs[targetIdx].orientation || natOrient,
+                    rotation: updatedConfigs[targetIdx].rotation ?? 0,
+                  };
+                  configsChanged = true;
+                }
+              }
+
               const viewport = page.getViewport({ scale: 0.6 });
               const canvas = document.createElement('canvas');
               const context = canvas.getContext('2d');
@@ -448,6 +484,9 @@ export function PageVisualizer({
             }
           }
           await pdf.destroy();
+          if (isMounted && configsChanged) {
+            onChange(updatedConfigs);
+          }
         }
       } catch (err) {
         console.warn('Page thumbnail error:', err);
@@ -593,19 +632,21 @@ export function PageVisualizer({
     () => sheetChunks[currentSheetIndex] || [],
     [sheetChunks, currentSheetIndex]
   );
-  const landscapeCount = activeSheetItems.filter((p) => p.orientation === 'landscape').length;
-  const isDocLandscape = landscapeCount > activeSheetItems.length / 2;
+  const getPageEffectiveOrientation = (cfg?: PageConfig | null): 'portrait' | 'landscape' => {
+    if (!cfg) return 'portrait';
+    const detected = naturalOrientations[cfg.pageNumber];
+    const base: 'portrait' | 'landscape' =
+      cfg.orientation ||
+      cfg.naturalOrientation ||
+      detected ||
+      'portrait';
 
-  const gridConfig = getSheetGridConfig(
-    pagesPerSheet,
-    orientation,
-    autoRotate,
-    customCols,
-    customRows,
-    isDocLandscape,
-    isCustomLayout,
-    layoutMode
-  );
+    const rot = cfg.rotation || 0;
+    if (rot % 180 === 90) {
+      return base === 'landscape' ? 'portrait' : 'landscape';
+    }
+    return base;
+  };
 
   const getLiveFilter = (colorMode: 'bw' | 'color', enhance: EnhanceMode = 'none') => {
     if (enhance === 'magic_bw') {
@@ -631,6 +672,36 @@ export function PageVisualizer({
       : null) ||
     activeSheetItems[0] ||
     pageConfigs[0];
+
+  const currentEffectiveOrient = getPageEffectiveOrientation(activePageCfg);
+
+  const landscapeCount = activeSheetItems.filter((p) => getPageEffectiveOrientation(p) === 'landscape').length;
+  const isDocLandscape = landscapeCount > activeSheetItems.length / 2;
+
+  const gridConfig = getSheetGridConfig(
+    pagesPerSheet,
+    orientation,
+    autoRotate,
+    customCols,
+    customRows,
+    isDocLandscape,
+    isCustomLayout,
+    layoutMode
+  );
+
+  const isSheetLandscape = layoutMode === 'booklet'
+    ? true
+    : orientation === 'landscape'
+    ? true
+    : orientation === 'portrait'
+    ? false
+    : pagesPerSheet === 1 && !isCustomLayout
+    ? currentEffectiveOrient === 'landscape'
+    : gridConfig.isLandscapeSheet;
+
+  const currentDimensionText =
+    (isSheetLandscape ? '11.69 x 8.27 Inches' : '8.27 x 11.69 Inches') +
+    (orientation === 'auto' ? ' (Auto)' : '');
 
   const activeCells: (PageConfig | null)[] = [];
   for (let r = 0; r < gridConfig.rows; r++) {
@@ -736,11 +807,11 @@ export function PageVisualizer({
           {/* Dimension Header (Matching Adobe Acrobat) */}
           <div className="text-center text-[11px] font-mono font-medium text-zinc-500 dark:text-zinc-400 select-none">
             {layoutMode === 'booklet'
-              ? `${gridConfig.dimensionText} • A4 · Booklet Spread (2-Up Folded)`
+              ? `11.69 x 8.27 Inches • A4 · Booklet Spread (2-Up Folded)`
               : layoutMode === 'poster'
               ? `${gridConfig.dimensionText} • A4 · Poster (Tiled Grid)`
               : pagesPerSheet === 1 && !isCustomLayout
-              ? `${activePageCfg?.orientation === 'landscape' ? '11.69 x 8.27 Inches' : '8.27 x 11.69 Inches'} ${orientation === 'auto' ? '(Auto)' : ''}`
+              ? `${currentDimensionText} • A4 · 1-Up`
               : isCustomLayout
               ? `${gridConfig.dimensionText} • A4 · Custom (${gridConfig.cols}x${gridConfig.rows})`
               : `${gridConfig.dimensionText} • A4 · ${pagesPerSheet}-Up`}
@@ -749,22 +820,14 @@ export function PageVisualizer({
           {/* Physical Sheet Canvas Container */}
           <div className="p-2.5 sm:p-4 flex items-center justify-center bg-zinc-100/80 dark:bg-[#121316] rounded-xl relative border border-zinc-200/80 dark:border-[#282a2c] overflow-hidden h-[270px] sm:h-[300px] lg:h-[305px] w-full">
             {/* The Physical Paper Sheet */}
-            {(() => {
-              const isSheetLandscape = layoutMode === 'booklet'
-                ? true
-                : (pagesPerSheet === 1 && !isCustomLayout)
-                ? (activePageCfg?.orientation === 'landscape' || (activePageCfg?.rotation && activePageCfg.rotation % 180 === 90) || isDocLandscape)
-                : gridConfig.isLandscapeSheet;
-
-              return (
-                <div
-                  ref={sheetRef}
-                  className={`relative bg-white text-zinc-900 shadow-xl shadow-black/20 dark:shadow-black/60 rounded-[3px] border border-zinc-300 dark:border-zinc-700 flex flex-col items-center justify-between p-1.5 sm:p-2 transition-all duration-300 select-none ${
-                    isSheetLandscape
-                      ? 'h-[200px] sm:h-[230px] lg:h-[230px] aspect-[297/210] max-w-full w-auto'
-                      : 'h-[250px] sm:h-[280px] lg:h-[275px] aspect-[210/297] max-w-full w-auto'
-                  }`}
-                >
+            <div
+              ref={sheetRef}
+              className={`relative bg-white text-zinc-900 shadow-xl shadow-black/20 dark:shadow-black/60 rounded-[3px] border border-zinc-300 dark:border-zinc-700 flex flex-col items-center justify-between p-1.5 sm:p-2 transition-all duration-300 select-none ${
+                isSheetLandscape
+                  ? 'h-[200px] sm:h-[230px] lg:h-[230px] aspect-[297/210] max-w-full w-auto'
+                  : 'h-[250px] sm:h-[280px] lg:h-[275px] aspect-[210/297] max-w-full w-auto'
+              }`}
+            >
                   {/* Canva-Style Live Interactive Multi-Text Overlay Layer */}
                   {(() => {
                     if (!textOverlay?.enabled) return null;
@@ -1021,6 +1084,15 @@ export function PageVisualizer({
                         <img
                           src={thumbnails[activeSheetItems[0].pageNumber]}
                           alt="Front"
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            if (img.naturalWidth && img.naturalHeight) {
+                              recordNaturalOrientation(
+                                activeSheetItems[0].pageNumber,
+                                img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                              );
+                            }
+                          }}
                           style={{
                             filter: getLiveFilter(activeSheetItems[0].colorMode, enhanceMode),
                             transform: `scale(${Math.max(10, Math.min(400, activeSheetItems[0].customScale ?? customScale ?? 100)) / 100})`,
@@ -1071,6 +1143,15 @@ export function PageVisualizer({
                         <img
                           src={thumbnails[activeSheetItems[1].pageNumber]}
                           alt="Back"
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            if (img.naturalWidth && img.naturalHeight) {
+                              recordNaturalOrientation(
+                                activeSheetItems[1].pageNumber,
+                                img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                              );
+                            }
+                          }}
                           style={{
                             filter: getLiveFilter(activeSheetItems[1].colorMode, enhanceMode),
                             transform: `scale(${Math.max(10, Math.min(400, activeSheetItems[1].customScale ?? customScale ?? 100)) / 100})`,
@@ -1120,6 +1201,15 @@ export function PageVisualizer({
                           <img
                             src={thumbnails[activeSheetItems[0].pageNumber]}
                             alt={`Page #${activeSheetItems[0].pageNumber}`}
+                            onLoad={(e) => {
+                              const img = e.currentTarget;
+                              if (img.naturalWidth && img.naturalHeight) {
+                                recordNaturalOrientation(
+                                  activeSheetItems[0].pageNumber,
+                                  img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                                );
+                              }
+                            }}
                             style={{
                               filter: getLiveFilter(activeSheetItems[0].colorMode, enhanceMode),
                               transform: `scale(${Math.max(10, Math.min(400, activeSheetItems[0].customScale ?? customScale ?? 100)) / 100})`,
@@ -1177,6 +1267,15 @@ export function PageVisualizer({
                           <img
                             src={thumbnails[activeSheetItems[1].pageNumber]}
                             alt={`Page #${activeSheetItems[1].pageNumber}`}
+                            onLoad={(e) => {
+                              const img = e.currentTarget;
+                              if (img.naturalWidth && img.naturalHeight) {
+                                recordNaturalOrientation(
+                                  activeSheetItems[1].pageNumber,
+                                  img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                                );
+                              }
+                            }}
                             style={{
                               filter: getLiveFilter(activeSheetItems[1].colorMode, enhanceMode),
                               transform: `scale(${Math.max(10, Math.min(400, activeSheetItems[1].customScale ?? customScale ?? 100)) / 100})`,
@@ -1221,6 +1320,15 @@ export function PageVisualizer({
                       <img
                         src={thumbnails[activeSheetItems[0].pageNumber]}
                         alt="Poster Preview"
+                        onLoad={(e) => {
+                          const img = e.currentTarget;
+                          if (img.naturalWidth && img.naturalHeight) {
+                            recordNaturalOrientation(
+                              activeSheetItems[0].pageNumber,
+                              img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                            );
+                          }
+                        }}
                         style={{
                           filter: getLiveFilter(activeSheetItems[0].colorMode, enhanceMode),
                           transform: `scale(${Math.max(10, Math.min(400, activeSheetItems[0]?.customScale ?? customScale ?? 100)) / 100})`,
@@ -1278,8 +1386,8 @@ export function PageVisualizer({
                         ? 90
                         : 0;
 
-                    // Respect explicit page rotation or landscape orientation for this individual image
-                    const baseRot = cfg.rotation !== undefined ? cfg.rotation : (cfg.orientation === 'landscape' ? 90 : 0);
+                    // Respect explicit page rotation set by user
+                    const baseRot = cfg.rotation || 0;
                     const effectiveRotation = (baseRot + autoRot90) % 360;
                     const isRotated90 = effectiveRotation % 180 === 90;
                     const isSelected = selectedPageNum === cfg.pageNumber;
@@ -1380,6 +1488,15 @@ export function PageVisualizer({
                               <img
                                 src={thumb}
                                 alt={`Page #${cfg.pageNumber}`}
+                                onLoad={(e) => {
+                                  const img = e.currentTarget;
+                                  if (img.naturalWidth && img.naturalHeight) {
+                                    recordNaturalOrientation(
+                                      cfg.pageNumber,
+                                      img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                                    );
+                                  }
+                                }}
                                 style={{
                                   filter: getLiveFilter(cfg.colorMode, enhanceMode),
                                 }}
@@ -1413,8 +1530,6 @@ export function PageVisualizer({
                 </div>
               )}
             </div>
-              );
-            })()}
           </div>
 
           {/* Bottom Adobe-Style Navigation Bar: Comfortable Side-by-Side Mobile Controls */}
@@ -1518,11 +1633,11 @@ export function PageVisualizer({
                           onChange(updated);
                         }}
                         className={`h-5.5 px-2 rounded-md flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer ${
-                          activePageCfg.orientation === 'portrait' && (!activePageCfg.rotation || activePageCfg.rotation % 180 === 0)
-                            ? 'bg-white dark:bg-zinc-700 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                          currentEffectiveOrient === 'portrait'
+                            ? 'bg-blue-600 dark:bg-blue-600 text-white font-bold shadow-xs'
                             : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
                         }`}
-                        title="Set this page to Portrait orientation (0°)"
+                        title="Set this page to Portrait orientation"
                       >
                         <span>▯ Port</span>
                       </button>
@@ -1533,17 +1648,17 @@ export function PageVisualizer({
                         onClick={() => {
                           const updated = pageConfigs.map((p) =>
                             p.pageNumber === activePageCfg.pageNumber
-                              ? { ...p, orientation: 'landscape' as const, rotation: 90 }
+                              ? { ...p, orientation: 'landscape' as const, rotation: 0 }
                               : p
                           );
                           onChange(updated);
                         }}
                         className={`h-5.5 px-2 rounded-md flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer ${
-                          activePageCfg.orientation === 'landscape' || (activePageCfg.rotation && activePageCfg.rotation % 180 === 90)
-                            ? 'bg-white dark:bg-zinc-700 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                          currentEffectiveOrient === 'landscape'
+                            ? 'bg-blue-600 dark:bg-blue-600 text-white font-bold shadow-xs'
                             : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
                         }`}
-                        title="Set this page to Landscape orientation (90°)"
+                        title="Set this page to Landscape orientation"
                       >
                         <span>▭ Land</span>
                       </button>

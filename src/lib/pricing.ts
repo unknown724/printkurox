@@ -20,6 +20,7 @@ export interface PageConfig {
   colorMode: 'bw' | 'color';
   included: boolean;
   orientation?: 'portrait' | 'landscape';
+  naturalOrientation?: 'portrait' | 'landscape';
   rotation?: number; // 0, 90, 180, 270
   copies?: number; // Specific copies for this page (min 1, default 1)
   customScale?: number; // Per-page custom scale percentage (e.g. 100 = 100%)

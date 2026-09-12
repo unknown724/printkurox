@@ -374,6 +374,7 @@ export function DocumentStudio({
                 customCols={layoutSettings.customCols}
                 customRows={layoutSettings.customRows}
                 textOverlay={layoutSettings.textOverlay}
+                orientation={orientation}
               />
             </div>
           </div>

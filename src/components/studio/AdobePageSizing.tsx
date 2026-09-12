@@ -177,6 +177,8 @@ export function AdobePageHandling({
   onScalingChange,
   customScale = 100,
   onCustomScaleChange,
+  pageConfigs,
+  onPageConfigsChange,
 }: AdobePageHandlingProps) {
   const [activeTab, setActiveTab] = useState<'size' | 'mode' | 'multiple' | 'text'>(
     settings.layoutMode === 'booklet' || settings.layoutMode === 'poster'
@@ -1262,7 +1264,12 @@ export function AdobePageHandling({
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => onOrientationChange('auto')}
+                onClick={() => {
+                  onOrientationChange('auto');
+                  if (pageConfigs && onPageConfigsChange) {
+                    onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: undefined })));
+                  }
+                }}
                 className={`h-7 px-2.5 rounded-md border flex items-center gap-1.5 font-medium text-xs transition-all cursor-pointer ${
                   orientation === 'auto'
                     ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
@@ -1275,7 +1282,12 @@ export function AdobePageHandling({
 
               <button
                 type="button"
-                onClick={() => onOrientationChange('portrait')}
+                onClick={() => {
+                  onOrientationChange('portrait');
+                  if (pageConfigs && onPageConfigsChange) {
+                    onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: 'portrait' as const })));
+                  }
+                }}
                 className={`h-7 px-2.5 rounded-md border flex items-center gap-1.5 font-medium text-xs transition-all cursor-pointer ${
                   orientation === 'portrait'
                     ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
@@ -1287,7 +1299,12 @@ export function AdobePageHandling({
 
               <button
                 type="button"
-                onClick={() => onOrientationChange('landscape')}
+                onClick={() => {
+                  onOrientationChange('landscape');
+                  if (pageConfigs && onPageConfigsChange) {
+                    onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: 'landscape' as const })));
+                  }
+                }}
                 className={`h-7 px-2.5 rounded-md border flex items-center gap-1.5 font-medium text-xs transition-all cursor-pointer ${
                   orientation === 'landscape'
                     ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'

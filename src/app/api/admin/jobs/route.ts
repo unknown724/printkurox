@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     }
 
     const jobs = await queryD1(
-      `SELECT id, pickup_code, file_name, total_pages, color_mode, is_duplex, copies, total_price, status, payment_id, created_at
+      `SELECT id, pickup_code, file_name, file_key, total_pages, color_mode, is_duplex, copies, total_price, status, payment_id, created_at
        FROM print_jobs
        ORDER BY created_at DESC
        LIMIT 25`

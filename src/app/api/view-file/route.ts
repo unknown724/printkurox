@@ -19,9 +19,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
+    const lowerKey = fileKey.toLowerCase();
+    const contentType =
+      lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg')
+        ? 'image/jpeg'
+        : lowerKey.endsWith('.png')
+        ? 'image/png'
+        : lowerKey.endsWith('.webp')
+        ? 'image/webp'
+        : lowerKey.endsWith('.gif')
+        ? 'image/gif'
+        : 'application/pdf';
+
     const byteArray = await (fileBody as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
     const headers = new Headers();
-    headers.set('Content-Type', 'application/pdf');
+    headers.set('Content-Type', contentType);
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cache-Control', 'public, max-age=900');
 

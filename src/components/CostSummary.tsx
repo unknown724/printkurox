@@ -39,6 +39,7 @@ interface CostSummaryProps {
   customCols?: number;
   customRows?: number;
   textOverlay?: TextOverlayConfig;
+  orientation?: 'auto' | 'portrait' | 'landscape';
 }
 
 export function CostSummary({
@@ -52,6 +53,7 @@ export function CostSummary({
   customCols,
   customRows,
   textOverlay,
+  orientation = 'auto',
 }: CostSummaryProps) {
   const router = useRouter();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -74,9 +76,12 @@ export function CostSummary({
   }, []);
 
   const getEffectiveOrientation = () => {
+    if (orientation && orientation !== 'auto') {
+      return orientation;
+    }
     if (!pageConfigs || pageConfigs.length === 0) return 'portrait';
     const hasLandscape = pageConfigs.some(
-      (p) => p.included && (p.orientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
+      (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
     );
     return hasLandscape ? 'landscape' : 'portrait';
   };

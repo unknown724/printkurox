@@ -42,6 +42,7 @@ interface Job {
   id: string;
   pickup_code: string;
   file_name: string;
+  file_key?: string;
   total_pages: number;
   color_mode: string;
   is_duplex: number;
@@ -1277,17 +1278,32 @@ export default function AdminKuroxPage() {
                       </p>
                     </div>
 
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                        j.status === 'COMPLETED'
-                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                          : j.status === 'PAID'
-                          ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30'
-                          : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
-                      }`}
-                    >
-                      {j.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {j.file_key && (
+                        <a
+                          href={`/api/view-file?key=${encodeURIComponent(j.file_key)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                          title="Open and view printed document"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>View Document</span>
+                        </a>
+                      )}
+
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          j.status === 'COMPLETED'
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                            : j.status === 'PAID'
+                            ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30'
+                            : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                        }`}
+                      >
+                        {j.status}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -49,7 +49,7 @@ PRINTER_NAME = os.getenv('PRINTER_NAME', '')  # Leave blank for default Windows 
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', '2'))
 TEMP_DIR = os.path.join(os.path.dirname(__file__), 'temp_prints')
-RETENTION_MINUTES = 15
+RETENTION_MINUTES = 120  # Keeps local print archive for 2 hours on laptop
 HEARTBEAT_INTERVAL_SECONDS = 30  # Write heartbeat to D1 this often
 
 # Ensure local temp directory exists
@@ -310,12 +310,9 @@ def process_single_sided_job(job, local_file_path):
     if success:
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
-        # Clean up Cloudflare R2 uploaded file to free cloud storage and protect privacy
-        try:
-            s3_client.delete_object(Bucket=R2_BUCKET_NAME, Key=job["file_key"])
-            log(f"Purged remote file from R2: {job['file_key']}", "INFO")
-        except Exception as del_err:
-            log(f"Note: Could not purge {job['file_key']} from R2: {del_err}", "WARN")
+        # File will be purged from R2 by the 15-minute zero-retention cleaner,
+        # allowing the operator to preview it in /adminkurox during the active pickup window.
+        log(f"Job completed successfully: {job['pickup_code']}", "SUCCESS")
     else:
         update_job_status(job["id"], "FAILED")
 
