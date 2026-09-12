@@ -4,19 +4,13 @@ import { calculatePricing } from '@/lib/pricing';
 import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange } from '@/lib/pdf-utils';
-import { validateAdminPin, verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
-import { validateStationPin, getStationConfig } from '@/lib/stations';
-import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
+import { getStationConfig } from '@/lib/stations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
-    const deviceId = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
-    const { isValid: isDeviceAdmin } = await verifyAdminDevice(deviceId || '');
-
     const body = await req.json();
     const {
       fileKey,
@@ -31,46 +25,17 @@ export async function POST(req: NextRequest) {
       layoutMode,
       customCols,
       customRows,
-      pin,
       station_id: rawStationId,
     } = body;
 
     const station = getStationConfig(rawStationId);
     const stationId = station.id;
 
-    // Check if station admin session exists via cookie
-    const stationPinCookie = req.cookies.get('station_admin_pin')?.value;
-    const isStationAdmin = stationPinCookie ? validateStationPin(stationId, stationPinCookie) : false;
-
-    // If not already an authorized device or station admin, validate PIN
-    if (!isDeviceAdmin && !isStationAdmin) {
-      // 1. Check rate limit
-      const rateCheck = await checkRateLimit(ip);
-      if (!rateCheck.allowed) {
-        return NextResponse.json(
-          { error: rateCheck.message },
-          { 
-            status: 429,
-            headers: { 'Retry-After': String(rateCheck.retryAfterSeconds || 900) }
-          }
-        );
-      }
-
-      // 2. Check PIN (accepts master admin PIN or station PIN)
-      const inputPin = pin || stationPinCookie;
-      const isPinValid = Boolean(inputPin && (validateStationPin(stationId, inputPin) || validateAdminPin(inputPin)));
-      if (!isPinValid) {
-        const failResult = await recordFailedAttempt(ip);
-        const status = failResult.locked ? 429 : 401;
-        return NextResponse.json({ error: failResult.message }, { status });
-      }
-
-      // 3. Reset rate limits on success
-      await resetFailedAttempts(ip);
-    }
-
     if (!fileKey || !fileName || !docPages) {
-      return NextResponse.json({ error: 'Missing required print parameters' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Missing required print parameters (fileKey, fileName, docPages)' },
+        { status: 400 }
+      );
     }
 
     // Calculate actual billable pages from page range or pageConfigs
@@ -112,7 +77,7 @@ export async function POST(req: NextRequest) {
     let pickupCode = generateRandomPickupCode();
     for (let attempts = 0; attempts < 10; attempts++) {
       const existing = await queryD1<{ id: string }>(
-        `SELECT id FROM print_jobs WHERE pickup_code = ? AND created_at >= datetime('now', '-24 hours') LIMIT 1`,
+        "SELECT id FROM print_jobs WHERE pickup_code = ? AND status != 'COMPLETED' LIMIT 1",
         [pickupCode]
       );
       if (existing.length === 0) break;
@@ -121,15 +86,15 @@ export async function POST(req: NextRequest) {
 
     const jobId = crypto.randomUUID();
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
-    const adminPaymentId = `ADMIN_BYPASS_${Date.now()}`;
+    const createdAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + 60 * 60 * 1000).toISOString(); // 1 hour for counter pickup
+    const counterOrderId = `COUNTER_${stationId.toUpperCase()}_${Date.now().toString().slice(-6)}`;
 
-    // Insert directly as PAID into Cloudflare D1 with orientation, page_configs, and station_id
     await executeD1(
       `INSERT INTO print_jobs (
         id, pickup_code, file_key, file_name, total_pages, page_range,
         color_mode, is_duplex, copies, duplex_sheets, single_sheets,
-        total_price, status, payment_id, created_at, expires_at,
+        total_price, order_id, status, created_at, expires_at,
         orientation, page_configs, station_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -137,18 +102,18 @@ export async function POST(req: NextRequest) {
         pickupCode,
         fileKey,
         fileName,
-        activePagesCount,
+        pricing.totalPages,
         effectivePageRange,
         pricing.colorPagesCount > 0 ? 'color' : 'bw',
         pricing.isDuplex ? 1 : 0,
         pricing.copies,
         pricing.duplexSheets,
         pricing.singleSheets,
-        0, // Admin bypass: ₹0 charged
-        'PAID', // Directly queued for printing
-        adminPaymentId,
-        now.toISOString(),
-        expiresAt.toISOString(),
+        pricing.totalPrice,
+        counterOrderId,
+        'PENDING_PAYMENT',
+        createdAt,
+        expiresAt,
         orientation,
         pageConfigs ? JSON.stringify(pageConfigs) : null,
         stationId,
@@ -159,11 +124,17 @@ export async function POST(req: NextRequest) {
       success: true,
       jobId,
       pickupCode,
-      message: 'Admin bypass authorized. Job queued for immediate printing.',
+      pricing,
+      station: {
+        id: station.id,
+        name: station.name,
+        operatorName: station.operatorName,
+        whatsappNumber: station.whatsappNumber,
+      },
     });
   } catch (err: unknown) {
-    console.error('Error in admin bypass API:', err);
-    const msg = err instanceof Error ? err.message : 'Admin bypass failed';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error('Counter order error:', err);
+    const message = err instanceof Error ? err.message : 'Failed to submit counter order';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

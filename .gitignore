@@ -48,6 +48,14 @@ daemon/logs/
 walkthrough.md
 
 
+# PyInstaller build artifacts
+daemon/dist/
+daemon/build/
+daemon/dist_romen/
+daemon/*.spec
+daemon/build_exe.py
+*.zip
+
 .vercel
 .env*
 __pycache__/

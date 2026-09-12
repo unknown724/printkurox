@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { UploadedBatchData } from '@/components/FileUpload';
 import { PrintSettingsState } from '@/components/PrintSettings';
 import { AdvancedPrintOptions } from '@/components/AdvancedSettings';
@@ -9,11 +10,16 @@ import { calculatePricing, PageConfig } from '@/lib/pricing';
 import { pagesToRangeString } from '@/lib/pdf-utils';
 import { DocumentStudio } from '@/components/studio/DocumentStudio';
 import { BorderBeam } from '@/components/ui/BorderBeam';
-import { Crown, ChevronRight } from 'lucide-react';
+import { Crown, ChevronRight, MessageCircle } from 'lucide-react';
 import { PhotoLayoutSettings } from '@/components/studio/PhotoLayoutSelector';
 import { EnhanceMode } from '@/lib/image-enhancer';
+import { getStationConfig } from '@/lib/stations';
 
-export default function HomePage() {
+function HomePageContent() {
+  const searchParams = useSearchParams();
+  const stationParam = searchParams.get('station') || searchParams.get('station_id');
+  const station = getStationConfig(stationParam);
+
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
   const [orientation, setOrientation] = useState<'auto' | 'portrait' | 'landscape'>('auto');
@@ -146,6 +152,43 @@ export default function HomePage() {
         uploadedBatch ? 'max-w-3xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[1240px]' : 'max-w-xl'
       }`}
     >
+      {/* Station Specific Banner (e.g. for Romen Xerox) */}
+      {station.id === 'romen_xerox' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-2xl border border-emerald-500/35 bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-transparent text-xs text-zinc-900 dark:text-zinc-100 shadow-xs">
+          <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <div className="truncate">
+              <div className="flex items-center gap-1.5 font-bold">
+                <span>📍 {station.name}</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider">
+                  Self-Service Desk
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                Pay at counter in Cash / UPI • Contact {station.operatorName}: +91 69092 28847
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href={`https://wa.me/916909228847?text=${encodeURIComponent('Hi Romen, I am at your shop counter!')}`}
+              target="_blank"
+              rel="noreferrer"
+              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors"
+            >
+              <MessageCircle className="w-3.5 h-3.5 fill-white" />
+              <span>WhatsApp</span>
+            </a>
+            <Link
+              href="/romen"
+              className="px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition-colors"
+            >
+              Desk Portal →
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Admin Verified Alert (Mobile Responsive) */}
       {isAdmin && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-2xl border border-amber-500/25 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-200 shadow-xs">
@@ -196,8 +239,17 @@ export default function HomePage() {
           bwCount={bwCount}
           colorCount={colorCount}
           onRangeChange={handleRangeChange}
+          stationId={station.id}
         />
       </div>
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="w-full min-h-[400px]" />}>
+      <HomePageContent />
+    </Suspense>
   );
 }

@@ -45,6 +45,7 @@ export async function GET(
       totalPrice: job.total_price,
       createdAt: job.created_at,
       expiresAt: job.expires_at,
+      stationId: job.station_id || 'main',
       secondsRemaining,
       isExpired,
     });

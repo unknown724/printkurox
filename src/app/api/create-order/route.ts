@@ -5,6 +5,7 @@ import { calculatePricing } from '@/lib/pricing';
 import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange } from '@/lib/pdf-utils';
+import { getStationConfig } from '@/lib/stations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,7 +31,11 @@ export async function POST(req: NextRequest) {
       customCols,
       customRows,
       textOverlay,
+      station_id: rawStationId,
     } = body;
+
+    const station = getStationConfig(rawStationId);
+    const stationId = station.id;
 
     let amountInPaise = 0;
     const currency = directCurrency || 'INR';
@@ -175,8 +180,8 @@ export async function POST(req: NextRequest) {
           id, pickup_code, file_key, file_name, total_pages, page_range,
           color_mode, is_duplex, copies, duplex_sheets, single_sheets,
           total_price, order_id, status, created_at, expires_at,
-          orientation, page_configs
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          orientation, page_configs, station_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           jobId,
           pickupCode,
@@ -196,6 +201,7 @@ export async function POST(req: NextRequest) {
           expiresAt,
           orientation,
           pageConfigs ? JSON.stringify(pageConfigs) : null,
+          stationId,
         ]
       );
     }

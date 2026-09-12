@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BorderBeam } from '@/components/ui/BorderBeam';
+import { getStationConfig } from '@/lib/stations';
 
 interface JobStatusData {
   id: string;
@@ -37,6 +38,7 @@ interface JobStatusData {
   totalPrice: number;
   createdAt: string;
   expiresAt: string;
+  stationId?: string;
   secondsRemaining: number;
   isExpired: boolean;
 }
@@ -101,7 +103,9 @@ export default function JobStatusPage({
 
   const handleShareOrCopy = async () => {
     if (!job) return;
-    const text = `PrintKurox Receipt #${job.pickupCode}\nAmount: ₹${job.totalPrice}\nCollect at: Block B, Room 29\nTrack: ${window.location.href}`;
+    const station = getStationConfig(job.stationId);
+    const pickupLoc = station.id === 'romen_xerox' ? station.name : 'Block B, Room 29';
+    const text = `PrintKurox Receipt #${job.pickupCode}\nAmount: ₹${job.totalPrice}\nCollect at: ${pickupLoc}\nTrack: ${window.location.href}`;
     if (navigator.share) {
       try {
         await navigator.share({
@@ -125,7 +129,9 @@ export default function JobStatusPage({
 
   const handleWhatsAppShare = () => {
     if (!job) return;
-    const text = `🖨️ *PrintKurox Boarding Pass #${job.pickupCode}*\n📄 *File:* ${job.fileName}\n💰 *Paid:* ₹${job.totalPrice}\n📍 *Pickup:* Block B, Room 29 (Tray Code: *${job.pickupCode}*)\n🔗 *Live Track:* ${typeof window !== 'undefined' ? window.location.href : ''}`;
+    const station = getStationConfig(job.stationId);
+    const pickupLoc = station.id === 'romen_xerox' ? station.name : 'Block B, Room 29';
+    const text = `🖨️ *PrintKurox Boarding Pass #${job.pickupCode}*\n📄 *File:* ${job.fileName}\n💰 *Paid:* ₹${job.totalPrice}\n📍 *Pickup:* ${pickupLoc} (Code: *${job.pickupCode}*)\n🔗 *Live Track:* ${typeof window !== 'undefined' ? window.location.href : ''}`;
     const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
   };
@@ -304,14 +310,24 @@ export default function JobStatusPage({
                 Collection Point
               </span>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1 print:text-slate-600">
-                <Building2 className="w-3 h-3" /> Campus Kiosk
+                <Building2 className="w-3 h-3" /> {getStationConfig(job.stationId).id === 'romen_xerox' ? 'Partner Store Counter' : 'Campus Kiosk'}
               </span>
             </div>
             <h3 className="text-lg sm:text-xl font-bold text-zinc-900 dark:text-white tracking-wide print:text-black">
-              Collect from Block B, Room 29
+              {getStationConfig(job.stationId).id === 'romen_xerox'
+                ? `Collect from ${getStationConfig(job.stationId).name}`
+                : 'Collect from Block B, Room 29'}
             </h3>
             <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed print:text-slate-700">
-              Your prints will be placed directly in the output tray labeled with code <strong className="text-emerald-600 dark:text-emerald-300 font-mono font-bold print:text-black">{job.pickupCode}</strong> at <strong className="text-zinc-900 dark:text-white font-semibold print:text-black">Block B, Room 29</strong>.
+              {getStationConfig(job.stationId).id === 'romen_xerox' ? (
+                <>
+                  Show pickup code <strong className="text-emerald-600 dark:text-emerald-300 font-mono font-bold print:text-black">{job.pickupCode}</strong> at the counter or contact <strong className="text-zinc-900 dark:text-white font-semibold print:text-black">{getStationConfig(job.stationId).operatorName} ({getStationConfig(job.stationId).whatsappNumber})</strong> to receive your printed document.
+                </>
+              ) : (
+                <>
+                  Your prints will be placed directly in the output tray labeled with code <strong className="text-emerald-600 dark:text-emerald-300 font-mono font-bold print:text-black">{job.pickupCode}</strong> at <strong className="text-zinc-900 dark:text-white font-semibold print:text-black">Block B, Room 29</strong>.
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -451,7 +467,9 @@ export default function JobStatusPage({
           </div>
           <div className="flex justify-between text-zinc-500 dark:text-zinc-400 print:text-slate-600">
             <span>Pickup Point</span>
-            <span className="text-emerald-600 dark:text-emerald-400 font-bold print:text-black">Block B, Room 29</span>
+            <span className="text-emerald-600 dark:text-emerald-400 font-bold print:text-black">
+              {getStationConfig(job.stationId).id === 'romen_xerox' ? getStationConfig(job.stationId).name : 'Block B, Room 29'}
+            </span>
           </div>
 
           <div className="flex justify-between items-center text-zinc-700 dark:text-zinc-300 pt-3 border-t border-zinc-100 dark:border-white/10 print:border-slate-300">

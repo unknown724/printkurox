@@ -28,13 +28,28 @@ except OSError:
     print("[ERROR] Another instance of PrintKurox daemon is already active on this system. Exiting immediately to prevent duplicate prints.")
     sys.exit(0)
 
+import json
+
 # Load local environment variables from daemon/.env or parent .env.local
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env.local'))
 
+# Load station configuration if present
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'station_config.json')
+station_data = {}
+if os.path.exists(CONFIG_PATH):
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as cf:
+            station_data = json.load(cf)
+    except Exception as e:
+        print(f"[WARN] Failed to read station_config.json: {e}")
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
+STATION_ID = os.getenv('STATION_ID', station_data.get('station_id', 'main'))
+STATION_NAME = os.getenv('STATION_NAME', station_data.get('station_name', 'PrintKurox Main Kiosk'))
+
 CLOUDFLARE_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID', '')
 CLOUDFLARE_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN', '')
 CLOUDFLARE_D1_DATABASE_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID', '')
@@ -45,11 +60,12 @@ R2_ENDPOINT = os.getenv('R2_ENDPOINT', f'https://{CLOUDFLARE_ACCOUNT_ID}.r2.clou
 R2_BUCKET_NAME = os.getenv('R2_BUCKET_NAME', 'kiosk-uploads')
 
 # Printer & SumatraPDF Configuration
-PRINTER_NAME = os.getenv('PRINTER_NAME', '')  # Leave blank for default Windows printer
+PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  # Leave blank for default Windows printer
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
-POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', '2'))
+POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
 TEMP_DIR = os.path.join(os.path.dirname(__file__), 'temp_prints')
-RETENTION_MINUTES = 120  # Keeps local print archive for 2 hours on laptop
+RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '15'))
+RETENTION_MINUTES = RETENTION_DAYS * 24 * 60  # Retains local print archive for 15 days on disk
 HEARTBEAT_INTERVAL_SECONDS = 30  # Write heartbeat to D1 this often
 
 # Ensure local temp directory exists
@@ -560,18 +576,15 @@ def get_windows_printer_telemetry():
 def write_heartbeat():
     """Upsert daemon heartbeat and printer telemetry with live hardware metrics."""
     try:
-        # Ensure table exists and record heartbeat
+        # Calculate consistent integer ID per station
+        station_slot = 1 if STATION_ID == 'main' else (abs(hash(STATION_ID)) % 500 + 10)
+
+        # Record station heartbeat
         query_d1("""
-            CREATE TABLE IF NOT EXISTS daemon_heartbeat (
-                id INTEGER PRIMARY KEY DEFAULT 1,
-                updated_at TEXT NOT NULL
-            )
-        """)
-        query_d1("""
-            INSERT INTO daemon_heartbeat (id, updated_at)
-            VALUES (1, datetime('now'))
-            ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now')
-        """)
+            INSERT INTO daemon_heartbeat (id, updated_at, station_id)
+            VALUES (?, datetime('now'), ?)
+            ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now'), station_id = excluded.station_id
+        """, [station_slot, STATION_ID])
 
         # Sync hardware telemetry
         telem = get_windows_printer_telemetry()
@@ -581,7 +594,7 @@ def write_heartbeat():
             WHERE id = 1
         """, [telem["name"], telem["is_online"], telem["status_text"], telem["spooler_jobs"]])
 
-        log(f"Heartbeat & Telemetry synced ({telem['name']}: {telem['status_text']})", "INFO")
+        log(f"Heartbeat & Telemetry synced [{STATION_ID}] ({telem['name']}: {telem['status_text']})", "INFO")
     except Exception as hb_err:
         log(f"Heartbeat write failed: {hb_err}", "WARN")
 
@@ -589,19 +602,22 @@ def write_heartbeat():
 # MAIN DAEMON LOOP
 # =============================================================================
 def main():
-    print("""
+    print(f"""
 +------------------------------------------------------------+
 |             PrintKurox -- Windows Print Daemon             |
+|          Station: {STATION_NAME:<41}|
+|          Station ID: {STATION_ID:<38}|
 |          Manual Duplex (Scenario B) + Silent Print         |
 +------------------------------------------------------------+
 """)
+    log(f"Station Target: [{STATION_ID}] {STATION_NAME}")
     log(f"Printer Target: {PRINTER_NAME or 'Windows Default Printer'}")
     sumatra_found = locate_sumatra()
     if sumatra_found:
         log(f"SumatraPDF Engine: {sumatra_found}", "SUCCESS")
     else:
         log("SumatraPDF not found in Program Files. (Will run in simulation mode)", "WARN")
-    log(f"Polling Cloudflare D1 every {POLL_INTERVAL_SECONDS}s...", "INFO")
+    log(f"Polling Cloudflare D1 for [{STATION_ID}] every {POLL_INTERVAL_SECONDS}s...", "INFO")
 
     # Write initial heartbeat so the frontend sees us immediately
     write_heartbeat()
@@ -609,9 +625,13 @@ def main():
 
     while True:
         try:
-            # Query for PAID jobs
-            sql = "SELECT * FROM print_jobs WHERE status = 'PAID' ORDER BY created_at ASC LIMIT 5"
-            jobs = query_d1(sql)
+            # Query for PAID jobs filtered strictly by station
+            if STATION_ID == 'main':
+                sql = "SELECT * FROM print_jobs WHERE status = 'PAID' AND (station_id = 'main' OR station_id IS NULL) ORDER BY created_at ASC LIMIT 5"
+                jobs = query_d1(sql)
+            else:
+                sql = "SELECT * FROM print_jobs WHERE status = 'PAID' AND station_id = ? ORDER BY created_at ASC LIMIT 5"
+                jobs = query_d1(sql, [STATION_ID])
 
             if jobs:
                 log(f"Found {len(jobs)} pending paid job(s) in queue!", "ALERT")

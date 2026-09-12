@@ -38,6 +38,7 @@ interface DocumentStudioProps {
   bwCount: number;
   colorCount: number;
   onRangeChange: (type: 'all' | 'custom', rangeStr: string) => void;
+  stationId?: string;
 }
 
 export function DocumentStudio({
@@ -59,6 +60,7 @@ export function DocumentStudio({
   bwCount,
   colorCount,
   onRangeChange,
+  stationId,
 }: DocumentStudioProps) {
   const [currentStep, setCurrentStep] = useState<StudioStep>(1);
   const [showRatesModal, setShowRatesModal] = useState(false);
@@ -375,6 +377,7 @@ export function DocumentStudio({
                 customRows={layoutSettings.customRows}
                 textOverlay={layoutSettings.textOverlay}
                 orientation={orientation}
+                stationId={stationId}
               />
             </div>
           </div>

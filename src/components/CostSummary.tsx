@@ -14,12 +14,14 @@ import {
   Eye,
   EyeOff,
   WifiOff,
+  MessageCircle,
 } from 'lucide-react';
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
 import { useRouter } from 'next/navigation';
 import { BorderBeam } from '@/components/ui/BorderBeam';
 import { TextOverlayConfig } from '@/components/studio/PhotoLayoutSelector';
+import { getStationConfig } from '@/lib/stations';
 
 declare global {
   interface Window {
@@ -40,6 +42,7 @@ interface CostSummaryProps {
   customRows?: number;
   textOverlay?: TextOverlayConfig;
   orientation?: 'auto' | 'portrait' | 'landscape';
+  stationId?: string;
 }
 
 export function CostSummary({
@@ -54,8 +57,10 @@ export function CostSummary({
   customRows,
   textOverlay,
   orientation = 'auto',
+  stationId = 'main',
 }: CostSummaryProps) {
   const router = useRouter();
+  const station = getStationConfig(stationId);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -65,15 +70,28 @@ export function CostSummary({
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffError, setStaffError] = useState<string | null>(null);
 
+  // Counter order submission state (e.g. for Romen Xerox)
+  const [counterOrder, setCounterOrder] = useState<{
+    jobId: string;
+    pickupCode: string;
+    totalPrice: number;
+    whatsappUrl: string;
+  } | null>(null);
+
   // Live printer status
   const { online: printerOnline, loading: statusLoading } = usePrinterStatus(30_000);
 
   useEffect(() => {
-    fetch('/api/admin/auth')
+    // Check both master admin and station admin session
+    fetch(`/api/station/auth?station_id=${encodeURIComponent(station.id)}`)
       .then((r) => r.json())
-      .then((d) => setIsAdmin(Boolean(d.isAdmin)))
+      .then((d) => {
+        if (d.isStationAdmin || d.isMasterAdmin) {
+          setIsAdmin(true);
+        }
+      })
       .catch(() => {});
-  }, []);
+  }, [station.id]);
 
   const getEffectiveOrientation = () => {
     if (orientation && orientation !== 'auto') {
@@ -107,6 +125,7 @@ export function CostSummary({
           customCols,
           customRows,
           textOverlay,
+          station_id: station.id,
         }),
       });
       const data = await res.json();
@@ -141,6 +160,7 @@ export function CostSummary({
           customRows,
           textOverlay,
           pin: staffPin,
+          station_id: station.id,
         }),
       });
       const data = await res.json();
@@ -151,6 +171,53 @@ export function CostSummary({
       setStaffError(err instanceof Error ? err.message : 'Invalid Passcode');
     } finally {
       setStaffLoading(false);
+    }
+  };
+
+  const handleCounterOrder = async () => {
+    setIsProcessing(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch('/api/counter-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileKey,
+          fileName,
+          docPages: totalPages,
+          pageRange,
+          colorMode: pricing.colorMode,
+          isDuplex: pricing.isDuplex,
+          copies: pricing.copies,
+          orientation: getEffectiveOrientation(),
+          pageConfigs,
+          layoutMode,
+          customCols,
+          customRows,
+          textOverlay,
+          station_id: station.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit counter order');
+
+      const cleanPhone = station.whatsappNumber.replace(/[^0-9]/g, '');
+      const modeText = pricing.colorMode === 'bw' ? 'B&W' : 'Color';
+      const sideText = pricing.isDuplex ? 'Double-sided' : 'Single-sided';
+      const waMessage = `Hi ${station.operatorName || 'Romen'} (${station.name})! 🖨️\nI submitted a print order at your counter.\n\n📄 File: ${fileName}\n🔖 Pickup Code: ${data.pickupCode}\n📊 Pages: ${pricing.totalPages} (${modeText}, ${sideText})\n📑 Copies: ${pricing.copies}\n💰 Total Amount: ₹${pricing.totalPrice}\n\nPlease approve & print my document. Thank you!`;
+      const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waMessage)}`;
+
+      setCounterOrder({
+        jobId: data.jobId,
+        pickupCode: data.pickupCode,
+        totalPrice: pricing.totalPrice,
+        whatsappUrl,
+      });
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'Error submitting counter order');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -175,6 +242,7 @@ export function CostSummary({
           customCols,
           customRows,
           textOverlay,
+          station_id: station.id,
         }),
       });
 
@@ -400,58 +468,102 @@ export function CostSummary({
         </button>
       )}
 
-      {/* Primary Pay Button (Golden Radiance Highlighted CTA) */}
-      <button
-        type="button"
-        onClick={handlePayAndPrint}
-        disabled={isProcessing}
-        className="relative overflow-hidden group w-full h-11 sm:h-11.5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(245,158,11,0.38)] hover:shadow-[0_0_36px_rgba(245,158,11,0.58)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-      >
-        {/* Moving light sheen */}
-        <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent animate-shimmer-sheen pointer-events-none" />
+      {/* Primary Action Button: Counter WhatsApp submit OR Razorpay Pay & Print */}
+      {station.requireCounterApproval ? (
+        <button
+          type="button"
+          onClick={handleCounterOrder}
+          disabled={isProcessing}
+          className="relative overflow-hidden group w-full h-11 sm:h-12 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(16,185,129,0.38)] hover:shadow-[0_0_36px_rgba(16,185,129,0.58)] border border-emerald-400/50 transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        >
+          <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer-sheen pointer-events-none" />
+          {isProcessing ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin text-white" />
+              <span className="tracking-wide">Submitting Order…</span>
+            </>
+          ) : (
+            <>
+              <MessageCircle className="w-5 h-5 fill-white shrink-0" />
+              <span className="tracking-wide font-black">
+                Submit &amp; Contact {station.operatorName || 'Romen'} (₹{pricing.totalPrice})
+              </span>
+              <ArrowRight className="w-4 h-4 text-white opacity-85 group-hover:translate-x-1 transition-transform" />
+            </>
+          )}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={handlePayAndPrint}
+          disabled={isProcessing}
+          className="relative overflow-hidden group w-full h-11 sm:h-11.5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(245,158,11,0.38)] hover:shadow-[0_0_36px_rgba(245,158,11,0.58)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        >
+          {/* Moving light sheen */}
+          <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent animate-shimmer-sheen pointer-events-none" />
 
-        {isProcessing ? (
-          <>
-            <Loader2 className="w-5 h-5 animate-spin text-zinc-950" />
-            <span className="tracking-wide">Processing Secure Payment…</span>
-          </>
-        ) : (
-          <>
-            <Printer className="w-5 h-5 text-zinc-950 stroke-[2.2]" />
-            <span className="tracking-wide font-black">
-              {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} & Queue`}
-            </span>
-            <ArrowRight className="w-4 h-4 text-zinc-950 stroke-[2.5] opacity-85 group-hover:translate-x-1 transition-transform" />
-          </>
-        )}
-      </button>
+          {isProcessing ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin text-zinc-950" />
+              <span className="tracking-wide">Processing Secure Payment…</span>
+            </>
+          ) : (
+            <>
+              <Printer className="w-5 h-5 text-zinc-950 stroke-[2.2]" />
+              <span className="tracking-wide font-black">
+                {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} & Queue`}
+              </span>
+              <ArrowRight className="w-4 h-4 text-zinc-950 stroke-[2.5] opacity-85 group-hover:translate-x-1 transition-transform" />
+            </>
+          )}
+        </button>
+      )}
 
       {/* Payment methods & Staff trigger */}
-      <div className="p-2.5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white/50 dark:bg-[#08080a]/80 backdrop-blur-md space-y-1.5 text-xs">
-        <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
-          <button
-            type="button"
-            onClick={() => setShowStaffModal(true)}
-            className="flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors cursor-pointer"
-            title="Staff passcode access"
-          >
-            <Lock className="w-3 h-3 text-emerald-500" />
-            <span>RBI Compliant &amp; TLS Encrypted</span>
-          </button>
-          <span>Instant Verification</span>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
-          {['UPI', 'Google Pay', 'PhonePe', 'Paytm', 'Cards', 'NetBanking'].map((m) => (
-            <span
-              key={m}
-              className="px-2.5 py-0.5 rounded-full bg-white/80 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 text-zinc-700 dark:text-zinc-300 font-medium shadow-2xs"
+      {station.requireCounterApproval ? (
+        <div className="p-2.5 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 backdrop-blur-md space-y-1 text-xs text-center">
+          <p className="text-emerald-700 dark:text-emerald-300 font-semibold text-[11px]">
+            Pay at Counter in Cash or UPI • Order picked up at {station.name}
+          </p>
+          <div className="flex items-center justify-center gap-2 text-[10px] text-zinc-500">
+            <span>Operator: {station.operatorName}</span>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={() => setShowStaffModal(true)}
+              className="text-amber-500 hover:underline cursor-pointer font-medium"
             >
-              {m}
-            </span>
-          ))}
+              Staff Passcode Unlock
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="p-2.5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white/50 dark:bg-[#08080a]/80 backdrop-blur-md space-y-1.5 text-xs">
+          <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+            <button
+              type="button"
+              onClick={() => setShowStaffModal(true)}
+              className="flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+              title="Staff passcode access"
+            >
+              <Lock className="w-3 h-3 text-emerald-500" />
+              <span>RBI Compliant &amp; TLS Encrypted</span>
+            </button>
+            <span>Instant Verification</span>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+            {['UPI', 'Google Pay', 'PhonePe', 'Paytm', 'Cards', 'NetBanking'].map((m) => (
+              <span
+                key={m}
+                className="px-2.5 py-0.5 rounded-full bg-white/80 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 text-zinc-700 dark:text-zinc-300 font-medium shadow-2xs"
+              >
+                {m}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {errorMessage && (
         <div className="p-3 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/20 text-xs text-rose-800 dark:text-rose-300 flex items-center justify-center gap-2">
@@ -539,6 +651,70 @@ export function CostSummary({
             >
               Permanent device authorization at /adminkurox →
             </a>
+          </div>
+        </div>
+      )}
+
+      {/* Counter Order Submitted Modal (Direct WhatsApp Handoff) */}
+      {counterOrder && (
+        <div
+          onClick={() => setCounterOrder(null)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in-up"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-md w-full rounded-2xl border border-emerald-500/40 bg-zinc-950 p-6 shadow-2xl space-y-4 text-center animate-scale-in"
+          >
+            <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+              <Check className="w-6 h-6 stroke-[2.5]" />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-bold text-white tracking-tight">Order Ready for {station.name}!</h3>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                Pay at the counter and contact {station.operatorName || 'Romen'} on WhatsApp to print your document immediately.
+              </p>
+            </div>
+
+            {/* Pickup Code Card */}
+            <div className="p-4 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-1.5">
+              <span className="text-[11px] text-zinc-400 uppercase tracking-widest font-semibold">Your Pickup Code</span>
+              <div className="text-3xl sm:text-4xl font-black text-amber-400 font-mono tracking-wider">
+                {counterOrder.pickupCode}
+              </div>
+              <div className="text-xs font-semibold text-zinc-300 pt-1">
+                Amount to Pay at Counter: <span className="text-emerald-400 font-bold font-mono text-sm">₹{counterOrder.totalPrice}</span>
+              </div>
+            </div>
+
+            {/* WhatsApp CTA */}
+            <a
+              href={counterOrder.whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(16,185,129,0.45)] transition-all active:scale-[0.98] cursor-pointer"
+            >
+              <MessageCircle className="w-5 h-5 fill-white" />
+              <span>Contact {station.operatorName || 'Romen'} on WhatsApp</span>
+            </a>
+
+            {/* Sub-actions */}
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => router.push(`/status/${counterOrder.jobId}`)}
+                className="flex-1 py-2 px-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Track Live Status
+              </button>
+              <button
+                type="button"
+                onClick={() => setCounterOrder(null)}
+                className="py-2 px-4 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
