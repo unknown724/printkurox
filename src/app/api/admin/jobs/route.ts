@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    let query = `SELECT id, pickup_code, file_name, file_key, total_pages, color_mode, is_duplex, copies, total_price, status, payment_id, created_at, station_id
+    let query = `SELECT id, pickup_code, file_name, file_key, total_pages, color_mode, is_duplex, copies, total_price, status, payment_id, created_at, expires_at, station_id
                  FROM print_jobs`;
     const params: string[] = [];
 
@@ -46,7 +46,16 @@ export async function GET(req: NextRequest) {
 
     query += ` ORDER BY created_at DESC LIMIT 50`;
 
-    const jobs = await queryD1(query, params);
+    const rawJobs = await queryD1<PrintJobRecord & { expires_at?: string; file_key?: string }>(query, params);
+    const now = Date.now();
+    const jobs = rawJobs.map((job) => {
+      const isExpired = job.expires_at ? new Date(job.expires_at).getTime() <= now : false;
+      const isPurged = !job.file_key || (isExpired && (job.status === 'COMPLETED' || job.status === 'FAILED'));
+      return {
+        ...job,
+        is_purged: isPurged,
+      };
+    });
 
     return NextResponse.json({ success: true, jobs });
   } catch (err: unknown) {
@@ -136,6 +145,24 @@ export async function PATCH(req: NextRequest) {
         success: true,
         jobId,
         message: `Job ${job.pickup_code} permanently deleted and purged`,
+      });
+    }
+
+    // 3. Purge file only (retain order in history)
+    if (action === 'purge_file') {
+      if (job.file_key) {
+        try {
+          await deleteFromR2(job.file_key);
+        } catch (r2Err) {
+          console.warn(`Failed to delete ${job.file_key} from R2:`, r2Err);
+        }
+      }
+      await executeD1(`UPDATE print_jobs SET file_key = NULL WHERE id = ?`, [jobId]);
+
+      return NextResponse.json({
+        success: true,
+        jobId,
+        message: `Cloud document for ${job.pickup_code} permanently wiped`,
       });
     }
 

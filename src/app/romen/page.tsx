@@ -24,6 +24,7 @@ import {
   Layers,
   AlertCircle,
   Trash2,
+  Lock,
 } from 'lucide-react';
 import { BorderBeam } from '@/components/ui/BorderBeam';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
@@ -41,6 +42,8 @@ interface JobItem {
   status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING' | 'COMPLETED' | 'FAILED';
   payment_id?: string;
   created_at: string;
+  expires_at?: string;
+  is_purged?: boolean;
   station_id?: string;
 }
 
@@ -157,7 +160,7 @@ export default function RomenStationPortal() {
     }
   };
 
-  const handleJobAction = async (jobId: string, action: 'approve' | 'reprint' | 'cancel' | 'complete' | 'delete') => {
+  const handleJobAction = async (jobId: string, action: 'approve' | 'reprint' | 'cancel' | 'complete' | 'delete' | 'purge_file') => {
     setActionLoadingId(jobId);
     try {
       const res = await fetch('/api/admin/jobs', {
@@ -561,6 +564,19 @@ export default function RomenStationPortal() {
                           Cancelled / Removed
                         </span>
                       )}
+                      {(isCompleted || job.status === 'FAILED') && (
+                        job.is_purged ? (
+                          <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 border border-zinc-700/40 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1" title="Document permanently wiped from cloud storage (Zero-Retention Policy)">
+                            <Lock className="w-2.5 h-2.5 text-zinc-500" />
+                            <span>Cloud Purged</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-400 border border-sky-500/30 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1" title="Document actively stored in cloud">
+                            <FileText className="w-2.5 h-2.5" />
+                            <span>Storage Active</span>
+                          </span>
+                        )
+                      )}
                     </div>
 
                     <div className="flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400 flex-wrap">
@@ -585,18 +601,26 @@ export default function RomenStationPortal() {
                     </span>
                   </div>
 
-                  {/* View document */}
-                  {job.file_key && (
+                  {/* View document / Purged indicator */}
+                  {job.file_key && !job.is_purged ? (
                     <a
                       href={`/api/view-file?key=${encodeURIComponent(job.file_key)}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300"
-                      title="Inspect Document"
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 cursor-pointer shadow-2xs"
+                      title="Inspect Document (Opens in new tab)"
                     >
-                      <Eye className="w-3.5 h-3.5" />
+                      <Eye className="w-3.5 h-3.5 text-emerald-500" />
                       <span>View</span>
                     </a>
+                  ) : (
+                    <span
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-zinc-800/30 text-zinc-500 border border-zinc-800/60 cursor-not-allowed select-none"
+                      title="Document permanently wiped from cloud storage (Zero-Retention Policy)"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-zinc-600" />
+                      <span>Purged</span>
+                    </span>
                   )}
 
                   {/* Approve and Print (if pending) */}
@@ -647,6 +671,24 @@ export default function RomenStationPortal() {
                     >
                       <XCircle className="w-3.5 h-3.5" />
                       <span>{isPending ? 'Decline' : 'Cancel Queue'}</span>
+                    </button>
+                  )}
+
+                  {/* Purge file button if still stored in cloud */}
+                  {(job.status === 'COMPLETED' || job.status === 'FAILED') && !job.is_purged && job.file_key && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Wipe document for ${job.pickup_code} from cloud storage now? Order will remain in history.`)) {
+                          handleJobAction(job.id, 'purge_file');
+                        }
+                      }}
+                      disabled={isLoading}
+                      className="px-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:border-amber-500/50 hover:bg-amber-500/10 text-zinc-400 hover:text-amber-400 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Wipe file from cloud storage immediately"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Purge File</span>
                     </button>
                   )}
 
