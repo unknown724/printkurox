@@ -175,12 +175,11 @@ def claim_paid_job(job_id):
 # =============================================================================
 def locate_sumatra():
     """Finds SumatraPDF.exe in common locations or in PATH."""
-    daemon_dir = os.path.dirname(__file__)
     candidates = [
         SUMATRA_PATH,
-        os.path.join(daemon_dir, SUMATRA_PATH),
-        os.path.join(daemon_dir, "sumatra", "SumatraPDF-3.5.2-64.exe"),
-        os.path.join(daemon_dir, "sumatra", "SumatraPDF.exe"),
+        os.path.join(BASE_DIR, SUMATRA_PATH),
+        os.path.join(BASE_DIR, "sumatra", "SumatraPDF-3.5.2-64.exe"),
+        os.path.join(BASE_DIR, "sumatra", "SumatraPDF.exe"),
         r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
         r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe",
         os.path.expandvars(r"%LOCALAPPDATA%\SumatraPDF\SumatraPDF.exe"),
