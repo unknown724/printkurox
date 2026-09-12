@@ -46,9 +46,20 @@ interface JobItem {
 export default function RomenStationPortal() {
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedPin = localStorage.getItem('romen_saved_pin');
+      if (savedPin) {
+        setPin(savedPin);
+        setRememberDevice(true);
+      }
+    }
+  }, []);
 
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -106,12 +117,21 @@ export default function RomenStationPortal() {
       const res = await fetch('/api/station/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ station_id: 'romen_xerox', pin }),
+        body: JSON.stringify({ station_id: 'romen_xerox', pin, rememberDevice }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'Incorrect password');
       }
+
+      if (typeof window !== 'undefined') {
+        if (rememberDevice) {
+          localStorage.setItem('romen_saved_pin', pin.trim());
+        } else {
+          localStorage.removeItem('romen_saved_pin');
+        }
+      }
+
       setIsAuthenticated(true);
     } catch (err: unknown) {
       setLoginError(err instanceof Error ? err.message : 'Invalid password');
@@ -123,6 +143,9 @@ export default function RomenStationPortal() {
   const handleLogout = async () => {
     try {
       await fetch('/api/station/auth', { method: 'DELETE' });
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('romen_saved_pin');
+      }
       setIsAuthenticated(false);
       setPin('');
     } catch (err) {
@@ -241,6 +264,17 @@ export default function RomenStationPortal() {
                 {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+
+            {/* Remember Device Option */}
+            <label className="flex items-center justify-center gap-2 cursor-pointer select-none text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 transition-colors">
+              <input
+                type="checkbox"
+                checked={rememberDevice}
+                onChange={(e) => setRememberDevice(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-zinc-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span>Remember this device (Stay logged in for 1 year)</span>
+            </label>
 
             <button
               type="submit"

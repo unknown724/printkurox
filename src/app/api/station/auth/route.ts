@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { station_id: rawStationId, pin } = await req.json();
+    const { station_id: rawStationId, pin, rememberDevice } = await req.json();
     const station = getStationConfig(rawStationId || 'romen_xerox');
 
     if (!pin || !validateStationPin(station.id, pin)) {
@@ -54,13 +54,14 @@ export async function POST(req: NextRequest) {
       message: `Authenticated as ${station.operatorName} (${station.name})`,
     });
 
-    // Store in cookie for 30 days
+    // Store in cookie for 365 days if rememberDevice, else 30 days
+    const maxAgeSeconds = rememberDevice ? 365 * 24 * 60 * 60 : 30 * 24 * 60 * 60;
     res.cookies.set('station_admin_pin', pin.trim(), {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
-      maxAge: 30 * 24 * 60 * 60,
+      maxAge: maxAgeSeconds,
     });
 
     return res;
