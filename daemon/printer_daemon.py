@@ -15,20 +15,11 @@ import subprocess
 import requests
 import winsound
 import socket
+import json
 from datetime import datetime, timezone
 import boto3
 from botocore.client import Config
 from dotenv import load_dotenv
-
-# Ensure only one instance of the daemon can ever run on this machine
-_lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    _lock_socket.bind(('127.0.0.1', 49152))
-except OSError:
-    print("[ERROR] Another instance of PrintKurox daemon is already active on this system. Exiting immediately to prevent duplicate prints.")
-    sys.exit(0)
-
-import json
 
 # Determine actual base directory whether running as raw Python or PyInstaller frozen .exe
 if getattr(sys, 'frozen', False):
@@ -56,10 +47,19 @@ if os.path.exists(CONFIG_PATH):
 STATION_ID = os.getenv('STATION_ID', station_data.get('station_id', 'main'))
 STATION_NAME = os.getenv('STATION_NAME', station_data.get('station_name', 'PrintKurox Main Kiosk'))
 
+# Ensure only one instance of the daemon can ever run on this machine per station
+lock_port = 49152 if STATION_ID == 'main' else 49153
+_lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _lock_socket.bind(('127.0.0.1', lock_port))
+except OSError:
+    print(f"[ERROR] Another instance of PrintKurox daemon for [{STATION_ID}] is already active on this system. Exiting immediately to prevent duplicate prints.")
+    sys.exit(0)
+
 import base64
 
 CLOUDFLARE_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID') or '948fd75d8b84a5cf20559d6aa789d4dd'
-_DEFAULT_TOKEN = base64.b64decode('Y2Z1dF9wZTVnWEhjVFBMVWVFRkVrZXc5bUVyN1BaRFVycU9VUzdzeEk1amhEOGM2MzhjYzQ=').decode('utf-8')
+_DEFAULT_TOKEN = base64.b64decode('Y2Z1dF9wZTVnWEhjVFBMVWVERkVLZXc5bUVyN1BaRFVycU9VUzdzeEk1amhEOGM2MzhjYzQ=').decode('utf-8')
 CLOUDFLARE_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN') or _DEFAULT_TOKEN
 CLOUDFLARE_D1_DATABASE_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID') or '3f4d4547-e86b-4cdd-a867-9ebba19c12c9'
 
@@ -104,7 +104,7 @@ def log(msg, level="INFO"):
         "RESET": "\033[0m"
     }
     prefix = colors.get(level, "") + f"[{level}]" + colors["RESET"]
-    print(f"[{ts}] {prefix} {msg}")
+    print(f"[{ts}] {prefix} {msg}", flush=True)
 
 def play_chime():
     """Plays an alert chime on Windows to notify operator."""
@@ -495,8 +495,13 @@ def purge_old_local_files():
 # =============================================================================
 def record_supplies_depletion(job):
     """
-    Atomically deducts printed pages and sheets from printer_supplies in D1.
+    Atomically deducts printed pages and sheets from printer_supplies in D1 for main kiosk.
+    Partner stations manage their own paper and ink physically.
     """
+    if STATION_ID != 'main':
+        log(f"Partner station [{STATION_ID}]: local supplies managed independently, skipping central kiosk deduction", "INFO")
+        return
+
     try:
         pages = max(1, int(job.get("total_pages") or 1)) * max(1, int(job.get("copies") or 1))
         duplex_sheets = int(job.get("duplex_sheets") or 0) * max(1, int(job.get("copies") or 1))
@@ -538,8 +543,18 @@ def record_supplies_depletion(job):
 
 def get_windows_printer_telemetry():
     """Queries Windows Spooler via PowerShell for live status and queue count."""
-    target_name = (PRINTER_NAME or "").strip() or "EPSON L3210 Series"
+    target_name = (PRINTER_NAME or "").strip()
     try:
+        # If no specific printer is designated, detect the Windows default printer dynamically
+        if not target_name:
+            ps_find_def = "Get-CimInstance Win32_Printer | Where-Object Default | Select-Object -ExpandProperty Name"
+            r_def = subprocess.run(["powershell", "-NoProfile", "-Command", ps_find_def], capture_output=True, text=True, timeout=5)
+            if r_def.returncode == 0 and r_def.stdout.strip():
+                target_name = r_def.stdout.strip().splitlines()[0].strip()
+
+        if not target_name:
+            target_name = "Default Printer"
+
         ps_cmd = f"Get-Printer -Name '{target_name}' -ErrorAction SilentlyContinue | Select-Object PrinterStatus, JobCount | ConvertTo-Json"
         res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
         if res.returncode == 0 and res.stdout.strip():
@@ -550,19 +565,22 @@ def get_windows_printer_telemetry():
 
             # Map Windows PrinterStatus enum
             status_map = {
-                0: "Normal",
-                2: "Normal",
-                3: "Printing",
+                0: "Ready",
+                2: "Ready",
+                3: "Ready",
                 4: "Offline",
-                5: "Printer Error",
+                5: "Out of Paper",
                 6: "Paper Jam",
-                7: "Out of Paper",
-                8: "Paper Problem",
+                7: "Offline",
+                8: "Offline",
                 9: "Paused",
-                10: "User Intervention"
+                10: "Busy",
+                11: "Printing",
+                13: "Offline",
+                21: "User Intervention"
             }
-            status_text = status_map.get(raw_status, str(raw_status) if raw_status else "Normal")
-            is_online = 0 if raw_status == 4 else 1
+            status_text = status_map.get(raw_status, "Ready" if raw_status in (0, 2, 3) else "Offline" if raw_status in (4, 7, 8, 13) else str(raw_status))
+            is_online = 0 if raw_status in [4, 7, 8, 13] else 1
 
             return {
                 "name": target_name,
@@ -573,9 +591,9 @@ def get_windows_printer_telemetry():
     except Exception:
         pass
     return {
-        "name": target_name,
+        "name": target_name or "Default Printer",
         "is_online": 1,
-        "status_text": "Normal",
+        "status_text": "Ready",
         "spooler_jobs": 0
     }
 
@@ -585,8 +603,7 @@ def get_windows_printer_telemetry():
 def write_heartbeat():
     """Upsert daemon heartbeat and printer telemetry with live hardware metrics."""
     try:
-        # Calculate consistent integer ID per station
-        station_slot = 1 if STATION_ID == 'main' else (abs(hash(STATION_ID)) % 500 + 10)
+        station_slot = 154 if STATION_ID in ['romen', 'romen_xerox'] else 1
 
         # Record station heartbeat
         query_d1("""
@@ -595,15 +612,17 @@ def write_heartbeat():
             ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now'), station_id = excluded.station_id
         """, [station_slot, STATION_ID])
 
-        # Sync hardware telemetry
-        telem = get_windows_printer_telemetry()
-        query_d1("""
-            UPDATE printer_telemetry
-            SET printer_name = ?, is_online = ?, status_text = ?, spooler_jobs = ?, updated_at = datetime('now')
-            WHERE id = 1
-        """, [telem["name"], telem["is_online"], telem["status_text"], telem["spooler_jobs"]])
-
-        log(f"Heartbeat & Telemetry synced [{STATION_ID}] ({telem['name']}: {telem['status_text']})", "INFO")
+        # Sync hardware telemetry for main central kiosk only (partner stations have separate hardware)
+        if STATION_ID == 'main':
+            telem = get_windows_printer_telemetry()
+            query_d1("""
+                UPDATE printer_telemetry
+                SET printer_name = ?, is_online = ?, status_text = ?, spooler_jobs = ?, updated_at = datetime('now')
+                WHERE id = 1
+            """, [telem["name"], telem["is_online"], telem["status_text"], telem["spooler_jobs"]])
+            log(f"Heartbeat & Telemetry synced [{STATION_ID}] ({telem['name']}: {telem['status_text']})", "INFO")
+        else:
+            log(f"Heartbeat synced [{STATION_ID}] (Slot {station_slot})", "INFO")
     except Exception as hb_err:
         log(f"Heartbeat write failed: {hb_err}", "WARN")
 
