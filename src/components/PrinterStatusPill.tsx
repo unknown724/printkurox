@@ -2,9 +2,12 @@
 
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
 import { WifiOff } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 
-export function PrinterStatusPill() {
-  const { online, loading, ageSeconds } = usePrinterStatus(30_000);
+export function PrinterStatusPill({ stationId }: { stationId?: string }) {
+  const searchParams = useSearchParams();
+  const activeStation = stationId || searchParams.get('station') || undefined;
+  const { online, loading, ageSeconds } = usePrinterStatus(30_000, activeStation);
 
   if (loading) {
     return (

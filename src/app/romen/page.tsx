@@ -25,6 +25,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { BorderBeam } from '@/components/ui/BorderBeam';
+import { PrinterStatusPill } from '@/components/PrinterStatusPill';
 
 interface JobItem {
   id: string;
@@ -279,9 +280,7 @@ export default function RomenStationPortal() {
               <h1 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-zinc-100">
                 Romen Xerox
               </h1>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
-                Station Online
-              </span>
+              <PrinterStatusPill stationId="romen_xerox" />
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               Operator: Romen · Contact: +91 69092 28847

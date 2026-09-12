@@ -34,12 +34,19 @@ async function ensureTable() {
   `);
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    let rows = await queryD1('SELECT updated_at FROM daemon_heartbeat WHERE id = 1');
-    if (rows === null) {
-      await ensureTable();
-      rows = await queryD1('SELECT updated_at FROM daemon_heartbeat WHERE id = 1');
+    const { searchParams } = new URL(req.url);
+    const stationParam = searchParams.get('station_id') || searchParams.get('station');
+    const isRomen = stationParam === 'romen' || stationParam === 'romen_xerox';
+    const stationSlot = isRomen ? 154 : 1;
+
+    let rows = await queryD1(`SELECT updated_at FROM daemon_heartbeat WHERE id = ${stationSlot} OR station_id = '${isRomen ? 'romen_xerox' : 'main'}' ORDER BY updated_at DESC LIMIT 1`);
+    if (rows === null || rows.length === 0) {
+      if (!isRomen) {
+        await ensureTable();
+        rows = await queryD1('SELECT updated_at FROM daemon_heartbeat WHERE id = 1');
+      }
     }
 
     if (!rows || rows.length === 0) {

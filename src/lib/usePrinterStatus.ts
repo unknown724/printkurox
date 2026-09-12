@@ -9,7 +9,7 @@ interface PrinterStatus {
   loading: boolean;
 }
 
-export function usePrinterStatus(pollIntervalMs = 30_000): PrinterStatus {
+export function usePrinterStatus(pollIntervalMs = 30_000, stationId?: string): PrinterStatus {
   const [status, setStatus] = useState<PrinterStatus>({
     online: true, // Optimistic default until we know
     lastSeen: null,
@@ -19,7 +19,10 @@ export function usePrinterStatus(pollIntervalMs = 30_000): PrinterStatus {
 
   const check = useCallback(async () => {
     try {
-      const res = await fetch('/api/printer-status', { cache: 'no-store' });
+      const url = stationId
+        ? `/api/printer-status?station_id=${encodeURIComponent(stationId)}`
+        : '/api/printer-status';
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       setStatus({
