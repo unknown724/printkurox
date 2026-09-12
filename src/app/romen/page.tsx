@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   Layers,
   AlertCircle,
+  Trash2,
 } from 'lucide-react';
 import { BorderBeam } from '@/components/ui/BorderBeam';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
@@ -68,6 +69,7 @@ export default function RomenStationPortal() {
 
   const [showQrModal, setShowQrModal] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [clearHistoryLoading, setClearHistoryLoading] = useState(false);
 
   // Check auth session
   const checkAuth = useCallback(async () => {
@@ -90,24 +92,22 @@ export default function RomenStationPortal() {
     setLoadingJobs(true);
     try {
       const res = await fetch('/api/admin/jobs?station_id=romen_xerox');
-      if (res.ok) {
-        const data = await res.json();
-        setJobs(data.jobs || []);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.jobs)) {
+        setJobs(data.jobs);
       }
     } catch (err) {
-      console.error('Failed to load station jobs:', err);
+      console.error('Error fetching jobs:', err);
     } finally {
       setLoadingJobs(false);
     }
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchJobs();
-      const interval = setInterval(fetchJobs, 6000); // 6s auto-refresh
-      return () => clearInterval(interval);
-    }
-  }, [isAuthenticated, fetchJobs]);
+    fetchJobs();
+    const interval = setInterval(fetchJobs, 3000);
+    return () => clearInterval(interval);
+  }, [fetchJobs]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,11 +117,15 @@ export default function RomenStationPortal() {
       const res = await fetch('/api/station/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ station_id: 'romen_xerox', pin, rememberDevice }),
+        body: JSON.stringify({
+          station_id: 'romen_xerox',
+          pin,
+          remember_device: rememberDevice,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Incorrect password');
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Incorrect passcode');
       }
 
       if (typeof window !== 'undefined') {
@@ -153,7 +157,7 @@ export default function RomenStationPortal() {
     }
   };
 
-  const handleJobAction = async (jobId: string, action: 'approve' | 'reprint' | 'cancel' | 'complete') => {
+  const handleJobAction = async (jobId: string, action: 'approve' | 'reprint' | 'cancel' | 'complete' | 'delete') => {
     setActionLoadingId(jobId);
     try {
       const res = await fetch('/api/admin/jobs', {
@@ -172,6 +176,28 @@ export default function RomenStationPortal() {
       console.error('Action failed:', err);
     } finally {
       setActionLoadingId(null);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    if (!confirm(`Are you sure you want to permanently clear all completed and cancelled jobs from history? All associated cloud files will be permanently wiped.`)) return;
+    setClearHistoryLoading(true);
+    try {
+      const res = await fetch('/api/admin/jobs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'clear_history',
+          station_id: 'romen_xerox',
+        }),
+      });
+      if (res.ok) {
+        await fetchJobs();
+      }
+    } catch (err) {
+      console.error('Clear history failed:', err);
+    } finally {
+      setClearHistoryLoading(false);
     }
   };
 
@@ -448,6 +474,23 @@ export default function RomenStationPortal() {
         >
           History ({completedJobs.length})
         </button>
+
+        {completedJobs.length > 0 && (
+          <button
+            type="button"
+            onClick={handleClearHistory}
+            disabled={clearHistoryLoading}
+            className="ml-auto px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 border border-rose-500/20"
+            title="Delete all completed/cancelled jobs from history and purge files from storage"
+          >
+            {clearHistoryLoading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            <span>Clear History</span>
+          </button>
+        )}
       </div>
 
       {/* Jobs List */}
@@ -604,6 +647,24 @@ export default function RomenStationPortal() {
                     >
                       <XCircle className="w-3.5 h-3.5" />
                       <span>{isPending ? 'Decline' : 'Cancel Queue'}</span>
+                    </button>
+                  )}
+
+                  {/* Delete / Purge single job from history */}
+                  {(job.status === 'COMPLETED' || job.status === 'FAILED') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Delete job ${job.pickup_code} from history and permanently wipe document from cloud storage?`)) {
+                          handleJobAction(job.id, 'delete');
+                        }
+                      }}
+                      disabled={isLoading}
+                      className="px-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:border-rose-500/50 hover:bg-rose-500/10 text-zinc-400 hover:text-rose-500 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Permanently Delete and Purge Document"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
                     </button>
                   )}
                 </div>

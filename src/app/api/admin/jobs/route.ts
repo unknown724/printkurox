@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { queryD1, executeD1, PrintJobRecord } from '@/lib/cloudflare-d1';
 import { verifyAdminToken, ADMIN_COOKIE_NAME, validateAdminPin } from '@/lib/admin-auth';
 import { validateStationPin, getStationConfig } from '@/lib/stations';
+import { deleteFromR2 } from '@/lib/cloudflare-r2';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,17 +63,56 @@ export async function PATCH(req: NextRequest) {
     const station = rawStationId ? getStationConfig(rawStationId) : null;
     const stationId = station ? station.id : null;
 
-    if (!jobId || !action) {
-      return NextResponse.json({ error: 'jobId and action are required' }, { status: 400 });
+    if (!action) {
+      return NextResponse.json({ error: 'action is required' }, { status: 400 });
     }
 
     if (!(await isAuthorized(req, stationId))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 1. Clear All Completed/Failed History
+    if (action === 'clear_history') {
+      let query = `SELECT id, file_key FROM print_jobs WHERE status IN ('COMPLETED', 'FAILED')`;
+      const params: string[] = [];
+      if (stationId) {
+        query += ` AND station_id = ?`;
+        params.push(stationId);
+      }
+      const historyJobs = await queryD1<{ id: string; file_key: string }>(query, params);
+
+      // Purge files from R2
+      for (const hj of historyJobs) {
+        if (hj.file_key) {
+          try {
+            await deleteFromR2(hj.file_key);
+          } catch (r2Err) {
+            console.warn(`Failed to delete ${hj.file_key} from R2:`, r2Err);
+          }
+        }
+      }
+
+      // Delete rows from D1
+      let deleteSql = `DELETE FROM print_jobs WHERE status IN ('COMPLETED', 'FAILED')`;
+      if (stationId) {
+        deleteSql += ` AND station_id = ?`;
+      }
+      await executeD1(deleteSql, params);
+
+      return NextResponse.json({
+        success: true,
+        clearedCount: historyJobs.length,
+        message: `Successfully cleared ${historyJobs.length} job(s) from history and purged files`,
+      });
+    }
+
+    if (!jobId) {
+      return NextResponse.json({ error: 'jobId is required' }, { status: 400 });
+    }
+
     // Verify job exists
     const jobs = await queryD1<PrintJobRecord>(
-      `SELECT id, status, pickup_code, station_id FROM print_jobs WHERE id = ? LIMIT 1`,
+      `SELECT id, status, pickup_code, file_key, station_id FROM print_jobs WHERE id = ? LIMIT 1`,
       [jobId]
     );
     if (jobs.length === 0) {
@@ -80,6 +120,24 @@ export async function PATCH(req: NextRequest) {
     }
 
     const job = jobs[0];
+
+    // 2. Delete single job from history & purge R2 file
+    if (action === 'delete') {
+      if (job.file_key) {
+        try {
+          await deleteFromR2(job.file_key);
+        } catch (r2Err) {
+          console.warn(`Failed to delete ${job.file_key} from R2:`, r2Err);
+        }
+      }
+      await executeD1(`DELETE FROM print_jobs WHERE id = ?`, [jobId]);
+
+      return NextResponse.json({
+        success: true,
+        jobId,
+        message: `Job ${job.pickup_code} permanently deleted and purged`,
+      });
+    }
 
     let newStatus = job.status;
     let paymentIdUpdate: string | null = null;
