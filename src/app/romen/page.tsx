@@ -542,21 +542,17 @@ export default function RomenStationPortal() {
                     </span>
                   </div>
 
-                  {/* View document (active before printing, purged after completion) */}
+                  {/* View document */}
                   {job.file_key && (
                     <a
                       href={`/api/view-file?key=${encodeURIComponent(job.file_key)}`}
                       target="_blank"
                       rel="noreferrer"
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                        job.status === 'COMPLETED'
-                          ? 'bg-zinc-100/50 dark:bg-zinc-800/40 text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300'
-                          : 'bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300'
-                      }`}
-                      title={job.status === 'COMPLETED' ? 'Document purged from cloud storage after printing' : 'Inspect Document'}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300"
+                      title="Inspect Document"
                     >
                       <Eye className="w-3.5 h-3.5" />
-                      <span>{job.status === 'COMPLETED' ? 'Purged' : 'View'}</span>
+                      <span>View</span>
                     </a>
                   )}
 

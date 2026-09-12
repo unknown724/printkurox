@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
     const byteArray = await (fileBody as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
     const headers = new Headers();
     headers.set('Content-Type', contentType);
+    headers.set('Content-Disposition', 'inline; filename="document.pdf"');
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cache-Control', 'public, max-age=900');
 
