@@ -393,6 +393,9 @@ export function DocumentStudio({
                 textOverlay={layoutSettings.textOverlay}
                 orientation={orientation}
                 stationId={stationId}
+                customScale={advancedOptions.customScale || 100}
+                fitMode={layoutSettings.fitMode || advancedOptions.scaling || 'fit'}
+                drawBorder={layoutSettings.drawBorder}
               />
             </div>
           </div>

@@ -126,33 +126,105 @@ export async function convertDocxToPdfClient(
         windowWidth: 820,
       });
 
-      const imgDataUrl = canvas.toDataURL('image/jpeg', 0.95);
-      const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
-      const jpgImage = await pdfDoc.embedJpg(imgDataUrl);
+      const a4Ratio = A4_HEIGHT / A4_WIDTH;
+      const standardPageHeightPx = Math.round(canvas.width * a4Ratio);
 
-      // Preserve aspect ratio cleanly on A4
-      const canvasAspect = canvas.width / canvas.height;
-      const a4Aspect = A4_WIDTH / A4_HEIGHT;
+      // If section is reasonably close to single A4 page height (<= 108%), render as 1 page
+      if (canvas.height <= standardPageHeightPx * 1.08) {
+        const imgDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+        const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+        const jpgImage = await pdfDoc.embedJpg(imgDataUrl);
 
-      let drawWidth = A4_WIDTH;
-      let drawHeight = A4_HEIGHT;
-      let drawX = 0;
-      let drawY = 0;
+        const canvasAspect = canvas.width / canvas.height;
+        const a4Aspect = A4_WIDTH / A4_HEIGHT;
 
-      if (canvasAspect > a4Aspect) {
-        drawHeight = A4_WIDTH / canvasAspect;
-        drawY = (A4_HEIGHT - drawHeight) / 2;
+        let drawWidth = A4_WIDTH;
+        let drawHeight = A4_HEIGHT;
+        let drawX = 0;
+        let drawY = 0;
+
+        if (canvasAspect > a4Aspect) {
+          drawHeight = A4_WIDTH / canvasAspect;
+          drawY = (A4_HEIGHT - drawHeight) / 2;
+        } else {
+          drawWidth = A4_HEIGHT * canvasAspect;
+          drawX = (A4_WIDTH - drawWidth) / 2;
+        }
+
+        page.drawImage(jpgImage, {
+          x: drawX,
+          y: drawY,
+          width: drawWidth,
+          height: drawHeight,
+        });
       } else {
-        drawWidth = A4_HEIGHT * canvasAspect;
-        drawX = (A4_WIDTH - drawWidth) / 2;
-      }
+        // Section spans multiple pages! Paginate into clean A4 slices using DOM element boundaries
+        const blockEls = Array.from(
+          section.querySelectorAll('p, table, tr, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, figure, img')
+        );
+        const secRect = section.getBoundingClientRect();
+        const scaleFactor = canvas.height / Math.max(1, secRect.height);
 
-      page.drawImage(jpgImage, {
-        x: drawX,
-        y: drawY,
-        width: drawWidth,
-        height: drawHeight,
-      });
+        const elementTops = blockEls
+          .map((el) => (el.getBoundingClientRect().top - secRect.top) * scaleFactor)
+          .filter((t) => t > 60 && t < canvas.height - 40)
+          .sort((a, b) => a - b);
+
+        const slices: { startY: number; endY: number }[] = [];
+        let currentY = 0;
+
+        while (currentY < canvas.height - 20) {
+          const targetY = currentY + standardPageHeightPx;
+          if (targetY >= canvas.height - 40) {
+            slices.push({ startY: currentY, endY: canvas.height });
+            break;
+          }
+
+          // Look for clean element boundary in top 18% margin before target split
+          const searchMin = targetY - standardPageHeightPx * 0.18;
+          const candidate = elementTops.filter((t) => t >= searchMin && t <= targetY).pop();
+          const splitY = candidate !== undefined ? candidate : targetY;
+
+          slices.push({ startY: currentY, endY: splitY });
+          currentY = splitY;
+        }
+
+        for (const slice of slices) {
+          const sliceHeight = slice.endY - slice.startY;
+          if (sliceHeight <= 10) continue;
+
+          const sliceCanvas = document.createElement('canvas');
+          sliceCanvas.width = canvas.width;
+          sliceCanvas.height = standardPageHeightPx;
+          const ctx = sliceCanvas.getContext('2d');
+          if (!ctx) continue;
+
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+          ctx.drawImage(
+            canvas,
+            0,
+            slice.startY,
+            canvas.width,
+            sliceHeight,
+            0,
+            0,
+            canvas.width,
+            sliceHeight
+          );
+
+          const sliceImgUrl = sliceCanvas.toDataURL('image/jpeg', 0.95);
+          const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+          const sliceJpg = await pdfDoc.embedJpg(sliceImgUrl);
+
+          page.drawImage(sliceJpg, {
+            x: 0,
+            y: 0,
+            width: A4_WIDTH,
+            height: A4_HEIGHT,
+          });
+        }
+      }
     }
 
     const pdfBytes = await pdfDoc.save();

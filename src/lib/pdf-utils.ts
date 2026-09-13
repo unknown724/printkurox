@@ -1,4 +1,4 @@
-import { PDFDocument, PDFPage, PDFImage, degrees, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFPage, PDFImage, PDFEmbeddedPage, degrees, rgb, StandardFonts } from 'pdf-lib';
 import { convertDocxToPdf } from './docx-converter';
 import { LayoutMode, TextOverlayConfig, getTextOverlayItems } from '@/components/studio/PhotoLayoutSelector';
 import { PageConfig } from './pricing';
@@ -164,6 +164,7 @@ export interface PrintLayoutOptions {
   autoRotate?: boolean;
   pageOrder?: 'horizontal' | 'vertical';
   textOverlay?: TextOverlayConfig;
+  pageRange?: string;
 }
 
 /**
@@ -192,8 +193,8 @@ export async function mergeFilesToPdf(
   const A4_PORTRAIT_H = 841.89;
 
   // Collect all embeddable items (converted PDF pages or embedded images)
-  type PrintableItem = 
-    | { type: 'pdfPage'; page: PDFPage }
+  type PrintableItem =
+    | { type: 'pdfPage'; page: PDFPage; embeddedPage: PDFEmbeddedPage; width: number; height: number }
     | { type: 'image'; image: PDFImage; width: number; height: number; name: string };
 
   const printableItems: PrintableItem[] = [];
@@ -203,8 +204,17 @@ export async function mergeFilesToPdf(
 
     if (ext === 'pdf' || item.mimeType === 'application/pdf') {
       const srcPdf = await PDFDocument.load(item.buffer, { ignoreEncryption: true });
+      const embeddedPages = await mergedPdf.embedPages(srcPdf.getPages());
       const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
-      copiedPages.forEach((page) => printableItems.push({ type: 'pdfPage', page }));
+      for (let idx = 0; idx < embeddedPages.length; idx++) {
+        printableItems.push({
+          type: 'pdfPage',
+          page: copiedPages[idx],
+          embeddedPage: embeddedPages[idx],
+          width: embeddedPages[idx].width,
+          height: embeddedPages[idx].height,
+        });
+      }
     } else if (['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext) || item.mimeType.startsWith('image/')) {
       try {
         const isPng =
@@ -229,8 +239,17 @@ export async function mergeFilesToPdf(
       try {
         const { pdfBuffer } = await convertDocxToPdf(item.buffer, ext || 'docx');
         const docxPdf = await PDFDocument.load(pdfBuffer);
+        const embeddedPages = await mergedPdf.embedPages(docxPdf.getPages());
         const copiedPages = await mergedPdf.copyPages(docxPdf, docxPdf.getPageIndices());
-        copiedPages.forEach((page) => printableItems.push({ type: 'pdfPage', page }));
+        for (let idx = 0; idx < embeddedPages.length; idx++) {
+          printableItems.push({
+            type: 'pdfPage',
+            page: copiedPages[idx],
+            embeddedPage: embeddedPages[idx],
+            width: embeddedPages[idx].width,
+            height: embeddedPages[idx].height,
+          });
+        }
       } catch (docxErr) {
         console.warn(`Failed to convert docx ${item.fileName}:`, docxErr);
       }
@@ -242,15 +261,63 @@ export async function mergeFilesToPdf(
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // SEQUENCE & PAGE FILTERING
+  // ───────────────────────────────────────────────────────────────────────────
+  interface ActivePrintableItem {
+    item: PrintableItem;
+    originalPageNum: number;
+    pageCfg?: PageConfig;
+  }
+
+  let activeSequence: ActivePrintableItem[] = [];
+
+  if (options.pageConfigs && options.pageConfigs.length > 0) {
+    const included = options.pageConfigs.filter((p) => p.included);
+    included.forEach((p) => {
+      const srcIdx = p.pageNumber - 1;
+      if (srcIdx >= 0 && srcIdx < printableItems.length) {
+        const c = Math.max(1, Math.floor(p.copies || 1));
+        for (let copy = 0; copy < c; copy++) {
+          activeSequence.push({
+            item: printableItems[srcIdx],
+            originalPageNum: p.pageNumber,
+            pageCfg: p,
+          });
+        }
+      }
+    });
+  } else if (options.pageRange && options.pageRange.toLowerCase() !== 'all') {
+    const parsed = parsePageRange(options.pageRange, printableItems.length);
+    parsed.forEach((pageNum) => {
+      const srcIdx = pageNum - 1;
+      if (srcIdx >= 0 && srcIdx < printableItems.length) {
+        activeSequence.push({
+          item: printableItems[srcIdx],
+          originalPageNum: pageNum,
+        });
+      }
+    });
+  } else {
+    activeSequence = printableItems.map((item, idx) => ({
+      item,
+      originalPageNum: idx + 1,
+    }));
+  }
+
+  if (activeSequence.length === 0) {
+    throw new Error('No pages selected for printing.');
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // LAYOUT COMPOSER
   // ───────────────────────────────────────────────────────────────────────────
 
   const customScaleMultiplier = (fitMode === 'custom' && customScale) ? (customScale / 100) : 1;
 
-  // Helper to draw an image into a specific bounding box on a page
-  const drawImageInBox = (
+  // Helper to draw an item (image or embedded PDF page) into a specific bounding box on a page
+  const drawItemInBox = (
     page: PDFPage,
-    img: PDFImage,
+    item: PrintableItem,
     boxX: number,
     boxY: number,
     boxW: number,
@@ -260,12 +327,9 @@ export async function mergeFilesToPdf(
     rotationDeg: number = 0,
     pageScaleMultiplier?: number
   ) => {
-    let w = img.width;
-    let h = img.height;
+    let w = item.width;
+    let h = item.height;
 
-    // Check if slot aspect ratio mismatches image aspect ratio and autoRotate is desired
-    // NOTE: Auto-rotate 90 deg is only for multi-page layouts (N-up); in 1-up mode portrait images
-    // on landscape sheets remain upright centered with margins, matching Adobe Acrobat.
     const isMultiple = layoutMode !== '1-up';
     const isSlotLandscape = boxW > boxH;
     const isImgLandscape = w > h;
@@ -284,14 +348,12 @@ export async function mergeFilesToPdf(
 
     let scale = 1;
     if (fitMode === 'actual') {
-      scale = 1;
+      scale = 1 * effectiveScale;
     } else if (fitMode === 'custom' || effectiveScale !== 1) {
       scale = Math.min(boxW / w, boxH / h) * effectiveScale;
     } else if (isFill) {
-      // Covers the box completely while preserving natural aspect ratio
       scale = Math.max(boxW / w, boxH / h);
     } else {
-      // Preserves entire photo within box with margins
       scale = Math.min(boxW / w, boxH / h);
     }
 
@@ -300,41 +362,76 @@ export async function mergeFilesToPdf(
     const drawX = boxX + (boxW - drawW) / 2;
     const drawY = boxY + (boxH - drawH) / 2;
 
-    if (rotate === 90) {
-      page.drawImage(img, {
-        x: drawX + drawW,
-        y: drawY,
-        width: img.width * scale,
-        height: img.height * scale,
-        rotate: degrees(90),
-      });
-    } else if (rotate === 180) {
-      page.drawImage(img, {
-        x: drawX + drawW,
-        y: drawY + drawH,
-        width: img.width * scale,
-        height: img.height * scale,
-        rotate: degrees(180),
-      });
-    } else if (rotate === 270) {
-      page.drawImage(img, {
-        x: drawX,
-        y: drawY + drawH,
-        width: img.width * scale,
-        height: img.height * scale,
-        rotate: degrees(270),
-      });
+    if (item.type === 'image') {
+      if (rotate === 90) {
+        page.drawImage(item.image, {
+          x: drawX + drawW,
+          y: drawY,
+          width: item.image.width * scale,
+          height: item.image.height * scale,
+          rotate: degrees(90),
+        });
+      } else if (rotate === 180) {
+        page.drawImage(item.image, {
+          x: drawX + drawW,
+          y: drawY + drawH,
+          width: item.image.width * scale,
+          height: item.image.height * scale,
+          rotate: degrees(180),
+        });
+      } else if (rotate === 270) {
+        page.drawImage(item.image, {
+          x: drawX,
+          y: drawY + drawH,
+          width: item.image.width * scale,
+          height: item.image.height * scale,
+          rotate: degrees(270),
+        });
+      } else {
+        page.drawImage(item.image, {
+          x: drawX,
+          y: drawY,
+          width: drawW,
+          height: drawH,
+        });
+      }
     } else {
-      page.drawImage(img, {
-        x: drawX,
-        y: drawY,
-        width: drawW,
-        height: drawH,
-      });
+      // item.type === 'pdfPage'
+      if (rotate === 90) {
+        page.drawPage(item.embeddedPage, {
+          x: drawX + drawW,
+          y: drawY,
+          xScale: scale,
+          yScale: scale,
+          rotate: degrees(90),
+        });
+      } else if (rotate === 180) {
+        page.drawPage(item.embeddedPage, {
+          x: drawX + drawW,
+          y: drawY + drawH,
+          xScale: scale,
+          yScale: scale,
+          rotate: degrees(180),
+        });
+      } else if (rotate === 270) {
+        page.drawPage(item.embeddedPage, {
+          x: drawX,
+          y: drawY + drawH,
+          xScale: scale,
+          yScale: scale,
+          rotate: degrees(270),
+        });
+      } else {
+        page.drawPage(item.embeddedPage, {
+          x: drawX,
+          y: drawY,
+          xScale: scale,
+          yScale: scale,
+        });
+      }
     }
 
     if (showBorder) {
-      // Faint dotted cutting guide for scissors (Adobe style)
       page.drawRectangle({
         x: boxX,
         y: boxY,
@@ -348,92 +445,67 @@ export async function mergeFilesToPdf(
 
   // Case 1: ID Card 2-in-1 Mode (Front & Back merged on 1 A4 sheet)
   if (layoutMode === 'id-card') {
-    // Standard cyber cafe ID card print dimension: ~320pt x 205pt (clear, readable, wallet fit)
     const CARD_W = 320;
     const CARD_H = 205;
 
-    for (let i = 0; i < printableItems.length; i += 2) {
+    for (let i = 0; i < activeSequence.length; i += 2) {
       const page = mergedPdf.addPage([A4_PORTRAIT_W, A4_PORTRAIT_H]);
-      const item1 = printableItems[i];
-      const item2 = i + 1 < printableItems.length ? printableItems[i + 1] : null;
+      const active1 = activeSequence[i];
+      const active2 = i + 1 < activeSequence.length ? activeSequence[i + 1] : null;
 
-      // Card 1 (Front Side) - Top half of A4
       const card1X = (A4_PORTRAIT_W - CARD_W) / 2;
       const card1Y = A4_PORTRAIT_H * 0.54;
+      drawItemInBox(page, active1.item, card1X, card1Y, CARD_W, CARD_H, fitMode === 'fill', drawBorder);
 
-      if (item1.type === 'image') {
-        drawImageInBox(page, item1.image, card1X, card1Y, CARD_W, CARD_H, fitMode === 'fill', drawBorder);
-      }
-
-      // Card 2 (Back Side) - Bottom half of A4
-      if (item2) {
+      if (active2) {
         const card2X = (A4_PORTRAIT_W - CARD_W) / 2;
         const card2Y = A4_PORTRAIT_H * 0.18;
-
-        if (item2.type === 'image') {
-          drawImageInBox(page, item2.image, card2X, card2Y, CARD_W, CARD_H, fitMode === 'fill', drawBorder);
-        }
+        drawItemInBox(page, active2.item, card2X, card2Y, CARD_W, CARD_H, fitMode === 'fill', drawBorder);
       }
     }
   } 
   // Case 2: 2 Pages Per Sheet (2-Up / Booklet Folded Spread / 2-in-1 Full Sheet)
   else if (layoutMode === '2-up' || layoutMode === 'booklet') {
-    // For booklet mode, sheet is strictly landscape (2 portrait pages side-by-side)
-    // For 2-up with autoRotate:
-    // If orientation === 'portrait', 2 upright portrait photos sit side-by-side on a Landscape sheet
-    // If orientation === 'landscape', 2 landscape photos sit stacked on a Portrait sheet
     const isLandscapeSheet = layoutMode === 'booklet' ? true : autoRotate ? orientation === 'portrait' : orientation === 'landscape';
     const sheetW = isLandscapeSheet ? A4_PORTRAIT_H : A4_PORTRAIT_W;
     const sheetH = isLandscapeSheet ? A4_PORTRAIT_W : A4_PORTRAIT_H;
     const margin = 20;
 
-    for (let i = 0; i < printableItems.length; i += 2) {
+    for (let i = 0; i < activeSequence.length; i += 2) {
       const page = mergedPdf.addPage([sheetW, sheetH]);
-      const item1 = printableItems[i];
-      const item2 = i + 1 < printableItems.length ? printableItems[i + 1] : null;
+      const active1 = activeSequence[i];
+      const active2 = i + 1 < activeSequence.length ? activeSequence[i + 1] : null;
 
-      const pageCfg1 = options.pageConfigs?.find((p) => p.pageNumber === i + 1);
-      const pageCfg2 = options.pageConfigs?.find((p) => p.pageNumber === i + 2);
+      const pageCfg1 = active1.pageCfg;
+      const pageCfg2 = active2?.pageCfg;
       const scale1 = pageCfg1?.customScale !== undefined ? pageCfg1.customScale / 100 : customScaleMultiplier;
       const scale2 = pageCfg2?.customScale !== undefined ? pageCfg2.customScale / 100 : customScaleMultiplier;
       const rot1 = (pageCfg1?.rotation || (pageCfg1?.orientation === 'landscape' ? 90 : 0)) % 360;
       const rot2 = (pageCfg2?.rotation || (pageCfg2?.orientation === 'landscape' ? 90 : 0)) % 360;
 
       if (!isLandscapeSheet) {
-        // Portrait sheet: Top and Bottom halves
         const slotW = sheetW - margin * 2;
         const slotH = (sheetH - margin * 3) / 2;
-
-        // Slot 1 (Top half: in PDF coordinates Y=0 is bottom, so top is sheetH/2 + margin/2)
         const slot1X = margin;
         const slot1Y = sheetH / 2 + margin / 2;
-        if (item1.type === 'image') {
-          drawImageInBox(page, item1.image, slot1X, slot1Y, slotW, slotH, fitMode === 'fill', drawBorder, rot1, scale1);
-        }
+        drawItemInBox(page, active1.item, slot1X, slot1Y, slotW, slotH, fitMode === 'fill', drawBorder, rot1, scale1);
 
-        // Slot 2 (Bottom half)
-        if (item2 && item2.type === 'image') {
+        if (active2) {
           const slot2X = margin;
           const slot2Y = margin;
-          drawImageInBox(page, item2.image, slot2X, slot2Y, slotW, slotH, fitMode === 'fill', drawBorder, rot2, scale2);
+          drawItemInBox(page, active2.item, slot2X, slot2Y, slotW, slotH, fitMode === 'fill', drawBorder, rot2, scale2);
         }
       } else {
-        // Landscape sheet: Left and Right halves (Booklet Fold Spread)
         const halfW = (sheetW - margin * 3) / 2;
         const halfH = sheetH - margin * 2;
-
-        // Slot 1 (Left)
         const slot1X = margin;
         const slot1Y = margin;
-        if (item1.type === 'image') {
-          drawImageInBox(page, item1.image, slot1X, slot1Y, halfW, halfH, fitMode === 'fill', drawBorder, rot1, scale1);
-        }
+        drawItemInBox(page, active1.item, slot1X, slot1Y, halfW, halfH, fitMode === 'fill', drawBorder, rot1, scale1);
 
-        // Slot 2 (Right)
-        if (item2 && item2.type === 'image') {
+        if (active2) {
           const slot2X = margin * 2 + halfW;
           const slot2Y = margin;
-          drawImageInBox(page, item2.image, slot2X, slot2Y, halfW, halfH, fitMode === 'fill', drawBorder, rot2, scale2);
+          drawItemInBox(page, active2.item, slot2X, slot2Y, halfW, halfH, fitMode === 'fill', drawBorder, rot2, scale2);
         }
       }
     }
@@ -481,40 +553,36 @@ export async function mergeFilesToPdf(
     const rowH = (sheetH - margin * (rows + 1)) / rows;
     const slotsPerPage = cols * rows;
 
-    for (let i = 0; i < printableItems.length; i += slotsPerPage) {
+    for (let i = 0; i < activeSequence.length; i += slotsPerPage) {
       const page = mergedPdf.addPage([sheetW, sheetH]);
 
       for (let slot = 0; slot < slotsPerPage; slot++) {
         const idx = i + slot;
-        if (idx >= printableItems.length) break;
-        const item = printableItems[idx];
-        if (item.type !== 'image') continue;
+        if (idx >= activeSequence.length) break;
+        const active = activeSequence[idx];
 
         let colIdx: number;
         let rowIdx: number;
 
         if (pageOrder === 'vertical') {
-          // Column-first: col * rows + row
           colIdx = Math.floor(slot / rows);
           rowIdx = slot % rows;
         } else {
-          // Row-first: row * cols + col
           rowIdx = Math.floor(slot / cols);
           colIdx = slot % cols;
         }
 
         const slotX = margin + colIdx * (colW + margin);
-        // PDF coordinates: Y=0 is bottom, row 0 is top
         const slotY = sheetH - margin - (rowIdx + 1) * rowH - rowIdx * margin;
 
-        const pageCfg = options.pageConfigs?.find((p) => p.pageNumber === idx + 1);
+        const pageCfg = active.pageCfg;
         const pageScaleMultiplier =
           pageCfg?.customScale !== undefined ? pageCfg.customScale / 100 : customScaleMultiplier;
         const pageRotation = (pageCfg?.rotation || (pageCfg?.orientation === 'landscape' ? 90 : 0)) % 360;
 
-        drawImageInBox(
+        drawItemInBox(
           page,
-          item.image,
+          active.item,
           slotX,
           slotY,
           colW,
@@ -540,13 +608,12 @@ export async function mergeFilesToPdf(
       'Sheet 4/4 (Btm-Right)',
     ];
 
-    for (let itemIdx = 0; itemIdx < printableItems.length; itemIdx++) {
-      const item = printableItems[itemIdx];
-      const pageCfg = options.pageConfigs?.find((p) => p.pageNumber === itemIdx + 1);
+    for (let itemIdx = 0; itemIdx < activeSequence.length; itemIdx++) {
+      const active = activeSequence[itemIdx];
+      const pageCfg = active.pageCfg;
       const pageScaleMultiplier =
         pageCfg?.customScale !== undefined ? pageCfg.customScale / 100 : customScaleMultiplier;
 
-      // 4 Quadrants: [col, row] in 2x2 grid (row 0 = top, row 1 = bottom)
       const tiles = [
         { col: 0, row: 0, label: tileLabels[0] },
         { col: 1, row: 0, label: tileLabels[1] },
@@ -556,102 +623,72 @@ export async function mergeFilesToPdf(
 
       for (const tile of tiles) {
         const page = mergedPdf.addPage([sheetW, sheetH]);
+        const posterW = (sheetW - margin * 2) * 2 * pageScaleMultiplier;
+        const posterH = (sheetH - margin * 2) * 2 * pageScaleMultiplier;
+        const drawX = tile.col === 0 ? margin : margin - (posterW / 2);
+        const drawY = tile.row === 0 ? margin - (posterH / 2) : margin;
 
-        if (item.type === 'image') {
-          // The combined poster size spanning 2x2 sheets with safe margins
-          const posterW = (sheetW - margin * 2) * 2 * pageScaleMultiplier;
-          const posterH = (sheetH - margin * 2) * 2 * pageScaleMultiplier;
-
-          // Offset based on tile quadrant
-          // In PDF coordinates, Y=0 is bottom:
-          // row 0 is top quadrant, so offset image down by (posterH / 2)
-          // row 1 is bottom quadrant, so offset image Y starts at bottom margin
-          const drawX = tile.col === 0 ? margin : margin - (posterW / 2);
-          const drawY = tile.row === 0 ? margin - (posterH / 2) : margin;
-
-          page.drawImage(item.image, {
+        if (active.item.type === 'image') {
+          page.drawImage(active.item.image, {
             x: drawX,
             y: drawY,
             width: posterW,
             height: posterH,
           });
-
-          // Draw subtle tile corner label in printer margin
-          page.drawText(tile.label, {
-            x: margin,
-            y: sheetH - margin + 2,
-            size: 7,
-            color: rgb(0.4, 0.4, 0.4),
-          });
         } else {
-          // If PDF page, copy page
-          mergedPdf.addPage(item.page);
+          const scale = posterW / active.item.width;
+          page.drawPage(active.item.embeddedPage, {
+            x: drawX,
+            y: drawY,
+            xScale: scale,
+            yScale: scale,
+          });
         }
+
+        page.drawText(tile.label, {
+          x: margin,
+          y: sheetH - margin + 2,
+          size: 7,
+          color: rgb(0.4, 0.4, 0.4),
+        });
       }
     }
   }
   // Case 5: 1-Up (Standard / Full Page Photo with Fit-to-Frame)
   else {
-    for (let itemIdx = 0; itemIdx < printableItems.length; itemIdx++) {
-      const item = printableItems[itemIdx];
-      const pageCfg = options.pageConfigs?.find((p) => p.pageNumber === itemIdx + 1);
+    for (let seqIdx = 0; seqIdx < activeSequence.length; seqIdx++) {
+      const active = activeSequence[seqIdx];
+      const item = active.item;
+      const pageCfg = active.pageCfg;
       const pageScaleMultiplier =
         pageCfg?.customScale !== undefined ? pageCfg.customScale / 100 : customScaleMultiplier;
 
-      if (item.type === 'pdfPage') {
-        if (pageScaleMultiplier !== 1) {
-          item.page.scale(pageScaleMultiplier, pageScaleMultiplier);
-        }
-        mergedPdf.addPage(item.page);
+      let isLandscape = false;
+      if (orientation === 'landscape' || pageCfg?.orientation === 'landscape') {
+        isLandscape = true;
+      } else if (orientation === 'portrait' || pageCfg?.orientation === 'portrait') {
+        isLandscape = false;
       } else {
-        const img = item.image;
-        let isLandscape = false;
-        if (orientation === 'landscape') {
-          isLandscape = true;
-        } else if (orientation === 'portrait') {
-          isLandscape = false;
-        } else {
-          // Auto-orientation: match photo aspect ratio
-          isLandscape = img.width > img.height;
-        }
-
-        const pageW = isLandscape ? A4_PORTRAIT_H : A4_PORTRAIT_W;
-        const pageH = isLandscape ? A4_PORTRAIT_W : A4_PORTRAIT_H;
-        const page = mergedPdf.addPage([pageW, pageH]);
-
-        if (fitMode === 'fill') {
-          // Windows "Fit picture to frame" mode:
-          // Minimizes borders so the photo doesn't look tiny on A4!
-          const margin = 14; // Light 0.2 inch margin so printer doesn't clip
-          drawImageInBox(
-            page,
-            img,
-            margin,
-            margin,
-            pageW - margin * 2,
-            pageH - margin * 2,
-            true,
-            drawBorder,
-            pageCfg?.rotation || 0,
-            pageScaleMultiplier
-          );
-        } else {
-          // Standard fit mode (20pt margin)
-          const margin = 20;
-          drawImageInBox(
-            page,
-            img,
-            margin,
-            margin,
-            pageW - margin * 2,
-            pageH - margin * 2,
-            false,
-            drawBorder,
-            pageCfg?.rotation || 0,
-            pageScaleMultiplier
-          );
-        }
+        isLandscape = item.width > item.height;
       }
+
+      const pageW = isLandscape ? A4_PORTRAIT_H : A4_PORTRAIT_W;
+      const pageH = isLandscape ? A4_PORTRAIT_W : A4_PORTRAIT_H;
+      const page = mergedPdf.addPage([pageW, pageH]);
+
+      const margin = fitMode === 'fill' ? 14 : 20;
+      drawItemInBox(
+        page,
+        item,
+        margin,
+        margin,
+        pageW - margin * 2,
+        pageH - margin * 2,
+        fitMode === 'fill',
+        drawBorder,
+        pageCfg?.rotation || 0,
+        pageScaleMultiplier
+      );
     }
   }
 
@@ -736,6 +773,7 @@ export async function mergeFilesToPdf(
               size: headerSize,
               font,
               color: textColor,
+              opacity: item.opacity !== undefined ? item.opacity : 1.0,
             });
           });
         } else if (item.position === 'middle') {
@@ -754,6 +792,7 @@ export async function mergeFilesToPdf(
               size: middleSize,
               font,
               color: textColor,
+              opacity: item.opacity !== undefined ? item.opacity : 1.0,
             });
           });
         } else if (item.position === 'footer') {
@@ -771,6 +810,7 @@ export async function mergeFilesToPdf(
               size: footerSize,
               font,
               color: textColor,
+              opacity: item.opacity !== undefined ? item.opacity : 1.0,
             });
           });
         } else if (item.position === 'custom') {
@@ -793,6 +833,7 @@ export async function mergeFilesToPdf(
               size: customSize,
               font,
               color: textColor,
+              opacity: item.opacity !== undefined ? item.opacity : 1.0,
             });
           });
         } else if (item.position === 'cover_title') {
@@ -811,6 +852,7 @@ export async function mergeFilesToPdf(
               size: titleSize,
               font,
               color: textColor,
+              opacity: item.opacity !== undefined ? item.opacity : 1.0,
             });
           });
         }
@@ -827,6 +869,26 @@ export async function mergeFilesToPdf(
   return {
     mergedBuffer: Buffer.from(mergedBytes),
     totalPages,
+  };
+}
+
+/**
+ * Transforms an input file (PDF, image, or DOCX) into an authentic print-ready A4 PDF document,
+ * baking in custom zoom (e.g. 150%), fit mode, multi-up layouts, orientation, page configs, and text overlays.
+ */
+export async function transformPdfForPrint(
+  inputBuffer: Buffer,
+  fileName: string,
+  options: PrintLayoutOptions
+): Promise<{ transformedBuffer: Buffer; totalPages: number }> {
+  const mimeType = fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
+  const result = await mergeFilesToPdf(
+    [{ buffer: inputBuffer, fileName, mimeType }],
+    options
+  );
+  return {
+    transformedBuffer: result.mergedBuffer,
+    totalPages: result.totalPages,
   };
 }
 

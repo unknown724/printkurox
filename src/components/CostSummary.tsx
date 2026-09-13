@@ -43,6 +43,9 @@ interface CostSummaryProps {
   textOverlay?: TextOverlayConfig;
   orientation?: 'auto' | 'portrait' | 'landscape';
   stationId?: string;
+  customScale?: number;
+  fitMode?: 'fit' | 'fill' | 'actual' | 'custom';
+  drawBorder?: boolean;
 }
 
 export function CostSummary({
@@ -58,6 +61,9 @@ export function CostSummary({
   textOverlay,
   orientation = 'auto',
   stationId = 'main',
+  customScale = 100,
+  fitMode = 'fit',
+  drawBorder = false,
 }: CostSummaryProps) {
   const router = useRouter();
   const station = getStationConfig(stationId);
@@ -126,6 +132,9 @@ export function CostSummary({
           customRows,
           textOverlay,
           station_id: station.id,
+          customScale,
+          fitMode,
+          drawBorder,
         }),
       });
       const data = await res.json();
@@ -161,6 +170,9 @@ export function CostSummary({
           textOverlay,
           pin: staffPin,
           station_id: station.id,
+          customScale,
+          fitMode,
+          drawBorder,
         }),
       });
       const data = await res.json();
@@ -196,6 +208,9 @@ export function CostSummary({
           customRows,
           textOverlay,
           station_id: station.id,
+          customScale,
+          fitMode,
+          drawBorder,
         }),
       });
 
@@ -243,6 +258,9 @@ export function CostSummary({
           customRows,
           textOverlay,
           station_id: station.id,
+          customScale,
+          fitMode,
+          drawBorder,
         }),
       });
 

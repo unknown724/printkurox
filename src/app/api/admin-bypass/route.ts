@@ -3,7 +3,8 @@ import crypto from 'crypto';
 import { calculatePricing } from '@/lib/pricing';
 import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
-import { parsePageRange } from '@/lib/pdf-utils';
+import { parsePageRange, transformPdfForPrint } from '@/lib/pdf-utils';
+import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { validateAdminPin, verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
 import { validateStationPin, getStationConfig } from '@/lib/stations';
 import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
@@ -31,8 +32,12 @@ export async function POST(req: NextRequest) {
       layoutMode,
       customCols,
       customRows,
+      textOverlay,
       pin,
       station_id: rawStationId,
+      customScale,
+      fitMode,
+      drawBorder,
     } = body;
 
     const station = getStationConfig(rawStationId);
@@ -124,6 +129,62 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
     const adminPaymentId = `ADMIN_BYPASS_${Date.now()}`;
 
+    let finalFileKey = fileKey;
+    let finalDocPages = pricing.totalPages;
+    let finalPageRange = effectivePageRange;
+
+    const hasCustomPageConfigs =
+      Array.isArray(pageConfigs) &&
+      pageConfigs.some(
+        (p: { included?: boolean; rotation?: number; customScale?: number; copies?: number }) =>
+          p.included === false ||
+          (p.rotation && p.rotation !== 0) ||
+          (p.customScale && p.customScale !== 100) ||
+          (p.copies && p.copies > 1)
+      );
+
+    const needsTransform = Boolean(
+      (customScale && Number(customScale) !== 100) ||
+      (fitMode && fitMode !== 'fit') ||
+      (layoutMode && layoutMode !== '1-up') ||
+      (orientation && orientation !== 'auto') ||
+      drawBorder ||
+      (textOverlay && textOverlay.enabled) ||
+      hasCustomPageConfigs ||
+      (pageRange && pageRange.trim().toLowerCase() !== 'all')
+    );
+
+    if (needsTransform) {
+      try {
+        const originalBuffer = await getFileBufferFromR2(fileKey);
+        const { transformedBuffer, totalPages: transformedPages } = await transformPdfForPrint(
+          originalBuffer,
+          fileName,
+          {
+            layoutMode: layoutMode || '1-up',
+            customCols: customCols ? Number(customCols) : undefined,
+            customRows: customRows ? Number(customRows) : undefined,
+            fitMode: fitMode || 'fit',
+            drawBorder: Boolean(drawBorder),
+            textOverlay,
+            orientation: orientation || 'auto',
+            pageConfigs,
+            customScale: customScale ? Number(customScale) : 100,
+            pageRange: effectivePageRange,
+          }
+        );
+
+        const cleanBase = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const transformedKey = `uploads/transformed-${jobId}-${cleanBase}.pdf`;
+        await uploadToR2(transformedKey, transformedBuffer, 'application/pdf');
+        finalFileKey = transformedKey;
+        finalDocPages = transformedPages;
+        finalPageRange = 'All'; // Layout, sequence, and exclusions are baked into the PDF
+      } catch (err) {
+        console.error('Error transforming PDF for print in admin-bypass, using original file:', err);
+      }
+    }
+
     // Insert directly as PAID into Cloudflare D1 with orientation, page_configs, and station_id
     await executeD1(
       `INSERT INTO print_jobs (
@@ -135,10 +196,10 @@ export async function POST(req: NextRequest) {
       [
         jobId,
         pickupCode,
-        fileKey,
+        finalFileKey,
         fileName,
-        activePagesCount,
-        effectivePageRange,
+        finalDocPages,
+        finalPageRange,
         pricing.colorPagesCount > 0 ? 'color' : 'bw',
         pricing.isDuplex ? 1 : 0,
         pricing.copies,

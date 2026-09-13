@@ -71,6 +71,7 @@ R2_BUCKET_NAME = os.getenv('R2_BUCKET_NAME') or 'kiosk-uploads'
 
 # Printer & SumatraPDF Configuration
 PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  # Leave blank for default Windows printer
+AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
@@ -378,7 +379,7 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
             return file_path
     return file_path
 
-def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, orientation=None):
+def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, orientation=None, duplex=False):
     """
     Executes SumatraPDF CLI silent print command with professional orientation & fit.
     Documentation: https://www.sumatrapdfreader.org/docs/Command-line-arguments
@@ -402,6 +403,8 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     settings_list.append(f"{target_copies}x")
     if orientation in ["portrait", "landscape"]:
         settings_list.append(orientation)
+    if duplex:
+        settings_list.append("duplex")
     settings_list.append("fit") # Fit printable area cleanly
 
     settings_str = ",".join(settings_list)
@@ -427,6 +430,32 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
 # =============================================================================
 # JOB EXECUTION LOGIC
 # =============================================================================
+def process_auto_duplex_job(job, local_file_path):
+    """Hardware automatic 2-sided duplex printing for printers with built-in duplexers."""
+    log(f"Printing Hardware Auto-Duplex: {job['total_pages']} pages, {job['copies']} copy/copies", "INFO")
+
+    page_range = None
+    if job.get("page_range") and job["page_range"].lower() != "all":
+        page_range = job["page_range"]
+
+    orientation = job.get("orientation") or None
+    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
+
+    success = print_file_silent(
+        printable_path,
+        page_range=page_range,
+        color_mode=job["color_mode"],
+        copies=job["copies"],
+        orientation=orientation,
+        duplex=True
+    )
+    if success:
+        update_job_status(job["id"], "COMPLETED")
+        record_supplies_depletion(job)
+        log(f"Job completed successfully (Hardware Duplex): {job['pickup_code']}", "SUCCESS")
+    else:
+        update_job_status(job["id"], "FAILED")
+
 def process_single_sided_job(job, local_file_path):
     """Standard 1-sided printing."""
     log(f"Printing Single-Sided: {job['total_pages']} pages, {job['copies']} copy/copies", "INFO")
@@ -813,7 +842,10 @@ def main():
 
                     # 2. Print depending on Duplex mode
                     if is_duplex and total_pages > 1:
-                        process_manual_duplex_job(job, printable_path)
+                        if AUTO_DUPLEX:
+                            process_auto_duplex_job(job, printable_path)
+                        else:
+                            process_manual_duplex_job(job, printable_path)
                     else:
                         process_single_sided_job(job, printable_path)
 
