@@ -17,15 +17,16 @@ export interface StationConfig {
 }
 
 export const DEFAULT_STATION_ID = 'main';
+export const DEFAULT_DEVELOPER_WHATSAPP = '+919863013886';
 
 export const STATIONS: Record<string, StationConfig> = {
   main: {
     id: 'main',
     name: 'PrintKurox Autonomous Kiosk',
     tagline: 'Autonomous Self-Service Cloud Printing',
-    whatsappNumber: '',
+    whatsappNumber: '+919863013886',
     adminPin: process.env.ADMIN_SECRET_KEY || 'Kurox725#29',
-    operatorName: 'Admin',
+    operatorName: 'Developer Support',
     allowOnlinePayment: true,
     allowCounterPayment: false,
     requireCounterApproval: false,

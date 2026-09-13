@@ -16,18 +16,20 @@ export async function convertDocxToPdfClient(
     return null;
   }
 
-  // Hidden off-screen rendering container
+  // Off-screen rendering container (visible to html2canvas behind main viewport)
   const container = document.createElement('div');
   container.setAttribute('aria-hidden', 'true');
   container.style.position = 'fixed';
-  container.style.left = '-99999px';
+  container.style.left = '0';
   container.style.top = '0';
-  container.style.width = '820px';
-  container.style.minHeight = '1160px';
-  container.style.opacity = '0';
+  container.style.width = '794px';
+  container.style.minHeight = '1123px';
+  container.style.opacity = '1';
+  container.style.visibility = 'visible';
   container.style.pointerEvents = 'none';
-  container.style.zIndex = '-99999';
+  container.style.zIndex = '-9999';
   container.style.backgroundColor = '#ffffff';
+  container.style.overflow = 'hidden';
 
   document.body.appendChild(container);
 
@@ -37,10 +39,10 @@ export async function convertDocxToPdfClient(
     const html2canvasModule = await import('html2canvas');
     const html2canvas = html2canvasModule.default || html2canvasModule;
 
-    // Render DOCX into DOM using docx-preview
-    await renderAsync(file, container, undefined, {
-      className: 'kurox-docx',
-      inWrapper: true,
+    // Render DOCX into DOM using docx-preview with embedded style support
+    await renderAsync(file, container, container, {
+      className: 'docx',
+      inWrapper: false,
       breakPages: true,
       ignoreLastRenderedPageBreak: false,
       useBase64URL: true,
@@ -80,7 +82,10 @@ export async function convertDocxToPdfClient(
     }
 
     // Small delay to let CSS flow settle
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Extract all <style> tags injected by docx-preview
+    const styleTags = Array.from(container.querySelectorAll('style'));
 
     // Find all page sections created by docx-preview
     let pageSections = Array.from(container.querySelectorAll('section'));
@@ -88,6 +93,13 @@ export async function convertDocxToPdfClient(
       const wrapper = container.querySelector('.kurox-docx-wrapper') || container;
       pageSections = [wrapper as HTMLElement];
     }
+
+    // Ensure every section has the docx CSS stylesheets attached directly inside it
+    pageSections.forEach((sec) => {
+      styleTags.forEach((st) => {
+        sec.prepend(st.cloneNode(true));
+      });
+    });
 
     const totalPages = pageSections.length;
     const pdfDoc = await PDFDocument.create();
@@ -102,25 +114,44 @@ export async function convertDocxToPdfClient(
         onProgress(i + 1, totalPages);
       }
 
-      // Rasterize page section to high-res canvas (1.6x scale gives sharp 150 DPI without memory bloat)
+      // Rasterize page section to high-res canvas with full style support
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const canvas = await (html2canvas as any)(section as HTMLElement, {
-        scale: 1.6,
+        scale: 2.0,
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
-        windowWidth: 850,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: 820,
       });
 
-      const imgDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      const imgDataUrl = canvas.toDataURL('image/jpeg', 0.95);
       const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
       const jpgImage = await pdfDoc.embedJpg(imgDataUrl);
 
+      // Preserve aspect ratio cleanly on A4
+      const canvasAspect = canvas.width / canvas.height;
+      const a4Aspect = A4_WIDTH / A4_HEIGHT;
+
+      let drawWidth = A4_WIDTH;
+      let drawHeight = A4_HEIGHT;
+      let drawX = 0;
+      let drawY = 0;
+
+      if (canvasAspect > a4Aspect) {
+        drawHeight = A4_WIDTH / canvasAspect;
+        drawY = (A4_HEIGHT - drawHeight) / 2;
+      } else {
+        drawWidth = A4_HEIGHT * canvasAspect;
+        drawX = (A4_WIDTH - drawWidth) / 2;
+      }
+
       page.drawImage(jpgImage, {
-        x: 0,
-        y: 0,
-        width: A4_WIDTH,
-        height: A4_HEIGHT,
+        x: drawX,
+        y: drawY,
+        width: drawWidth,
+        height: drawHeight,
       });
     }
 

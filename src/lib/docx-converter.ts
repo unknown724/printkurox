@@ -29,6 +29,10 @@ export async function getDocxMetadata(buffer: Buffer): Promise<{ pageCount: numb
       }
     }
 
+    if (pageCount === 0 && wordCount > 0) {
+      pageCount = Math.max(1, Math.ceil(wordCount / 380));
+    }
+
     return { pageCount, wordCount };
   } catch (err) {
     console.warn('Could not extract docProps metadata from docx:', err);
@@ -111,16 +115,16 @@ try {
     $word = New-Object -ComObject Word.Application
     $word.Visible = $false
     $word.DisplayAlerts = 0
-    # Open: FileName, ConfirmConversions=$false, ReadOnly=$true, AddToRecentFiles=$false
-    $doc = $word.Documents.Open('${cleanDocx.replace(/'/g, "''")}', $false, $true, $false)
-    # 17 = wdFormatPDF
-    $doc.SaveAs([ref]'${cleanPdf.replace(/'/g, "''")}', [ref]17)
+    # Open document read-only
+    $doc = $word.Documents.Open([string]'${cleanDocx.replace(/'/g, "''")}')
+    # 17 = wdExportFormatPDF
+    $doc.ExportAsFixedFormat([string]'${cleanPdf.replace(/'/g, "''")}', 17)
     Write-Output "SUCCESS"
 } catch {
     Write-Output ("FAIL: " + $_.Exception.Message)
 } finally {
     if ($doc) {
-        try { $doc.Close([ref]0) } catch {}
+        try { $doc.Close(0) } catch {}
         [System.Runtime.InteropServices.Marshal]::ReleaseComObject($doc) | Out-Null
     }
     if ($word) {
@@ -133,7 +137,7 @@ try {
 `;
     fs.writeFileSync(psPath, psScript, 'utf8');
 
-    const res = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, { timeout: 25000 }).toString();
+    const res = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, { timeout: 30000 }).toString();
     if (res.includes('SUCCESS') && fs.existsSync(pdfPath)) {
       const pdfBuffer = fs.readFileSync(pdfPath);
       const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
@@ -166,12 +170,20 @@ export async function convertDocxToPdf(buffer: Buffer, fileExt: string = 'docx')
 
   // Step 2: Fallback in-process JS converter (mammoth + pdf-lib)
   await getDocxMetadata(buffer);
+
+  let html = '';
+  try {
+    const htmlResult = await mammoth.convertToHtml({ buffer });
+    html = htmlResult.value || '';
+  } catch {}
+
   const rawTextResult = await mammoth.extractRawText({ buffer });
   const rawText = rawTextResult.value || '';
 
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const italicFont = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
 
   // Standard A4 dimensions in points: 595.28 x 841.89
   const PAGE_WIDTH = 595.28;
@@ -181,12 +193,6 @@ export async function convertDocxToPdf(buffer: Buffer, fileExt: string = 'docx')
   const MARGIN_BOTTOM = 50;
   const USABLE_WIDTH = PAGE_WIDTH - MARGIN_X * 2;
 
-  const FONT_SIZE = 11;
-  const LINE_HEIGHT = 16;
-  const PARAGRAPH_SPACING = 8;
-
-  // Split lines and handle paragraph wrapping
-  const paragraphs = rawText.split(/\r?\n/);
   let currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   let currentY = PAGE_HEIGHT - MARGIN_TOP;
 
@@ -195,71 +201,144 @@ export async function convertDocxToPdf(buffer: Buffer, fileExt: string = 'docx')
     currentY = PAGE_HEIGHT - MARGIN_TOP;
   }
 
-  // Wrap text into lines that fit USABLE_WIDTH
-  for (const rawPara of paragraphs) {
-    const para = safeEncode(rawPara, font);
-    const trimmed = para.trim();
-    if (!trimmed) {
-      currentY -= PARAGRAPH_SPACING;
-      if (currentY < MARGIN_BOTTOM + LINE_HEIGHT) {
-        addNewPage();
-      }
-      continue;
+  function ensureSpace(neededHeight: number) {
+    if (currentY - neededHeight < MARGIN_BOTTOM) {
+      addNewPage();
     }
+  }
 
-    // Heuristic: Short lines in ALL CAPS or starting with numbers might be headers
-    const isHeading = trimmed.length < 60 && (trimmed === trimmed.toUpperCase() || /^(chapter|section|\d+\.)/i.test(trimmed));
-    const activeFont = isHeading ? boldFont : font;
-    const activeFontSize = isHeading ? 13 : FONT_SIZE;
-    const activeLineHeight = isHeading ? 20 : LINE_HEIGHT;
+  function drawWrappedText(
+    text: string,
+    activeFont: PDFFont,
+    fontSize: number,
+    lineHeight: number,
+    indentX: number = 0,
+    textColor = rgb(0.1, 0.1, 0.1)
+  ) {
+    const safeText = safeEncode(text, activeFont).trim();
+    if (!safeText) return;
 
-    const words = trimmed.split(/\s+/);
+    const words = safeText.split(/\s+/);
     let currentLine = '';
+    const availableWidth = USABLE_WIDTH - indentX;
 
     for (const word of words) {
       const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const testWidth = activeFont.widthOfTextAtSize(testLine, activeFontSize);
+      const testWidth = activeFont.widthOfTextAtSize(testLine, fontSize);
 
-      if (testWidth <= USABLE_WIDTH) {
+      if (testWidth <= availableWidth) {
         currentLine = testLine;
       } else {
         if (currentLine) {
-          if (currentY - activeLineHeight < MARGIN_BOTTOM) {
-            addNewPage();
-          }
+          ensureSpace(lineHeight);
           currentPage.drawText(currentLine, {
-            x: MARGIN_X,
-            y: currentY - activeFontSize,
-            size: activeFontSize,
+            x: MARGIN_X + indentX,
+            y: currentY - fontSize,
+            size: fontSize,
             font: activeFont,
-            color: rgb(0.1, 0.1, 0.1),
+            color: textColor,
           });
-          currentY -= activeLineHeight;
+          currentY -= lineHeight;
         }
         currentLine = word;
       }
     }
 
     if (currentLine) {
-      if (currentY - activeLineHeight < MARGIN_BOTTOM) {
-        addNewPage();
-      }
+      ensureSpace(lineHeight);
       currentPage.drawText(currentLine, {
-        x: MARGIN_X,
-        y: currentY - activeFontSize,
-        size: activeFontSize,
+        x: MARGIN_X + indentX,
+        y: currentY - fontSize,
+        size: fontSize,
         font: activeFont,
-        color: rgb(0.1, 0.1, 0.1),
+        color: textColor,
       });
-      currentY -= activeLineHeight;
+      currentY -= lineHeight;
+    }
+  }
+
+  // If mammoth extracted HTML, parse blocks with authentic typography
+  if (html && html.includes('<')) {
+    const blockRegex = /<(h[1-6]|p|li|tr)[^>]*>([\s\S]*?)<\/\1>/gi;
+    let match;
+    let hasDrawn = false;
+
+    while ((match = blockRegex.exec(html)) !== null) {
+      const tag = match[1].toLowerCase();
+      const innerHtml = match[2];
+      const cleanText = innerHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!cleanText) continue;
+
+      hasDrawn = true;
+      const isBold = /<(strong|b)[^>]*>/i.test(innerHtml);
+      const isItalic = /<(em|i)[^>]*>/i.test(innerHtml);
+      const chosenFont = isBold ? boldFont : isItalic ? italicFont : font;
+
+      if (tag === 'h1') {
+        currentY -= 8;
+        drawWrappedText(cleanText, boldFont, 18, 24, 0, rgb(0.05, 0.05, 0.05));
+        currentY -= 6;
+      } else if (tag === 'h2') {
+        currentY -= 6;
+        drawWrappedText(cleanText, boldFont, 15, 20, 0, rgb(0.1, 0.1, 0.1));
+        currentY -= 4;
+      } else if (tag === 'h3' || tag === 'h4' || tag === 'h5' || tag === 'h6') {
+        currentY -= 4;
+        drawWrappedText(cleanText, boldFont, 13, 18, 0, rgb(0.15, 0.15, 0.15));
+        currentY -= 3;
+      } else if (tag === 'li') {
+        drawWrappedText(`•  ${cleanText}`, chosenFont, 11, 16, 14);
+        currentY -= 2;
+      } else if (tag === 'tr') {
+        const cellMatches = innerHtml.match(/<(td|th)[^>]*>([\s\S]*?)<\/\1>/gi) || [];
+        if (cellMatches.length > 0) {
+          const cells = cellMatches.map((c) => c.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+          const cellWidth = USABLE_WIDTH / Math.max(1, cells.length);
+          ensureSpace(20);
+          cells.forEach((cellText, cIdx) => {
+            const safeCell = safeEncode(cellText, chosenFont);
+            const truncated = safeCell.length > 32 ? safeCell.slice(0, 29) + '...' : safeCell;
+            currentPage.drawText(truncated, {
+              x: MARGIN_X + cIdx * cellWidth + 4,
+              y: currentY - 12,
+              size: 10,
+              font: chosenFont,
+              color: rgb(0.1, 0.1, 0.1),
+            });
+          });
+          currentY -= 18;
+        }
+      } else {
+        drawWrappedText(cleanText, chosenFont, 11, 16, 0);
+        currentY -= 4;
+      }
     }
 
-    currentY -= 4; // small spacing between paragraphs
+    if (!hasDrawn) {
+      const paragraphs = rawText.split(/\r?\n/);
+      for (const p of paragraphs) {
+        if (!p.trim()) {
+          currentY -= 6;
+          continue;
+        }
+        drawWrappedText(p, font, 11, 16);
+        currentY -= 3;
+      }
+    }
+  } else {
+    const paragraphs = rawText.split(/\r?\n/);
+    for (const p of paragraphs) {
+      if (!p.trim()) {
+        currentY -= 6;
+        continue;
+      }
+      drawWrappedText(p, font, 11, 16);
+      currentY -= 3;
+    }
   }
 
   let finalPageCount = pdfDoc.getPageCount();
   if (finalPageCount === 0) {
-    // Empty document fallback
     pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     finalPageCount = 1;
   }

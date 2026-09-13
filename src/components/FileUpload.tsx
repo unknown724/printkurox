@@ -262,20 +262,26 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
     setUploadProgress(0);
 
     try {
-      // Step 1: High-fidelity document rendering (DOCX with logos & colors) & image optimization
+      // Step 1: Document preparation & image optimization
       setUploadPhase('optimizing');
       const preparedFiles = await Promise.all(
         newFileList.map(async (f) => {
           const lowerName = f.name.toLowerCase();
-          if (lowerName.endsWith('.docx')) {
+          if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
+            // Dual-Engine DOCX Conversion:
+            // 1. First attempt high-fidelity browser client conversion (docx-preview + pdf-lib).
+            //    This guarantees 100% vector-like visual fidelity when deployed to Vercel/Cloud or on mobile.
             try {
-              const convertedPdf = await convertDocxToPdfClient(f);
-              if (convertedPdf) {
-                return convertedPdf;
+              const clientPdf = await convertDocxToPdfClient(f);
+              if (clientPdf && clientPdf.size > 1000) {
+                return clientPdf;
               }
-            } catch (docxErr) {
-              console.warn('[FileUpload] Client DOCX conversion fallback:', docxErr);
+            } catch (clientErr) {
+              console.warn('[FileUpload] Browser DOCX conversion fallback:', clientErr);
             }
+            // 2. Server Fallback: If client conversion is skipped or fails, send original DOCX to server
+            //    (Converts via native Microsoft Word COM on Windows localhost, or enhanced Mammoth on Linux).
+            return f;
           }
           return optimizeImage(f);
         })

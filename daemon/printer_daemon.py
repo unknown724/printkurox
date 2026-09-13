@@ -211,14 +211,14 @@ try {{
     $word = New-Object -ComObject Word.Application
     $word.Visible = $false
     $word.DisplayAlerts = 0
-    $doc = $word.Documents.Open('{abs_src.replace("'", "''")}', $false, $true, $false)
-    $doc.SaveAs([ref]'{abs_dst.replace("'", "''")}', [ref]17)
+    $doc = $word.Documents.Open([string]'{abs_src.replace("'", "''")}')
+    $doc.ExportAsFixedFormat([string]'{abs_dst.replace("'", "''")}', 17)
     Write-Output "SUCCESS"
 }} catch {{
     Write-Output ("FAIL: " + $_.Exception.Message)
 }} finally {{
     if ($doc) {{
-        try {{ $doc.Close([ref]0) }} catch {{}}
+        try {{ $doc.Close(0) }} catch {{}}
         [System.Runtime.InteropServices.Marshal]::ReleaseComObject($doc) | Out-Null
     }}
     if ($word) {{
@@ -235,8 +235,8 @@ $ppt = $null
 $pres = $null
 try {{
     $ppt = New-Object -ComObject PowerPoint.Application
-    $pres = $ppt.Presentations.Open('{abs_src.replace("'", "''")}', [Microsoft.Office.Core.MsoTriState]::msoTrue, [Microsoft.Office.Core.MsoTriState]::msoFalse, [Microsoft.Office.Core.MsoTriState]::msoFalse)
-    $pres.SaveAs('{abs_dst.replace("'", "''")}', 32)
+    $pres = $ppt.Presentations.Open([string]'{abs_src.replace("'", "''")}', -1, 0, 0)
+    $pres.SaveAs([string]'{abs_dst.replace("'", "''")}', 32)
     Write-Output "SUCCESS"
 }} catch {{
     Write-Output ("FAIL: " + $_.Exception.Message)
@@ -261,8 +261,8 @@ try {{
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
     $excel.DisplayAlerts = $false
-    $wb = $excel.Workbooks.Open('{abs_src.replace("'", "''")}', $false, $true)
-    $wb.ExportAsFixedFormat(0, '{abs_dst.replace("'", "''")}')
+    $wb = $excel.Workbooks.Open([string]'{abs_src.replace("'", "''")}', $false, $true)
+    $wb.ExportAsFixedFormat(0, [string]'{abs_dst.replace("'", "''")}')
     Write-Output "SUCCESS"
 }} catch {{
     Write-Output ("FAIL: " + $_.Exception.Message)
