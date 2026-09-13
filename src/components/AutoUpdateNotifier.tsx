@@ -17,10 +17,18 @@ export function AutoUpdateNotifier() {
     }
 
     let intervalId: NodeJS.Timeout;
+    let lastCheckTime = 0;
+    const THROTTLE_MS = 10 * 60 * 1000; // Check at most once every 10 minutes on tab focus
 
     const checkForUpdates = async () => {
+      // Don't poll if the tab is hidden/minimized
+      if (typeof document !== 'undefined' && document.hidden) return;
+
+      const now = Date.now();
+      lastCheckTime = now;
+
       try {
-        const res = await fetch(`/api/version?_t=${Date.now()}`, {
+        const res = await fetch(`/version.json?_t=${now}`, {
           cache: 'no-store',
           headers: {
             'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -36,20 +44,23 @@ export function AutoUpdateNotifier() {
           setUpdateAvailable(true);
         }
       } catch (err) {
-        // Silently catch network glitches
+        // Silently ignore network hiccups
       }
     };
 
-    // Check after 5 seconds on load
-    const initialTimer = setTimeout(checkForUpdates, 5000);
+    // Check once shortly after load (4 seconds)
+    const initialTimer = setTimeout(checkForUpdates, 4000);
 
-    // Check every 60 seconds
-    intervalId = setInterval(checkForUpdates, 60000);
+    // Ultra-lightweight check every 15 minutes ONLY if user keeps tab active
+    intervalId = setInterval(checkForUpdates, 15 * 60 * 1000);
 
-    // Check when user switches back to tab
+    // Check when user returns to tab, with 10-minute cooldown
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        checkForUpdates();
+        const now = Date.now();
+        if (now - lastCheckTime > THROTTLE_MS) {
+          checkForUpdates();
+        }
       }
     };
 

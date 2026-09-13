@@ -1,6 +1,21 @@
 import type { NextConfig } from "next";
+import fs from "fs";
+import path from "path";
 
 const BUILD_ID = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || `${Date.now()}`;
+
+try {
+  const publicDir = path.join(process.cwd(), 'public');
+  if (!fs.existsSync(publicDir)) {
+    fs.mkdirSync(publicDir, { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(publicDir, 'version.json'),
+    JSON.stringify({ version: BUILD_ID, timestamp: Date.now() })
+  );
+} catch (err) {
+  // Silent fail if filesystem restricted
+}
 
 const nextConfig: NextConfig = {
   env: {
