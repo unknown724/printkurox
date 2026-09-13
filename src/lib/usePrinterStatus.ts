@@ -35,7 +35,7 @@ export function usePrinterStatus(pollIntervalMs = 30_000, stationId?: string): P
       // Network error — assume offline
       setStatus((prev) => ({ ...prev, online: false, loading: false }));
     }
-  }, []);
+  }, [stationId]);
 
   useEffect(() => {
     // Initial check

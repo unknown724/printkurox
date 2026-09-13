@@ -131,7 +131,8 @@ function applyGrayscale(imageData: ImageData, brightness = 0, contrast = 0): voi
 /**
  * Applies Vivid Color Boost (Whitens yellow/gray paper cast while preserving colorful stamps & inks)
  */
-function applyColorBoost(imageData: ImageData, brightness = 0, _contrast = 0): void {
+function applyColorBoost(imageData: ImageData, brightness = 0, contrast = 0): void {
+  void contrast;
   const { data } = imageData;
   const len = data.length;
 

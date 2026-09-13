@@ -192,8 +192,115 @@ def locate_sumatra():
 
 from PIL import Image, ImageOps
 
+def convert_office_to_pdf(file_path):
+    """
+    High-fidelity native conversion of Office documents (.docx, .doc, .rtf, .pptx, .ppt, .xlsx, .xls)
+    to true vector PDF using Microsoft Office COM on Windows before sending to SumatraPDF.
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    pdf_path = os.path.splitext(file_path)[0] + "_office.pdf"
+    abs_src = os.path.abspath(file_path)
+    abs_dst = os.path.abspath(pdf_path)
+
+    # PowerShell automation script for Word / PPT / Excel
+    if ext in ['.docx', '.doc', '.rtf']:
+        ps_script = f"""
+$word = $null
+$doc = $null
+try {{
+    $word = New-Object -ComObject Word.Application
+    $word.Visible = $false
+    $word.DisplayAlerts = 0
+    $doc = $word.Documents.Open('{abs_src.replace("'", "''")}', $false, $true, $false)
+    $doc.SaveAs([ref]'{abs_dst.replace("'", "''")}', [ref]17)
+    Write-Output "SUCCESS"
+}} catch {{
+    Write-Output ("FAIL: " + $_.Exception.Message)
+}} finally {{
+    if ($doc) {{
+        try {{ $doc.Close([ref]0) }} catch {{}}
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($doc) | Out-Null
+    }}
+    if ($word) {{
+        try {{ $word.Quit() }} catch {{}}
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null
+    }}
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+}}
+"""
+    elif ext in ['.pptx', '.ppt']:
+        ps_script = f"""
+$ppt = $null
+$pres = $null
+try {{
+    $ppt = New-Object -ComObject PowerPoint.Application
+    $pres = $ppt.Presentations.Open('{abs_src.replace("'", "''")}', [Microsoft.Office.Core.MsoTriState]::msoTrue, [Microsoft.Office.Core.MsoTriState]::msoFalse, [Microsoft.Office.Core.MsoTriState]::msoFalse)
+    $pres.SaveAs('{abs_dst.replace("'", "''")}', 32)
+    Write-Output "SUCCESS"
+}} catch {{
+    Write-Output ("FAIL: " + $_.Exception.Message)
+}} finally {{
+    if ($pres) {{
+        try {{ $pres.Close() }} catch {{}}
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($pres) | Out-Null
+    }}
+    if ($ppt) {{
+        try {{ $ppt.Quit() }} catch {{}}
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($ppt) | Out-Null
+    }}
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+}}
+"""
+    elif ext in ['.xlsx', '.xls', '.csv']:
+        ps_script = f"""
+$excel = $null
+$wb = $null
+try {{
+    $excel = New-Object -ComObject Excel.Application
+    $excel.Visible = $false
+    $excel.DisplayAlerts = $false
+    $wb = $excel.Workbooks.Open('{abs_src.replace("'", "''")}', $false, $true)
+    $wb.ExportAsFixedFormat(0, '{abs_dst.replace("'", "''")}')
+    Write-Output "SUCCESS"
+}} catch {{
+    Write-Output ("FAIL: " + $_.Exception.Message)
+}} finally {{
+    if ($wb) {{
+        try {{ $wb.Close($false) }} catch {{}}
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wb) | Out-Null
+    }}
+    if ($excel) {{
+        try {{ $excel.Quit() }} catch {{}}
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+    }}
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+}}
+"""
+    else:
+        return file_path
+
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            timeout=35
+        )
+        if "SUCCESS" in res.stdout and os.path.exists(abs_dst):
+            log(f"Converted Office document {os.path.basename(file_path)} to authentic vector PDF via Microsoft Office COM", "SUCCESS")
+            return abs_dst
+        else:
+            log(f"Office COM conversion output: {res.stdout.strip()} {res.stderr.strip()}", "WARN")
+    except Exception as e:
+        log(f"Office conversion exception: {e}", "WARN")
+
+    return file_path
+
 def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
-    """If file is an image (jpg, png, etc.), convert it to A4 PDF for SumatraPDF respecting orientation and fit mode."""
+    """If file is an image or Office document, convert it to A4 PDF for SumatraPDF respecting orientation and fit mode."""
     try:
         with open(file_path, 'rb') as f:
             header = f.read(5)
@@ -203,6 +310,12 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
         pass
 
     ext = os.path.splitext(file_path)[1].lower()
+    # Check Office documents first
+    if ext in ['.docx', '.doc', '.rtf', '.pptx', '.ppt', '.xlsx', '.xls', '.csv']:
+        converted_office = convert_office_to_pdf(file_path)
+        if converted_office.lower().endswith('.pdf') and os.path.exists(converted_office):
+            return converted_office
+
     if ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp']:
         pdf_path = os.path.splitext(file_path)[0] + "_converted.pdf"
         try:

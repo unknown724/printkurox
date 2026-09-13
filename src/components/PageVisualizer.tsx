@@ -316,13 +316,24 @@ export function PageVisualizer({
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
 
-        // Case A: Raw files provided in memory
-        if (rawFiles && rawFiles.length > 0) {
+        // Check if all raw files can be previewed client-side in-memory (genuine PDFs and Images)
+        const canPreviewLocally =
+          rawFiles &&
+          rawFiles.length > 0 &&
+          rawFiles.every((file) => {
+            const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type.includes('pdf');
+            const isImg = file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name);
+            return isPdf || isImg;
+          });
+
+        // Case A: Raw files provided in memory (PDFs and Images only)
+        if (canPreviewLocally && rawFiles && rawFiles.length > 0) {
           let currentPageIdx = 1;
 
           for (const file of rawFiles) {
             if (!isMounted) break;
             const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type.includes('pdf');
+            const isImg = file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name);
 
             if (isPdf) {
               try {
@@ -382,7 +393,7 @@ export function PageVisualizer({
                 console.warn(`PDF parse error for ${file.name}:`, err);
                 currentPageIdx++;
               }
-            } else {
+            } else if (isImg) {
               // Direct Image file (PNG, JPG, WebP) — show immediately
               if (currentPageIdx <= totalPages) {
                 const pageNumber = currentPageIdx; // Capture immutable loop index
@@ -430,12 +441,43 @@ export function PageVisualizer({
           return;
         }
 
-        // Case B: Fallback to /api/view-file if rawFiles not present
+        // Case B: Fallback to server-converted PDF (/api/view-file or downloadUrl)
+        // Flawlessly renders DOCX files, merged batches, and server-rendered documents
         const targetUrl = fileKey ? `/api/view-file?key=${encodeURIComponent(fileKey)}` : downloadUrl;
         if (targetUrl) {
-          const loadingTask = pdfjsLib.getDocument(targetUrl);
-          const pdf = await loadingTask.promise;
-          const pageCount = Math.min(pdf.numPages, totalPages);
+          let arrayBuffer: ArrayBuffer | null = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const res = await fetch(targetUrl);
+              if (res.ok) {
+                arrayBuffer = await res.arrayBuffer();
+                if (arrayBuffer && arrayBuffer.byteLength > 0) break;
+              }
+            } catch (err) {
+              console.warn(`TargetUrl attempt ${attempt + 1} failed:`, err);
+            }
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 350));
+          }
+
+          if (!arrayBuffer && downloadUrl && downloadUrl !== targetUrl) {
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                const res = await fetch(downloadUrl);
+                if (res.ok) {
+                  arrayBuffer = await res.arrayBuffer();
+                  if (arrayBuffer && arrayBuffer.byteLength > 0) break;
+                }
+              } catch (err) {
+                console.warn(`DownloadUrl attempt ${attempt + 1} failed:`, err);
+              }
+              if (attempt < 1) await new Promise((r) => setTimeout(r, 350));
+            }
+          }
+
+          if (arrayBuffer) {
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
+            const pdf = await loadingTask.promise;
+            const pageCount = Math.min(pdf.numPages, totalPages || pdf.numPages);
 
           for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
             if (!isMounted) break;
@@ -486,6 +528,7 @@ export function PageVisualizer({
           await pdf.destroy();
           if (isMounted && configsChanged) {
             onChange(updatedConfigs);
+          }
           }
         }
       } catch (err) {
@@ -1201,6 +1244,9 @@ export function PageVisualizer({
                           <img
                             src={thumbnails[activeSheetItems[0].pageNumber]}
                             alt={`Page #${activeSheetItems[0].pageNumber}`}
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
                             onLoad={(e) => {
                               const img = e.currentTarget;
                               if (img.naturalWidth && img.naturalHeight) {
@@ -1267,6 +1313,9 @@ export function PageVisualizer({
                           <img
                             src={thumbnails[activeSheetItems[1].pageNumber]}
                             alt={`Page #${activeSheetItems[1].pageNumber}`}
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
                             onLoad={(e) => {
                               const img = e.currentTarget;
                               if (img.naturalWidth && img.naturalHeight) {
@@ -1320,6 +1369,9 @@ export function PageVisualizer({
                       <img
                         src={thumbnails[activeSheetItems[0].pageNumber]}
                         alt="Poster Preview"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
                         onLoad={(e) => {
                           const img = e.currentTarget;
                           if (img.naturalWidth && img.naturalHeight) {
@@ -1488,6 +1540,9 @@ export function PageVisualizer({
                               <img
                                 src={thumb}
                                 alt={`Page #${cfg.pageNumber}`}
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                }}
                                 onLoad={(e) => {
                                   const img = e.currentTarget;
                                   if (img.naturalWidth && img.naturalHeight) {

@@ -227,7 +227,7 @@ export async function mergeFilesToPdf(
       }
     } else if (ext === 'docx' || ext === 'doc' || item.mimeType.includes('word') || item.mimeType.includes('officedocument')) {
       try {
-        const { pdfBuffer } = await convertDocxToPdf(item.buffer);
+        const { pdfBuffer } = await convertDocxToPdf(item.buffer, ext || 'docx');
         const docxPdf = await PDFDocument.load(pdfBuffer);
         const copiedPages = await mergedPdf.copyPages(docxPdf, docxPdf.getPageIndices());
         copiedPages.forEach((page) => printableItems.push({ type: 'pdfPage', page }));

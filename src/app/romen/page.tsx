@@ -9,8 +9,6 @@ import {
   EyeOff,
   Loader2,
   RefreshCw,
-  CheckCircle2,
-  Clock,
   ExternalLink,
   QrCode,
   FileText,
@@ -18,9 +16,7 @@ import {
   Check,
   RotateCcw,
   XCircle,
-  MessageCircle,
   LogOut,
-  ShieldCheck,
   Layers,
   AlertCircle,
   Trash2,
@@ -48,22 +44,17 @@ interface JobItem {
 }
 
 export default function RomenStationPortal() {
-  const [pin, setPin] = useState('');
+  const [pin, setPin] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('romen_saved_pin') || '';
+    }
+    return '';
+  });
   const [showPin, setShowPin] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedPin = localStorage.getItem('romen_saved_pin');
-      if (savedPin) {
-        setPin(savedPin);
-        setRememberDevice(true);
-      }
-    }
-  }, []);
 
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);

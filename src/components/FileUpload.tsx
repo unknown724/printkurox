@@ -11,6 +11,7 @@ import {
   Trash2,
   Image as ImageIcon,
   RotateCcw,
+  Sparkles,
 } from 'lucide-react';
 
 export interface FileItem {
@@ -408,7 +409,8 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
     }
   };
 
-  const handleFilesAdded = (incomingFiles: FileList | File[], _isAddMore = false) => {
+  const handleFilesAdded = (incomingFiles: FileList | File[], isAddMore = false) => {
+    void isAddMore;
     const arr = Array.from(incomingFiles);
     if (arr.length === 0) return;
 
@@ -530,6 +532,13 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
               );
             })}
           </div>
+
+          {uploadedBatch.fileItems.some((f) => f.name.match(/\.(docx?|rtf)$/i)) && (
+            <div className="my-2.5 flex items-center gap-2 px-3 py-2 text-[11px] text-blue-700 dark:text-blue-300 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/50 rounded-xl">
+              <Sparkles className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+              <span>Word document formatted with native layout engine (tables &amp; styles preserved).</span>
+            </div>
+          )}
 
           {/* Add more files footer action */}
           <div className="pt-3 flex items-center justify-between">

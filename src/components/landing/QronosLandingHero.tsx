@@ -15,8 +15,9 @@ interface QronosLandingHeroProps {
 export function QronosLandingHero({
   onGetStarted,
   onOpenRates,
-  printerOnline: _printerOnline = true,
+  printerOnline = true,
 }: QronosLandingHeroProps) {
+  void printerOnline;
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-black text-white font-sans selection:bg-white/20">
       {/* Outer Grid Guidelines with Corner Crosshairs */}
