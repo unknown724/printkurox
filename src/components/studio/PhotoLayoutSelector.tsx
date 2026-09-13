@@ -32,7 +32,7 @@ export interface TextOverlayItem {
 }
 
 export interface TextOverlayConfig {
-  enabled: boolean;
+  enabled?: boolean;
   text?: string;
   subtitle?: string;
   position?: TextPosition;
@@ -87,6 +87,7 @@ export interface PhotoLayoutSettings {
   bookletSubset?: 'both' | 'front' | 'back';
   bookletBinding?: 'left' | 'right';
   textOverlay?: TextOverlayConfig;
+  customScale?: number;
 }
 
 interface PhotoLayoutSelectorProps {

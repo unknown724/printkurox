@@ -109,13 +109,21 @@ export async function POST(req: NextRequest) {
           (p.copies && p.copies > 1)
       );
 
+    const hasTextOverlay = Boolean(
+      textOverlay && (
+        textOverlay.enabled ||
+        (Array.isArray(textOverlay.items) && textOverlay.items.some((it: any) => it.text && it.text.trim().length > 0)) ||
+        (typeof textOverlay.text === 'string' && textOverlay.text.trim().length > 0)
+      )
+    );
+
     const needsTransform = Boolean(
       (customScale && Number(customScale) !== 100) ||
       (fitMode && fitMode !== 'fit') ||
       (layoutMode && layoutMode !== '1-up') ||
       (orientation && orientation !== 'auto') ||
       drawBorder ||
-      (textOverlay && textOverlay.enabled) ||
+      hasTextOverlay ||
       hasCustomPageConfigs ||
       (pageRange && pageRange.trim().toLowerCase() !== 'all')
     );

@@ -204,6 +204,11 @@ export function AdobePageHandling({
     setScaleText(String(clamped));
     handleScalingChange('custom', clamped);
     onCustomScaleChange?.(clamped);
+    onChange({
+      ...settings,
+      fitMode: 'custom',
+      customScale: clamped,
+    });
   };
 
   if (prevCustomScale !== customScale) {
@@ -250,22 +255,23 @@ export function AdobePageHandling({
         });
       }
     } else if (tab === 'text') {
-      // Do not force-enable text overlay on tab select; let user toggle it on explicitly
-      if (!settings.textOverlay) {
-        onChange({
-          ...settings,
-          textOverlay: {
-            enabled: false,
-            text: 'SAMPLE STAMP',
-            position: 'watermark',
-            fontFamily: 'sans',
-            fontSize: 'md',
-            color: '#dc2626',
-            opacity: 0.18,
-            applyTo: 'all_pages',
-          },
-        });
-      }
+      // Auto-enable text overlay when user clicks the Text tab so it is immediately visible
+      const existingText = settings.textOverlay?.text || (settings.textOverlay?.items && settings.textOverlay.items[0]?.text);
+      const textToUse = existingText && existingText.trim() ? existingText : 'SAMPLE STAMP';
+      onChange({
+        ...settings,
+        textOverlay: {
+          ...(settings.textOverlay || {}),
+          enabled: true,
+          text: textToUse,
+          position: settings.textOverlay?.position || 'watermark',
+          fontFamily: settings.textOverlay?.fontFamily || 'sans',
+          fontSize: settings.textOverlay?.fontSize || 'md',
+          color: settings.textOverlay?.color || '#dc2626',
+          opacity: settings.textOverlay?.opacity ?? 0.35,
+          applyTo: settings.textOverlay?.applyTo || 'all_pages',
+        },
+      });
     }
   };
 
@@ -300,10 +306,12 @@ export function AdobePageHandling({
   };
 
   const handleScalingChange = (newScaling: 'fit' | 'actual' | 'fill' | 'custom', newScaleVal?: number) => {
-    onScalingChange?.(newScaling, newScaleVal);
+    const scaleVal = newScaleVal !== undefined ? newScaleVal : (customScale || 100);
+    onScalingChange?.(newScaling, scaleVal);
     onChange({
       ...settings,
       fitMode: newScaling === 'fill' ? 'fill' : newScaling === 'actual' ? 'actual' : newScaling === 'custom' ? 'custom' : 'fit',
+      customScale: scaleVal,
     });
   };
 
@@ -461,10 +469,10 @@ export function AdobePageHandling({
                 <span className="font-semibold text-[11px] truncate">Custom</span>
               </div>
 
-              {/* Compact Touch Stepper */}
+              {/* Compact Touch Stepper with Editable Input */}
               <div
                 onClick={(e) => e.stopPropagation()}
-                className="flex items-center h-5.5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-hidden shadow-2xs shrink-0"
+                className="flex items-center h-6 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-hidden shadow-2xs shrink-0"
               >
                 <button
                   type="button"
@@ -473,14 +481,45 @@ export function AdobePageHandling({
                     e.stopPropagation();
                     updateTargetScale((customScale || 100) - 5);
                   }}
-                  className="w-4 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none"
+                  className="w-5 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none"
                   title="Decrease 5%"
                 >
                   -
                 </button>
-                <span className="font-mono text-[10px] font-bold px-1 text-center min-w-[28px] text-zinc-900 dark:text-zinc-100">
-                  {customScale || 100}%
-                </span>
+                <div className="flex items-center px-1">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={scaleText}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      setScaleText(e.target.value);
+                      const parsed = parseInt(e.target.value, 10);
+                      if (!isNaN(parsed) && parsed >= 10 && parsed <= 500) {
+                        handleScalingChange('custom', parsed);
+                        onCustomScaleChange?.(parsed);
+                        onChange({
+                          ...settings,
+                          fitMode: 'custom',
+                          customScale: parsed,
+                        });
+                      }
+                    }}
+                    onBlur={() => {
+                      const parsed = parseInt(scaleText, 10);
+                      const clamped = isNaN(parsed) ? 100 : Math.max(10, Math.min(500, parsed));
+                      updateTargetScale(clamped);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    className="w-8 text-center font-mono text-[11px] font-bold bg-transparent text-zinc-900 dark:text-zinc-100 border-none p-0 focus:outline-none focus:ring-0"
+                  />
+                  <span className="text-[10px] font-bold text-zinc-500 select-none">%</span>
+                </div>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -488,7 +527,7 @@ export function AdobePageHandling({
                     e.stopPropagation();
                     updateTargetScale((customScale || 100) + 5);
                   }}
-                  className="w-4 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none"
+                  className="w-5 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none"
                   title="Increase 5%"
                 >
                   +
@@ -813,10 +852,11 @@ export function AdobePageHandling({
           const updateItems = (newItems: TextOverlayItem[], newActiveId?: string) => {
             const currentActiveId = newActiveId || activeItemId;
             const currentActive = newItems.find((it) => it.id === currentActiveId) || newItems[0];
+            const hasText = newItems.some((it) => it.text && it.text.trim().length > 0);
             onChange({
               ...settings,
               textOverlay: {
-                enabled: isEnabled,
+                enabled: isEnabled || hasText,
                 items: newItems,
                 activeItemId: currentActive?.id,
                 text: currentActive?.text || '',

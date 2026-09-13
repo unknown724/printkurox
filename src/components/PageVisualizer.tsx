@@ -873,8 +873,9 @@ export function PageVisualizer({
             >
                   {/* Canva-Style Live Interactive Multi-Text Overlay Layer */}
                   {(() => {
-                    if (!textOverlay?.enabled) return null;
                     const overlayItems = getTextOverlayItems(textOverlay);
+                    const hasText = overlayItems.some((it) => it.text && it.text.trim().length > 0);
+                    if (!textOverlay?.enabled && !hasText) return null;
                     if (overlayItems.length === 0) return null;
 
                     const isFirstSheet = currentSheetIndex === 0;
@@ -1447,14 +1448,16 @@ export function PageVisualizer({
                     // Visual scaling factor: distinct visual difference between fit (margin), actual (100%), fill (full), and custom
                     const getScaleFactor = () => {
                       // 1. If this specific page has a custom scale set, ALWAYS prioritize it!
-                      if (cfg.customScale !== undefined) {
+                      if (cfg.customScale !== undefined && cfg.customScale !== 100) {
                         return cfg.customScale / 100;
                       }
-                      if (scaling === 'custom') {
+                      // 2. Document-level custom scale
+                      if (scaling === 'custom' || fitMode === 'custom' || (customScale && customScale !== 100)) {
                         return (customScale || 100) / 100;
                       }
-                      if (scaling === 'actual') return 1.00; // 100% unscaled actual size
-                      if (scaling === 'fill') return 1.05; // Slightly enlarged to fill slot edges
+                      if (cfg.customScale === 100) return 1.00;
+                      if (scaling === 'actual' || fitMode === 'actual') return 1.00; // 100% unscaled actual size
+                      if (scaling === 'fill' || fitMode === 'fill') return 1.05; // Slightly enlarged to fill slot edges
                       return 0.92;
                     };
                     const scaleValue = getScaleFactor();

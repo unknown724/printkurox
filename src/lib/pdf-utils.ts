@@ -312,7 +312,12 @@ export async function mergeFilesToPdf(
   // LAYOUT COMPOSER
   // ───────────────────────────────────────────────────────────────────────────
 
-  const customScaleMultiplier = (fitMode === 'custom' && customScale) ? (customScale / 100) : 1;
+  const customScaleMultiplier =
+    (customScale && Number(customScale) !== 100)
+      ? (Number(customScale) / 100)
+      : (fitMode === 'custom' && customScale)
+      ? (Number(customScale) / 100)
+      : 1;
 
   // Helper to draw an item (image or embedded PDF page) into a specific bounding box on a page
   const drawItemInBox = (
@@ -350,7 +355,8 @@ export async function mergeFilesToPdf(
     if (fitMode === 'actual') {
       scale = 1 * effectiveScale;
     } else if (fitMode === 'custom' || effectiveScale !== 1) {
-      scale = Math.min(boxW / w, boxH / h) * effectiveScale;
+      const baseScale = isFill ? Math.max(boxW / w, boxH / h) : Math.min(boxW / w, boxH / h);
+      scale = baseScale * effectiveScale;
     } else if (isFill) {
       scale = Math.max(boxW / w, boxH / h);
     } else {
@@ -693,8 +699,9 @@ export async function mergeFilesToPdf(
   }
 
   // Canva-Style Multi-Text Overlay Mode
-  if (options.textOverlay?.enabled) {
-    const overlayItems = getTextOverlayItems(options.textOverlay);
+  const overlayItems = getTextOverlayItems(options.textOverlay);
+  const hasOverlayText = overlayItems.some((it) => it.text && it.text.trim().length > 0);
+  if ((options.textOverlay?.enabled || hasOverlayText) && overlayItems.length > 0) {
     const pdfPageCount = mergedPdf.getPageCount();
 
     const hexToRgb = (hex: string) => {

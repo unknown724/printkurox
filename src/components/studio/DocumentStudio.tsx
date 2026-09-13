@@ -239,22 +239,33 @@ export function DocumentStudio({
                   onChange={onLayoutSettingsChange}
                   orientation={orientation}
                   onOrientationChange={onOrientationChange}
-                  scaling={advancedOptions.scaling}
-                  onScalingChange={(scaling, newCustomScale) =>
+                  scaling={layoutSettings.fitMode === 'custom' || advancedOptions.scaling === 'custom' ? 'custom' : advancedOptions.scaling}
+                  onScalingChange={(scaling, newCustomScale) => {
+                    const nextScale = newCustomScale !== undefined ? newCustomScale : (advancedOptions.customScale || 100);
                     onAdvancedOptionsChange({
                       ...advancedOptions,
                       scaling,
-                      ...(newCustomScale !== undefined ? { customScale: newCustomScale } : {}),
-                    })
-                  }
-                  customScale={advancedOptions.customScale || 100}
-                  onCustomScaleChange={(customScale) =>
+                      customScale: nextScale,
+                    });
+                    onLayoutSettingsChange({
+                      ...layoutSettings,
+                      fitMode: scaling === 'fill' ? 'fill' : scaling === 'actual' ? 'actual' : scaling === 'custom' ? 'custom' : 'fit',
+                      customScale: nextScale,
+                    });
+                  }}
+                  customScale={layoutSettings.customScale || advancedOptions.customScale || 100}
+                  onCustomScaleChange={(customScale) => {
                     onAdvancedOptionsChange({
                       ...advancedOptions,
                       scaling: 'custom',
                       customScale,
-                    })
-                  }
+                    });
+                    onLayoutSettingsChange({
+                      ...layoutSettings,
+                      fitMode: 'custom',
+                      customScale,
+                    });
+                  }}
                   fileCount={uploadedBatch.fileCount || uploadedBatch.totalPages}
                   pageConfigs={pageConfigs}
                   onPageConfigsChange={onPageConfigsChange}
@@ -290,8 +301,8 @@ export function DocumentStudio({
                 onOrientationChange={onOrientationChange}
                 enhanceMode={enhanceMode}
                 fitMode={layoutSettings.fitMode}
-                scaling={advancedOptions.scaling}
-                customScale={advancedOptions.customScale || 100}
+                scaling={layoutSettings.fitMode === 'custom' || advancedOptions.scaling === 'custom' ? 'custom' : advancedOptions.scaling}
+                customScale={layoutSettings.customScale || advancedOptions.customScale || 100}
                 layoutMode={layoutSettings.layoutMode}
                 drawBorder={layoutSettings.drawBorder}
                 autoRotate={layoutSettings.autoRotate}
@@ -393,7 +404,7 @@ export function DocumentStudio({
                 textOverlay={layoutSettings.textOverlay}
                 orientation={orientation}
                 stationId={stationId}
-                customScale={advancedOptions.customScale || 100}
+                customScale={layoutSettings.customScale || advancedOptions.customScale || 100}
                 fitMode={layoutSettings.fitMode || advancedOptions.scaling || 'fit'}
                 drawBorder={layoutSettings.drawBorder}
               />
