@@ -1,6 +1,6 @@
 import { PDFDocument, PDFPage, PDFImage, PDFEmbeddedPage, degrees, rgb, StandardFonts } from 'pdf-lib';
 import { convertDocxToPdf } from './docx-converter';
-import { LayoutMode, TextOverlayConfig, getTextOverlayItems } from '@/components/studio/PhotoLayoutSelector';
+import { LayoutMode, TextOverlayConfig, getTextOverlayItems } from './layout-types';
 import { PageConfig } from './pricing';
 
 /**
