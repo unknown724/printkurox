@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
           }
         );
 
-        const cleanBase = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const cleanBase = fileName.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9.-]/g, '_');
         const transformedKey = `uploads/transformed-${jobId}-${cleanBase}.pdf`;
         await uploadToR2(transformedKey, transformedBuffer, 'application/pdf');
         finalFileKey = transformedKey;
