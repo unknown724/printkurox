@@ -33,6 +33,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Maximum 10 files per print job' }, { status: 400 });
     }
 
+    for (const f of files) {
+      if (!f.key || typeof f.key !== 'string' || !f.key.startsWith('uploads/raw/') || f.key.includes('..')) {
+        return NextResponse.json({ error: 'Invalid file key provided' }, { status: 400 });
+      }
+    }
+
     // Single PDF optimization: No re-encoding or re-merging needed
     if (files.length === 1 && (files[0].name.toLowerCase().endsWith('.pdf') || files[0].type.includes('pdf'))) {
       const file = files[0];
@@ -108,8 +114,8 @@ export async function POST(req: NextRequest) {
     }
 
     const uniqueId = crypto.randomUUID();
-    const sanitizedName = files[0].name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const finalKey = `uploads/${uniqueId}-${sanitizedName}.pdf`;
+    const cleanBase = files[0].name.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const finalKey = `uploads/${uniqueId}-${cleanBase}.pdf`;
 
     const primaryName =
       files.length === 1

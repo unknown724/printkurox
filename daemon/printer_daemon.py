@@ -16,6 +16,7 @@ import requests
 import winsound
 import socket
 import json
+import re
 from datetime import datetime, timezone
 import boto3
 from botocore.client import Config
@@ -393,7 +394,9 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     # Build print settings
     settings_list = []
     if page_range:
-        settings_list.append(f"{page_range}")
+        clean_range = "".join(str(page_range).split())
+        if clean_range:
+            settings_list.append(clean_range)
     if color_mode == "bw":
         settings_list.append("monochrome")
     else:
@@ -605,13 +608,10 @@ def process_manual_duplex_job(job, local_file_path):
     if True:
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
+        # File will be purged from R2 by the 15-minute zero-retention cleaner,
+        # allowing the operator to preview it in /adminkurox during the active pickup window.
         log(f"Job {job['pickup_code']} manual duplex finished successfully!", "SUCCESS")
         play_chime()
-        try:
-            s3_client.delete_object(Bucket=R2_BUCKET_NAME, Key=job["file_key"])
-            log(f"Purged remote file from R2: {job['file_key']}", "INFO")
-        except Exception as del_err:
-            log(f"Note: Could not purge {job['file_key']} from R2: {del_err}", "WARN")
     else:
         update_job_status(job["id"], "FAILED")
 
@@ -822,10 +822,12 @@ def main():
                         continue
 
                     # 1. Download file from Cloudflare R2
-                    base_name = os.path.basename(file_name)
+                    raw_name = os.path.basename(file_name.replace('\\', '/'))
+                    base_name = re.sub(r'[^a-zA-Z0-9._-]', '_', raw_name) or "document"
                     if file_key.lower().endswith('.pdf') and not base_name.lower().endswith('.pdf'):
                         base_name += '.pdf'
-                    local_filename = f"{pickup_code.replace('#', '')}_{job_id[:6]}_{base_name}"
+                    clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code)
+                    local_filename = f"{clean_pickup}_{job_id[:6]}_{base_name}"
                     local_path = os.path.join(TEMP_DIR, local_filename)
 
                     try:

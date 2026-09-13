@@ -23,7 +23,6 @@ function HomePageContent() {
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
   const [orientation, setOrientation] = useState<'auto' | 'portrait' | 'landscape'>('auto');
-  const [_printerOnline, setPrinterOnline] = useState(true);
 
   // Photo & Page Layout Settings (Windows Photo & Adobe Acrobat style)
   const [layoutSettings, setLayoutSettings] = useState<PhotoLayoutSettings>({
@@ -67,15 +66,6 @@ function HomePageContent() {
           setIsAdmin(true);
           const name = d.deviceName || d.device?.device_name;
           if (name) setDeviceName(name);
-        }
-      })
-      .catch(() => {});
-
-    fetch('/api/printer-status')
-      .then((r) => r.json())
-      .then((d) => {
-        if (typeof d.online === 'boolean') {
-          setPrinterOnline(d.online);
         }
       })
       .catch(() => {});

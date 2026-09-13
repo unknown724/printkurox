@@ -24,6 +24,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Maximum 10 files per print job' }, { status: 400 });
     }
 
+    const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.doc', '.docx'];
+    let totalSize = 0;
+
+    for (const f of files) {
+      if (typeof f.size !== 'number' || f.size <= 0 || f.size > 35 * 1024 * 1024) {
+        return NextResponse.json({ error: 'Invalid file size. Files must be between 1 byte and 35 MB.' }, { status: 400 });
+      }
+      totalSize += f.size;
+
+      const ext = (f.name || '').toLowerCase().match(/\.[a-z0-9]+$/)?.[0] || '';
+      if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        return NextResponse.json({ error: `File type ${ext || 'unknown'} is not supported for printing.` }, { status: 400 });
+      }
+    }
+
+    if (totalSize > 35 * 1024 * 1024) {
+      return NextResponse.json({ error: 'Total upload size exceeds 35 MB' }, { status: 400 });
+    }
+
     const uploads = await Promise.all(
       files.map(async (f) => {
         const uniqueId = crypto.randomUUID();

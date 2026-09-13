@@ -2,6 +2,7 @@
  * Station Configuration Registry
  * Manages multi-store settings, counter branding, WhatsApp contacts, and staff PINs.
  */
+import crypto from 'crypto';
 
 export interface StationConfig {
   id: string;
@@ -63,14 +64,22 @@ export function getStationConfig(stationId?: string | null): StationConfig {
   return STATIONS[key] || STATIONS.main;
 }
 
+function safeCompare(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a.trim());
+  const bufB = Buffer.from(b.trim());
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 export function validateStationPin(stationId: string, inputPin: string): boolean {
   if (!inputPin) return false;
   const station = getStationConfig(stationId);
   const masterPin = process.env.ADMIN_SECRET_KEY || 'Kurox725#29';
 
   // Master admin PIN always works across all stations
-  if (inputPin.trim() === masterPin.trim()) return true;
+  if (safeCompare(inputPin, masterPin)) return true;
 
   // Station specific PIN (e.g. Romen69092# for Romen Xerox)
-  return inputPin.trim() === station.adminPin.trim();
+  return safeCompare(inputPin, station.adminPin);
 }

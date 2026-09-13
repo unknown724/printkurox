@@ -16,7 +16,6 @@ export function AutoUpdateNotifier() {
       return;
     }
 
-    let intervalId: NodeJS.Timeout;
     let lastCheckTime = 0;
     const THROTTLE_MS = 10 * 60 * 1000; // Check at most once every 10 minutes on tab focus
 
@@ -43,7 +42,7 @@ export function AutoUpdateNotifier() {
           console.log(`[AutoUpdate] New version detected: ${data.version} (current: ${clientVersion})`);
           setUpdateAvailable(true);
         }
-      } catch (err) {
+      } catch {
         // Silently ignore network hiccups
       }
     };
@@ -52,7 +51,7 @@ export function AutoUpdateNotifier() {
     const initialTimer = setTimeout(checkForUpdates, 4000);
 
     // Ultra-lightweight check every 15 minutes ONLY if user keeps tab active
-    intervalId = setInterval(checkForUpdates, 15 * 60 * 1000);
+    const intervalId = setInterval(checkForUpdates, 15 * 60 * 1000);
 
     // Check when user returns to tab, with 10-minute cooldown
     const handleVisibilityChange = () => {

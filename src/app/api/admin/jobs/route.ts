@@ -7,21 +7,21 @@ import { deleteFromR2 } from '@/lib/cloudflare-r2';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-async function isAuthorized(req: NextRequest, stationId?: string | null): Promise<boolean> {
+async function getAuthDetails(req: NextRequest, stationId?: string | null): Promise<{ isAuthorized: boolean; isMaster: boolean }> {
   // 1. Check master admin device cookie
   const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
   if (token && (await verifyAdminToken(token))) {
-    return true;
+    return { isAuthorized: true, isMaster: true };
   }
 
   // 2. Check station-specific PIN or master PIN via header or cookie
   const pinHeader = req.headers.get('x-station-pin') || req.cookies.get('station_admin_pin')?.value;
   if (pinHeader) {
-    if (validateAdminPin(pinHeader)) return true;
-    if (stationId && validateStationPin(stationId, pinHeader)) return true;
+    if (validateAdminPin(pinHeader)) return { isAuthorized: true, isMaster: true };
+    if (stationId && validateStationPin(stationId, pinHeader)) return { isAuthorized: true, isMaster: false };
   }
 
-  return false;
+  return { isAuthorized: false, isMaster: false };
 }
 
 export async function GET(req: NextRequest) {
@@ -31,8 +31,13 @@ export async function GET(req: NextRequest) {
     const station = stationParam ? getStationConfig(stationParam) : null;
     const stationId = station ? station.id : null;
 
-    if (!(await isAuthorized(req, stationId))) {
+    const auth = await getAuthDetails(req, stationId);
+    if (!auth.isAuthorized) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!auth.isMaster && !stationId) {
+      return NextResponse.json({ error: 'Unauthorized: station_id is required' }, { status: 401 });
     }
 
     let query = `SELECT id, pickup_code, file_name, file_key, total_pages, color_mode, is_duplex, copies, total_price, status, payment_id, created_at, expires_at, station_id
@@ -76,8 +81,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'action is required' }, { status: 400 });
     }
 
-    if (!(await isAuthorized(req, stationId))) {
+    const auth = await getAuthDetails(req, stationId);
+    if (!auth.isAuthorized) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!auth.isMaster && !stationId) {
+      return NextResponse.json(
+        { error: 'Forbidden: station_id is required for partner station operations' },
+        { status: 403 }
+      );
     }
 
     // 1. Clear All Completed/Failed History
@@ -129,6 +142,16 @@ export async function PATCH(req: NextRequest) {
     }
 
     const job = jobs[0];
+
+    // Multi-tenant IDOR protection:
+    // Partner stations can only manage jobs belonging to their own station.
+    // Only master admin (device cookie or master PIN) can manage jobs across all stations.
+    if (!auth.isMaster && job.station_id && stationId && job.station_id !== stationId) {
+      return NextResponse.json(
+        { error: 'Forbidden: You cannot modify jobs belonging to another station' },
+        { status: 403 }
+      );
+    }
 
     // 2. Delete single job from history & purge R2 file
     if (action === 'delete') {

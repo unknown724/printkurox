@@ -78,6 +78,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required print parameters' }, { status: 400 });
     }
 
+    if (typeof fileKey !== 'string' || !fileKey.startsWith('uploads/') || fileKey.includes('..')) {
+      return NextResponse.json({ error: 'Invalid file key' }, { status: 400 });
+    }
+
     // Calculate actual billable pages from page range or pageConfigs
     let activePagesCount = docPages;
     let effectivePageRange = pageRange;
@@ -146,12 +150,15 @@ export async function POST(req: NextRequest) {
     const hasTextOverlay = Boolean(
       textOverlay && (
         textOverlay.enabled ||
-        (Array.isArray(textOverlay.items) && textOverlay.items.some((it: any) => it.text && it.text.trim().length > 0)) ||
+        (Array.isArray(textOverlay.items) && textOverlay.items.some((it: { text?: string }) => it.text && it.text.trim().length > 0)) ||
         (typeof textOverlay.text === 'string' && textOverlay.text.trim().length > 0)
       )
     );
 
+    const isNotPdf = Boolean(fileName && !fileName.toLowerCase().endsWith('.pdf'));
+
     const needsTransform = Boolean(
+      isNotPdf ||
       (customScale && Number(customScale) !== 100) ||
       (fitMode && fitMode !== 'fit') ||
       (layoutMode && layoutMode !== '1-up') ||

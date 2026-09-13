@@ -1,12 +1,20 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { queryD1, executeD1, PrintJobRecord } from '@/lib/cloudflare-d1';
 import { deleteFromR2, purgeExpiredR2Files } from '@/lib/cloudflare-r2';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+      const authHeader = req.headers.get('authorization');
+      if (authHeader !== `Bearer ${cronSecret}`) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+
     const nowIso = new Date().toISOString();
 
     // 1. Find all expired jobs (strictly exclude PAID, PRINTING, or AWAITING_FLIP jobs)

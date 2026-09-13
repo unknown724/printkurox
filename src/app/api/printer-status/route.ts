@@ -1,35 +1,19 @@
 import { NextResponse } from 'next/server';
+import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 
-const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID!;
-const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN!;
-const CF_D1_DB_ID = process.env.CLOUDFLARE_D1_DATABASE_ID!;
-
-async function queryD1(sql: string) {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/${CF_D1_DB_ID}/query`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${CF_API_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ sql }),
-    // No-store so we always get a fresh result
-    cache: 'no-store',
-  });
-  if (!res.ok) return null;
-  const data = await res.json();
-  return data?.result?.[0]?.results ?? null;
+interface HeartbeatRow {
+  updated_at: string;
 }
 
 // Ensure the heartbeat table exists (runs on first call)
 async function ensureTable() {
-  await queryD1(`
+  await executeD1(`
     CREATE TABLE IF NOT EXISTS daemon_heartbeat (
       id INTEGER PRIMARY KEY DEFAULT 1,
       updated_at TEXT NOT NULL
     )
   `);
-  await queryD1(`
+  await executeD1(`
     INSERT OR IGNORE INTO daemon_heartbeat (id, updated_at) VALUES (1, datetime('now'))
   `);
 }
@@ -40,12 +24,17 @@ export async function GET(req: Request) {
     const stationParam = searchParams.get('station_id') || searchParams.get('station');
     const isRomen = stationParam === 'romen' || stationParam === 'romen_xerox';
     const stationSlot = isRomen ? 154 : 1;
+    const stationId = isRomen ? 'romen_xerox' : 'main';
 
-    let rows = await queryD1(`SELECT updated_at FROM daemon_heartbeat WHERE id = ${stationSlot} OR station_id = '${isRomen ? 'romen_xerox' : 'main'}' ORDER BY updated_at DESC LIMIT 1`);
-    if (rows === null || rows.length === 0) {
+    let rows = await queryD1<HeartbeatRow>(
+      `SELECT updated_at FROM daemon_heartbeat WHERE id = ? OR station_id = ? ORDER BY updated_at DESC LIMIT 1`,
+      [stationSlot, stationId]
+    );
+
+    if (!rows || rows.length === 0) {
       if (!isRomen) {
         await ensureTable();
-        rows = await queryD1('SELECT updated_at FROM daemon_heartbeat WHERE id = 1');
+        rows = await queryD1<HeartbeatRow>('SELECT updated_at FROM daemon_heartbeat WHERE id = ?', [1]);
       }
     }
 

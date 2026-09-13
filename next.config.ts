@@ -13,7 +13,7 @@ try {
     path.join(publicDir, 'version.json'),
     JSON.stringify({ version: BUILD_ID, timestamp: Date.now() })
   );
-} catch (err) {
+} catch {
   // Silent fail if filesystem restricted
 }
 
@@ -51,6 +51,18 @@ const nextConfig: NextConfig = {
           {
             key: 'Expires',
             value: '0',
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+          {
+            key: 'X-Frame-Options',
+            value: 'SAMEORIGIN',
+          },
+          {
+            key: 'Referrer-Policy',
+            value: 'strict-origin-when-cross-origin',
           },
         ],
       },

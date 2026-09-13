@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStationConfig, validateStationPin } from '@/lib/stations';
 import { verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
+import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,12 +42,32 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
+
+    // 1. Check rate limit
+    const rateCheck = await checkRateLimit(ip);
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        { error: rateCheck.message },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(rateCheck.retryAfterSeconds || 900) },
+        }
+      );
+    }
+
     const { station_id: rawStationId, pin, rememberDevice } = await req.json();
     const station = getStationConfig(rawStationId || 'romen_xerox');
 
+    // 2. Validate PIN
     if (!pin || !validateStationPin(station.id, pin)) {
-      return NextResponse.json({ error: 'Invalid station passcode' }, { status: 401 });
+      const failResult = await recordFailedAttempt(ip);
+      const status = failResult.locked ? 429 : 401;
+      return NextResponse.json({ error: failResult.message }, { status });
     }
+
+    // 3. Reset rate limit on success
+    await resetFailedAttempts(ip);
 
     const res = NextResponse.json({
       success: true,

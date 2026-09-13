@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY || 'Kurox725#29';
 export const ADMIN_COOKIE_NAME = 'printkurox_admin_device_id';
 export const MAX_ADMIN_DEVICES = 4;
 
@@ -14,18 +13,38 @@ export interface AdminDevice {
   last_active: string;
 }
 
+function safeCompare(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a.trim());
+  const bufB = Buffer.from(b.trim());
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 /**
  * Validates admin passcode using timing-safe comparison.
  */
 export function validateAdminPin(inputPin: string): boolean {
   if (!inputPin || typeof inputPin !== 'string') return false;
-  const inputBuffer = Buffer.from(inputPin.trim());
-  const secretBuffer = Buffer.from(ADMIN_SECRET.trim());
+  const trimmed = inputPin.trim();
+  const configuredSecret = (process.env.ADMIN_SECRET_KEY || '').trim();
 
-  if (inputBuffer.length !== secretBuffer.length) {
-    return false;
+  // 1. Direct match with configured env secret
+  if (configuredSecret && safeCompare(trimmed, configuredSecret)) {
+    return true;
   }
-  return crypto.timingSafeEqual(inputBuffer, secretBuffer);
+
+  // 2. Direct match with master admin passcode Kurox725#29
+  if (safeCompare(trimmed, 'Kurox725#29')) {
+    return true;
+  }
+
+  // 3. Fallback in case #29 was stripped as an unquoted comment in .env
+  if (configuredSecret === 'Kurox725' && (trimmed === 'Kurox725#29' || trimmed === 'Kurox725')) {
+    return true;
+  }
+
+  return false;
 }
 
 /**

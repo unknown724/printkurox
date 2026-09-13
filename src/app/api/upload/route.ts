@@ -120,8 +120,8 @@ export async function POST(req: NextRequest) {
 
     // Generate unique storage key
     const uniqueId = crypto.randomUUID();
-    const sanitizedName = fileList[0].name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const fileKey = `uploads/${uniqueId}-${sanitizedName}.pdf`;
+    const cleanBase = fileList[0].name.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileKey = `uploads/${uniqueId}-${cleanBase}.pdf`;
 
     // Concurrently upload to Cloudflare R2 and generate presigned download URL
     const [downloadUrl] = await Promise.all([

@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { calculatePricing } from '@/lib/pricing';
 import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
-import { parsePageRange, transformPdfForPrint } from '@/lib/pdf-utils';
+import { parsePageRange, transformPdfForPrint, getPdfPageCount } from '@/lib/pdf-utils';
 import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { getStationConfig } from '@/lib/stations';
 
@@ -43,8 +43,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (typeof fileKey !== 'string' || !fileKey.startsWith('uploads/') || fileKey.includes('..')) {
+      return NextResponse.json({ error: 'Invalid file key' }, { status: 400 });
+    }
+
+    // Enforce station counter payment policy
+    if (!station.allowCounterPayment) {
+      return NextResponse.json(
+        { error: `Counter orders are not enabled for station ${station.name}` },
+        { status: 403 }
+      );
+    }
+
+    // Verify actual document page count from R2 to prevent price tampering
+    let verifiedDocPages = Math.max(1, Math.floor(Number(docPages) || 1));
+    let cachedBuffer: Buffer | null = null;
+    try {
+      cachedBuffer = await getFileBufferFromR2(fileKey);
+      if (fileKey.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.pdf')) {
+        const actualPages = await getPdfPageCount(cachedBuffer);
+        if (actualPages > 0) {
+          verifiedDocPages = actualPages;
+        }
+      }
+    } catch (checkErr) {
+      console.warn('Could not verify PDF page count from R2, using reported docPages:', checkErr);
+    }
+
     // Calculate actual billable pages from page range or pageConfigs
-    let activePagesCount = docPages;
+    let activePagesCount = verifiedDocPages;
     let effectivePageRange = pageRange;
 
     if (pageConfigs && Array.isArray(pageConfigs) && pageConfigs.length > 0) {
@@ -59,7 +86,7 @@ export async function POST(req: NextRequest) {
       activePagesCount = sequence.length;
       effectivePageRange = sequence.join(',');
     } else {
-      const selectedPages = parsePageRange(pageRange, docPages);
+      const selectedPages = parsePageRange(pageRange, verifiedDocPages);
       activePagesCount = selectedPages.length;
     }
 
@@ -112,12 +139,15 @@ export async function POST(req: NextRequest) {
     const hasTextOverlay = Boolean(
       textOverlay && (
         textOverlay.enabled ||
-        (Array.isArray(textOverlay.items) && textOverlay.items.some((it: any) => it.text && it.text.trim().length > 0)) ||
+        (Array.isArray(textOverlay.items) && textOverlay.items.some((it: { text?: string }) => it.text && it.text.trim().length > 0)) ||
         (typeof textOverlay.text === 'string' && textOverlay.text.trim().length > 0)
       )
     );
 
+    const isNotPdf = Boolean(fileName && !fileName.toLowerCase().endsWith('.pdf'));
+
     const needsTransform = Boolean(
+      isNotPdf ||
       (customScale && Number(customScale) !== 100) ||
       (fitMode && fitMode !== 'fit') ||
       (layoutMode && layoutMode !== '1-up') ||
@@ -130,7 +160,7 @@ export async function POST(req: NextRequest) {
 
     if (needsTransform) {
       try {
-        const originalBuffer = await getFileBufferFromR2(fileKey);
+        const originalBuffer = cachedBuffer || (await getFileBufferFromR2(fileKey));
         const { transformedBuffer, totalPages: transformedPages } = await transformPdfForPrint(
           originalBuffer,
           fileName,

@@ -9,7 +9,12 @@ export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
     const signature = req.headers.get('x-razorpay-signature');
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || 'autoprint_kiosk_secret_2026';
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+    if (!webhookSecret) {
+      console.error('RAZORPAY_WEBHOOK_SECRET is not configured on server');
+      return NextResponse.json({ error: 'Webhook secret not configured on server' }, { status: 500 });
+    }
 
     if (!signature) {
       return NextResponse.json({ error: 'Missing Razorpay signature' }, { status: 400 });

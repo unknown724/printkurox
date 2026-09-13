@@ -26,6 +26,14 @@ import {
   Plus,
   Settings,
   Sparkles,
+  Search,
+  X,
+  Copy,
+  Check,
+  Clock,
+  CheckCircle2,
+  Printer,
+  Building2,
 } from 'lucide-react';
 import { getClientDetailedDevice } from '@/lib/device-detection';
 
@@ -51,6 +59,8 @@ interface Job {
   status: string;
   payment_id: string | null;
   created_at: string;
+  station_id?: string | null;
+  is_purged?: boolean;
 }
 
 interface SuppliesData {
@@ -160,6 +170,14 @@ export default function AdminKuroxPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
 
+  // Queue Search, Filtering & Quick Actions
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'ACTIVE' | 'COMPLETED' | 'FAILED'>('ALL');
+  const [stationFilter, setStationFilter] = useState<'ALL' | 'main' | 'romen_xerox'>('ALL');
+  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [jobActionLoading, setJobActionLoading] = useState<string | null>(null);
+
   // Stats & Supplies State
   const [stats, setStats] = useState<AdminStatsResponse | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
@@ -199,11 +217,15 @@ export default function AdminKuroxPage() {
   }
 
   const fetchRecentJobs = useCallback(async () => {
+    setLoadingJobs(true);
     try {
       const res = await fetch('/api/admin/jobs');
       if (res.ok) {
         const data = await res.json();
         setJobs(data.jobs || []);
+        setLastUpdated(
+          new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+        );
       }
     } catch (err) {
       console.error(err);
@@ -211,6 +233,74 @@ export default function AdminKuroxPage() {
       setLoadingJobs(false);
     }
   }, []);
+
+  const copyPickupCode = (code: string) => {
+    if (!code) return;
+    navigator.clipboard?.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
+
+  const formatJobTime = (isoString?: string): string => {
+    if (!isoString) return '—';
+    try {
+      const d = new Date(isoString.replace(' ', 'T') + (isoString.includes('Z') ? '' : 'Z'));
+      if (isNaN(d.getTime())) return isoString;
+
+      const now = new Date();
+      const isToday = now.toDateString() === d.toDateString();
+      const timePart = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+      const datePart = d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+      return isToday ? `Today, ${timePart}` : `${datePart}, ${timePart}`;
+    } catch {
+      return isoString || '—';
+    }
+  };
+
+  const handleJobAction = async (jobId: string, action: 'approve' | 'cancel' | 'retry' | 'delete') => {
+    try {
+      setJobActionLoading(`${jobId}-${action}`);
+      const res = await fetch('/api/admin/jobs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId, action }),
+      });
+      if (res.ok) {
+        await fetchRecentJobs();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Action failed');
+      }
+    } catch (err) {
+      console.error('Job action error:', err);
+    } finally {
+      setJobActionLoading(null);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    if (!window.confirm('Are you sure you want to permanently clear all completed and failed jobs and delete their files from storage?')) {
+      return;
+    }
+    try {
+      setJobActionLoading('clear-history');
+      const res = await fetch('/api/admin/jobs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'clear_history' }),
+      });
+      if (res.ok) {
+        await fetchRecentJobs();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to clear history');
+      }
+    } catch (err) {
+      console.error('Clear history error:', err);
+    } finally {
+      setJobActionLoading(null);
+    }
+  };
 
   const fetchStats = useCallback(async (selectedPeriod = period) => {
     try {
@@ -1230,85 +1320,430 @@ export default function AdminKuroxPage() {
           </div>
 
           {/* SECTION 5: RECENT PRINT QUEUE */}
-          <div className="rounded-2xl p-5 space-y-3 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] shadow-2xs">
-            <div className="flex items-center justify-between pb-2.5 border-b border-zinc-100 dark:border-[#282a2c]">
-              <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-blue-500" />
-                Live Print Queue
-              </span>
-              <button
-                onClick={fetchRecentJobs}
-                className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white flex items-center gap-1 transition-colors"
-              >
-                <RotateCcw className={`w-3 h-3 ${loadingJobs ? 'animate-spin' : ''}`} />
-                <span>Refresh Queue</span>
-              </button>
-            </div>
+          {(() => {
+            const counts = {
+              all: jobs.length,
+              pending: jobs.filter((j) => j.status === 'PENDING_PAYMENT').length,
+              active: jobs.filter((j) => j.status === 'PAID' || j.status.startsWith('PRINTING') || j.status === 'AWAITING_FLIP').length,
+              completed: jobs.filter((j) => j.status === 'COMPLETED').length,
+              failed: jobs.filter((j) => j.status === 'FAILED').length,
+            };
 
-            {loadingJobs ? (
-              <div className="py-8 text-center text-xs text-zinc-500 flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                <span>Syncing queue...</span>
-              </div>
-            ) : jobs.length === 0 ? (
-              <p className="py-6 text-center text-xs text-zinc-500">No print jobs in queue.</p>
-            ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                {jobs.map((j) => (
-                  <div
-                    key={j.id}
-                    className="p-3 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200/80 dark:border-[#282a2c] flex items-center justify-between text-xs"
-                  >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 text-xs px-2 py-0.5 rounded-full bg-zinc-200/60 dark:bg-[#282a2c] border border-zinc-300 dark:border-zinc-700">
-                          {j.pickup_code}
-                        </span>
-                        <span className="font-semibold text-zinc-900 dark:text-zinc-200 truncate max-w-[200px]">
-                          {j.file_name}
-                        </span>
-                      </div>
+            const hasMultipleStations = jobs.some((j) => (j.station_id || 'main') !== 'main');
+
+            const filteredJobs = jobs.filter((j) => {
+              // Status filter
+              if (statusFilter === 'PENDING' && j.status !== 'PENDING_PAYMENT') return false;
+              if (statusFilter === 'ACTIVE' && !(j.status === 'PAID' || j.status.startsWith('PRINTING') || j.status === 'AWAITING_FLIP')) return false;
+              if (statusFilter === 'COMPLETED' && j.status !== 'COMPLETED') return false;
+              if (statusFilter === 'FAILED' && j.status !== 'FAILED') return false;
+
+              // Station filter
+              if (stationFilter !== 'ALL') {
+                const jobStation = j.station_id || 'main';
+                if (jobStation !== stationFilter) return false;
+              }
+
+              // Search query
+              if (searchQuery.trim()) {
+                const q = searchQuery.toLowerCase().trim().replace(/^#/, '');
+                const code = (j.pickup_code || '').toLowerCase().replace(/^#/, '');
+                const name = (j.file_name || '').toLowerCase();
+                const payment = (j.payment_id || '').toLowerCase();
+                const status = (j.status || '').toLowerCase();
+                const station = (j.station_id || 'main').toLowerCase();
+
+                return (
+                  code.includes(q) ||
+                  name.includes(q) ||
+                  payment.includes(q) ||
+                  status.includes(q) ||
+                  station.includes(q)
+                );
+              }
+
+              return true;
+            });
+
+            return (
+              <div className="rounded-2xl p-5 space-y-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] shadow-2xs">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100 dark:border-[#282a2c]">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-500">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
+                        Live Print Queue
+                      </span>
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {j.total_pages} pages • {j.color_mode?.toUpperCase() || 'B&W'} • ₹{j.total_price} •{' '}
-                        {j.payment_id?.startsWith('ADMIN_')
-                          ? '👑 Admin Free'
-                          : j.payment_id
-                          ? 'Razorpay'
-                          : 'Pending'}
+                        {jobs.length} total orders recorded{lastUpdated ? ` • Synced at ${lastUpdated}` : ''}
                       </p>
                     </div>
+                  </div>
 
-                    <div className="flex items-center gap-2">
-                      {j.file_key && (
-                        <a
-                          href={`/api/view-file?key=${encodeURIComponent(j.file_key)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
-                          title="Open and view printed document"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>View Document</span>
-                        </a>
-                      )}
+                  {/* Actions & Refresh */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={fetchRecentJobs}
+                      disabled={loadingJobs}
+                      className="text-[11px] px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-[#131314] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5 transition-all cursor-pointer font-medium disabled:opacity-50 shadow-2xs"
+                      title="Sync latest print queue from cloud"
+                    >
+                      <RotateCcw className={`w-3.5 h-3.5 ${loadingJobs ? 'animate-spin text-blue-500' : ''}`} />
+                      <span>{loadingJobs ? 'Refreshing...' : 'Refresh Queue'}</span>
+                    </button>
 
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          j.status === 'COMPLETED'
-                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                            : j.status === 'PAID'
-                            ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30'
-                            : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
-                        }`}
+                    {(counts.completed > 0 || counts.failed > 0) && (
+                      <button
+                        type="button"
+                        onClick={handleClearHistory}
+                        disabled={jobActionLoading === 'clear-history'}
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg border border-red-200/40 dark:border-red-900/30 bg-red-50/50 dark:bg-red-950/20 text-red-600 dark:text-red-400 hover:bg-red-100/60 dark:hover:bg-red-900/40 flex items-center gap-1 transition-all cursor-pointer"
+                        title="Purge all completed & failed jobs to free storage"
                       >
-                        {j.status}
+                        {jobActionLoading === 'clear-history' ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3 h-3" />
+                        )}
+                        <span>Clear Finished</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Search Bar & Fast Query */}
+                <div className="space-y-2.5">
+                  <div className="relative flex items-center">
+                    <Search className="w-4 h-4 text-zinc-400 absolute left-3 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search by pickup code (e.g. #A363, K874), file name, or payment ID..."
+                      className="w-full pl-9 pr-24 py-2 text-xs rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                    />
+                    <div className="absolute right-2.5 flex items-center gap-1.5">
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="p-1 rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                          title="Clear search"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-500 font-mono">
+                        {filteredJobs.length}/{jobs.length}
                       </span>
                     </div>
                   </div>
-                ))}
+
+                  {/* Filter Tabs */}
+                  <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 text-xs no-scrollbar">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setStatusFilter('ALL')}
+                        className={`px-2.5 py-1 rounded-lg font-medium text-[11px] transition-all cursor-pointer ${
+                          statusFilter === 'ALL'
+                            ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-2xs'
+                            : 'bg-zinc-100 dark:bg-[#131314] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800'
+                        }`}
+                      >
+                        All ({counts.all})
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setStatusFilter('PENDING')}
+                        className={`px-2.5 py-1 rounded-lg font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer ${
+                          statusFilter === 'PENDING'
+                            ? 'bg-amber-500 text-white shadow-2xs'
+                            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 hover:bg-amber-500/20'
+                        }`}
+                      >
+                        Pending ({counts.pending})
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setStatusFilter('ACTIVE')}
+                        className={`px-2.5 py-1 rounded-lg font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer ${
+                          statusFilter === 'ACTIVE'
+                            ? 'bg-blue-600 text-white shadow-2xs'
+                            : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20'
+                        }`}
+                      >
+                        Printing / Paid ({counts.active})
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setStatusFilter('COMPLETED')}
+                        className={`px-2.5 py-1 rounded-lg font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer ${
+                          statusFilter === 'COMPLETED'
+                            ? 'bg-emerald-600 text-white shadow-2xs'
+                            : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20'
+                        }`}
+                      >
+                        Completed ({counts.completed})
+                      </button>
+
+                      {counts.failed > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter('FAILED')}
+                          className={`px-2.5 py-1 rounded-lg font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer ${
+                            statusFilter === 'FAILED'
+                              ? 'bg-rose-600 text-white shadow-2xs'
+                              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20'
+                          }`}
+                        >
+                          Failed ({counts.failed})
+                        </button>
+                      )}
+                    </div>
+
+                    {hasMultipleStations && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[10px] text-zinc-400 font-medium">Station:</span>
+                        <select
+                          value={stationFilter}
+                          onChange={(e) => setStationFilter(e.target.value as 'ALL' | 'main' | 'romen_xerox')}
+                          aria-label="Filter by station"
+                          className="text-[11px] py-0.5 px-2 rounded-lg bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 focus:outline-none cursor-pointer"
+                        >
+                          <option value="ALL">All Stations</option>
+                          <option value="main">Main Kiosk</option>
+                          <option value="romen_xerox">Romen Xerox</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Queue List Content */}
+                {loadingJobs ? (
+                  <div className="py-12 text-center text-xs text-zinc-500 flex flex-col items-center justify-center gap-2.5">
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                    <span>Syncing latest print queue...</span>
+                  </div>
+                ) : filteredJobs.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-zinc-500 space-y-1.5">
+                    <p className="font-semibold text-zinc-400">No print jobs found.</p>
+                    <p className="text-[11px] text-zinc-500">
+                      {searchQuery || statusFilter !== 'ALL' || stationFilter !== 'ALL'
+                        ? 'Try adjusting your search query or status filter.'
+                        : 'New customer orders will appear here automatically.'}
+                    </p>
+                    {(searchQuery || statusFilter !== 'ALL' || stationFilter !== 'ALL') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('');
+                          setStatusFilter('ALL');
+                          setStationFilter('ALL');
+                        }}
+                        className="text-[11px] text-blue-500 hover:underline pt-1 cursor-pointer"
+                      >
+                        Reset filters
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
+                    {filteredJobs.map((j) => {
+                      const isActionPending = jobActionLoading?.startsWith(j.id);
+
+                      return (
+                        <div
+                          key={j.id}
+                          className="p-3.5 rounded-xl bg-zinc-50/70 dark:bg-[#131314] border border-zinc-200/80 dark:border-[#282a2c] hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                        >
+                          {/* Left Column: Pickup code, filename, timestamp, and specs */}
+                          <div className="space-y-1.5 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {/* Click-to-copy Pickup Code */}
+                              <button
+                                type="button"
+                                onClick={() => copyPickupCode(j.pickup_code)}
+                                className="group font-mono font-bold text-xs px-2.5 py-0.5 rounded-md bg-zinc-200/70 dark:bg-[#282a2c] border border-zinc-300/80 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 hover:border-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                title="Click to copy pickup code"
+                              >
+                                <span>{j.pickup_code}</span>
+                                {copiedCode === j.pickup_code ? (
+                                  <Check className="w-3 h-3 text-emerald-500" />
+                                ) : (
+                                  <Copy className="w-3 h-3 opacity-40 group-hover:opacity-100" />
+                                )}
+                                {copiedCode === j.pickup_code && (
+                                  <span className="text-[10px] text-emerald-500 font-sans font-normal">Copied!</span>
+                                )}
+                              </button>
+
+                              {/* File name */}
+                              <span
+                                className="font-semibold text-zinc-900 dark:text-zinc-200 truncate max-w-[260px] sm:max-w-[340px]"
+                                title={j.file_name}
+                              >
+                                {j.file_name}
+                              </span>
+
+                              {/* Station Tag */}
+                              {j.station_id === 'romen_xerox' ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                                  <Building2 className="w-2.5 h-2.5" />
+                                  Romen Xerox
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                  Main Kiosk
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Timestamp & specs info row */}
+                            <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 flex-wrap">
+                              {/* Formatted Timestamp */}
+                              <span className="flex items-center gap-1 text-zinc-700 dark:text-zinc-300 font-medium">
+                                <Clock className="w-3 h-3 text-zinc-400" />
+                                <span>{formatJobTime(j.created_at)}</span>
+                              </span>
+
+                              <span>•</span>
+                              <span>{j.total_pages} page{j.total_pages > 1 ? 's' : ''}</span>
+                              {j.copies > 1 && <span>({j.copies} copies)</span>}
+                              <span>•</span>
+                              <span>{j.color_mode?.toUpperCase() || 'B&W'}</span>
+                              <span>•</span>
+                              <span>{j.is_duplex ? '2-Sided' : '1-Sided'}</span>
+                              <span>•</span>
+                              <span className="font-semibold text-zinc-900 dark:text-zinc-100">₹{j.total_price}</span>
+                              <span>•</span>
+
+                              {/* Payment Indicator */}
+                              <span>
+                                {j.payment_id?.startsWith('ADMIN_') ? (
+                                  <span className="text-amber-500 font-medium">👑 Admin Free</span>
+                                ) : j.payment_id ? (
+                                  <span className="text-emerald-500 font-medium">💳 Razorpay Paid</span>
+                                ) : (
+                                  <span className="text-amber-400">⏳ Pending Payment</span>
+                                )}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Right Column: Status badge and action buttons */}
+                          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                            {/* Document Viewer */}
+                            {j.file_key ? (
+                              <a
+                                href={`/api/view-file?key=${encodeURIComponent(j.file_key)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                                title="Open and view printed document"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>View</span>
+                              </a>
+                            ) : (
+                              <span className="px-2 py-1 rounded text-[10px] text-zinc-400 dark:text-zinc-600 border border-zinc-200 dark:border-zinc-800" title="File purged for privacy">
+                                Purged
+                              </span>
+                            )}
+
+                            {/* Approve Button for Counter / Pending Cash orders */}
+                            {j.status === 'PENDING_PAYMENT' && (
+                              <button
+                                type="button"
+                                onClick={() => handleJobAction(j.id, 'approve')}
+                                disabled={Boolean(isActionPending)}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                                title="Customer paid cash at counter — Approve and send to printer immediately"
+                              >
+                                {jobActionLoading === `${j.id}-approve` ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="w-3 h-3" />
+                                )}
+                                <span>Approve & Print</span>
+                              </button>
+                            )}
+
+                            {/* Reprint / Retry Button for Completed/Failed jobs */}
+                            {(j.status === 'COMPLETED' || j.status === 'FAILED') && (
+                              <button
+                                type="button"
+                                onClick={() => handleJobAction(j.id, 'retry')}
+                                disabled={Boolean(isActionPending)}
+                                className="px-2.5 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-300 dark:border-zinc-700 font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                                title="Send job back to printer queue"
+                              >
+                                {jobActionLoading === `${j.id}-retry` ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Printer className="w-3 h-3" />
+                                )}
+                                <span>Reprint</span>
+                              </button>
+                            )}
+
+                            {/* Cancel / Delete Button */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleJobAction(
+                                  j.id,
+                                  j.status === 'PENDING_PAYMENT' ? 'cancel' : 'delete'
+                                )
+                              }
+                              disabled={Boolean(isActionPending)}
+                              className="p-1.5 rounded-lg text-zinc-400 hover:text-red-500 hover:bg-red-500/10 transition-all cursor-pointer disabled:opacity-50"
+                              title={j.status === 'PENDING_PAYMENT' ? 'Cancel job' : 'Purge from queue'}
+                            >
+                              {jobActionLoading === `${j.id}-cancel` || jobActionLoading === `${j.id}-delete` ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+
+                            {/* Status Badge */}
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${
+                                j.status === 'COMPLETED'
+                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                                  : j.status === 'PAID'
+                                  ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30'
+                                  : j.status.startsWith('PRINTING') || j.status === 'AWAITING_FLIP'
+                                  ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 animate-pulse'
+                                  : j.status === 'FAILED'
+                                  ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                              }`}
+                            >
+                              {(j.status.startsWith('PRINTING') || j.status === 'PAID') && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
+                              )}
+                              {j.status === 'COMPLETED' && <Check className="w-2.5 h-2.5" />}
+                              <span>{j.status}</span>
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
         </div>
       )}
 

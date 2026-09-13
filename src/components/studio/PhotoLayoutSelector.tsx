@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 export * from '@/lib/layout-types';
-import type { PhotoLayoutSettings, LayoutMode, FitMode } from '@/lib/layout-types';
+import type { PhotoLayoutSettings, LayoutMode } from '@/lib/layout-types';
 
 interface PhotoLayoutSelectorProps {
   settings: PhotoLayoutSettings;
