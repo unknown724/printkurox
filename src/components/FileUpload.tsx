@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Sparkles,
 } from 'lucide-react';
+import { convertDocxToPdfClient } from '@/lib/client-docx-converter';
 
 export interface FileItem {
   id: string;
@@ -261,9 +262,24 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
     setUploadProgress(0);
 
     try {
-      // Step 1: Quick parallel optimization for large camera images
+      // Step 1: High-fidelity document rendering (DOCX with logos & colors) & image optimization
       setUploadPhase('optimizing');
-      const preparedFiles = await Promise.all(newFileList.map((f) => optimizeImage(f)));
+      const preparedFiles = await Promise.all(
+        newFileList.map(async (f) => {
+          const lowerName = f.name.toLowerCase();
+          if (lowerName.endsWith('.docx')) {
+            try {
+              const convertedPdf = await convertDocxToPdfClient(f);
+              if (convertedPdf) {
+                return convertedPdf;
+              }
+            } catch (docxErr) {
+              console.warn('[FileUpload] Client DOCX conversion fallback:', docxErr);
+            }
+          }
+          return optimizeImage(f);
+        })
+      );
 
       // Step 2: Try Direct-to-Cloudflare R2 upload (bypasses Vercel 4.5MB limit entirely)
       let batchResult: UploadedBatchData | null = null;
@@ -466,14 +482,14 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
   // Status message for upload modal/bars
   const statusHeadline =
     uploadPhase === 'optimizing'
-      ? 'Optimizing Photos for Print…'
+      ? 'Rendering & Optimizing Documents…'
       : uploadPhase === 'processing'
       ? 'Preparing Print Documents…'
       : `Uploading Files… ${uploadProgress}%`;
 
   const statusSubtext =
     uploadPhase === 'optimizing'
-      ? 'Scaling to 300 DPI print resolution for ultra-fast transfer'
+      ? 'Rendering typography, logos & scaling to 300 DPI print quality'
       : uploadPhase === 'processing'
       ? 'Merging documents and preparing print layout'
       : 'Direct TLS edge upload in progress';
