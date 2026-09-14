@@ -333,7 +333,7 @@ export function CostSummary({
               setIsProcessing(false);
             }
           },
-          prefill: { name: 'Kiosk Customer', email: 'customer@printkurox.com', contact: '9999999999' },
+          prefill: { name: 'Customer' },
           theme: { color: '#6366f1', backdrop_color: 'rgba(7, 11, 20, 0.90)' },
           modal: {
             confirm_close: true,

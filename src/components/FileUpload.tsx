@@ -732,6 +732,11 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         <span>Automatic A4 sizing • Fast edge processing</span>
       </div>
 
+      <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-300 bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 py-1.5 px-3 rounded-xl text-center">
+        <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Tip for WhatsApp:</span>
+        <span>In WhatsApp, tap <b>Share (⋮)</b> &rarr; select <b>PrintKurox</b> to upload without browsing storage!</span>
+      </div>
+
       {errorMessage && (
         <div className="flex items-center justify-between p-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/40 rounded-xl">
           <div className="flex items-center gap-2">

@@ -71,6 +71,42 @@ function HomePageContent() {
       .catch(() => {});
   }, []);
 
+  // Auto-detect and open file shared from WhatsApp / Android Web Share Target
+  useEffect(() => {
+    const sharedKey = searchParams.get('sharedKey');
+    const sharedName = searchParams.get('sharedName');
+    const sharedPages = searchParams.get('sharedPages');
+    const sharedSize = searchParams.get('sharedSize');
+    const sharedCount = searchParams.get('sharedCount');
+    const sharedUrl = searchParams.get('sharedUrl');
+
+    if (sharedKey && sharedName && !uploadedBatch) {
+      const pages = Number(sharedPages) || 1;
+      const size = Number(sharedSize) || 0;
+      const count = Number(sharedCount) || 1;
+
+      const batch: UploadedBatchData = {
+        fileKey: sharedKey,
+        fileName: decodeURIComponent(sharedName),
+        totalPages: pages,
+        fileSize: size,
+        fileCount: count,
+        fileItems: [
+          {
+            id: 'shared-wa-1',
+            name: decodeURIComponent(sharedName),
+            size,
+            pages,
+            type: 'application/pdf',
+          },
+        ],
+        downloadUrl: sharedUrl ? decodeURIComponent(sharedUrl) : '',
+      };
+
+      handleBatchUploaded(batch);
+    }
+  }, [searchParams, uploadedBatch]);
+
   const handleBatchUploaded = (data: UploadedBatchData | null) => {
     setUploadedBatch(data);
     if (data) {

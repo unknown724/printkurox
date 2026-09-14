@@ -76,12 +76,13 @@ AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'fals
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
-RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '15'))
-RETENTION_MINUTES = RETENTION_DAYS * 24 * 60  # Retains local print archive for 15 days on disk
-HEARTBEAT_INTERVAL_SECONDS = 30  # Write heartbeat to D1 this often
+ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
+RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '90')) # Retains local print archive for 90 days on laptop
+RETENTION_MINUTES = RETENTION_DAYS * 24 * 60
 
-# Ensure local temp directory exists
+# Ensure local directories exist
 os.makedirs(TEMP_DIR, exist_ok=True)
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 # Initialize S3 Client for Cloudflare R2
 s3_client = boto3.client(
@@ -455,6 +456,7 @@ def process_auto_duplex_job(job, local_file_path):
     if success:
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
+        archive_printed_file(job, printable_path)
         log(f"Job completed successfully (Hardware Duplex): {job['pickup_code']}", "SUCCESS")
     else:
         update_job_status(job["id"], "FAILED")
@@ -480,8 +482,7 @@ def process_single_sided_job(job, local_file_path):
     if success:
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
-        # File will be purged from R2 by the 15-minute zero-retention cleaner,
-        # allowing the operator to preview it in /adminkurox during the active pickup window.
+        archive_printed_file(job, printable_path)
         log(f"Job completed successfully: {job['pickup_code']}", "SUCCESS")
     else:
         update_job_status(job["id"], "FAILED")
@@ -608,29 +609,64 @@ def process_manual_duplex_job(job, local_file_path):
     if True:
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
-        # File will be purged from R2 by the 15-minute zero-retention cleaner,
-        # allowing the operator to preview it in /adminkurox during the active pickup window.
+        archive_printed_file(job, printable_path)
         log(f"Job {job['pickup_code']} manual duplex finished successfully!", "SUCCESS")
         play_chime()
     else:
         update_job_status(job["id"], "FAILED")
 
 # =============================================================================
-# LOCAL CACHE CLEANER & PURGE
+# LOCAL ARCHIVING & CACHE CLEANER
 # =============================================================================
+def archive_printed_file(job, local_file_path):
+    """
+    Saves a local copy of the printed document in printed_archive/YYYY-MM-DD/[pickup_code]_[name]
+    so the shopkeeper retains a physical copy on disk with zero cloud storage cost.
+    """
+    try:
+        if not local_file_path or not os.path.isfile(local_file_path):
+            return
+        today_folder = datetime.now().strftime("%Y-%m-%d")
+        dest_dir = os.path.join(ARCHIVE_DIR, today_folder)
+        os.makedirs(dest_dir, exist_ok=True)
+        base_name = os.path.basename(local_file_path)
+        dest_file = os.path.join(dest_dir, base_name)
+        if not os.path.exists(dest_file):
+            shutil.copy2(local_file_path, dest_file)
+            log(f"Archived document locally to: {os.path.join(today_folder, base_name)}", "SUCCESS")
+    except Exception as e:
+        log(f"Notice: Failed to archive local file copy: {e}", "WARN")
+
 def purge_old_local_files():
-    """Deletes local downloaded PDF files older than 15 minutes."""
+    """
+    Cleans up temp working files older than 2 hours from temp_prints.
+    Cleans up archive files from printed_archive only after RETENTION_DAYS (default 90 days).
+    """
     now = time.time()
-    cutoff = now - (RETENTION_MINUTES * 60)
+    # 1. Clean temp_prints working directory (2 hours)
+    temp_cutoff = now - (2 * 60 * 60)
     for fname in os.listdir(TEMP_DIR):
         fpath = os.path.join(TEMP_DIR, fname)
-        if os.path.isfile(fpath):
-            if os.path.getmtime(fpath) < cutoff:
+        if os.path.isfile(fpath) and os.path.getmtime(fpath) < temp_cutoff:
+            try:
+                os.remove(fpath)
+            except Exception:
+                pass
+
+    # 2. Clean printed_archive based on RETENTION_DAYS
+    archive_cutoff = now - (RETENTION_MINUTES * 60)
+    if os.path.exists(ARCHIVE_DIR):
+        for entry in os.listdir(ARCHIVE_DIR):
+            entry_path = os.path.join(ARCHIVE_DIR, entry)
+            if os.path.isdir(entry_path):
+                # Date folder like 2026-09-14
                 try:
-                    os.remove(fpath)
-                    log(f"Purged expired local file: {fname}", "INFO")
-                except Exception as e:
-                    log(f"Error purging file {fname}: {e}", "WARN")
+                    folder_mtime = os.path.getmtime(entry_path)
+                    if folder_mtime < archive_cutoff:
+                        shutil.rmtree(entry_path, ignore_errors=True)
+                        log(f"Purged expired archive folder: {entry}", "INFO")
+                except Exception:
+                    pass
 
 # =============================================================================
 # SUPPLIES & TELEMETRY ENGINE

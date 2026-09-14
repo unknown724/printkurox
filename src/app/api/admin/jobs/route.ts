@@ -49,13 +49,13 @@ export async function GET(req: NextRequest) {
       params.push(stationId);
     }
 
-    query += ` ORDER BY created_at DESC LIMIT 50`;
+    const limitParam = Math.min(500, Math.max(10, Number(searchParams.get('limit') || 200)));
+    query += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limitParam.toString());
 
     const rawJobs = await queryD1<PrintJobRecord & { expires_at?: string; file_key?: string }>(query, params);
-    const now = Date.now();
     const jobs = rawJobs.map((job) => {
-      const isExpired = job.expires_at ? new Date(job.expires_at).getTime() <= now : false;
-      const isPurged = !job.file_key || (isExpired && (job.status === 'COMPLETED' || job.status === 'FAILED'));
+      const isPurged = !job.file_key || job.file_key === 'ARCHIVED_LOCALLY' || job.file_key === '';
       return {
         ...job,
         is_purged: isPurged,
@@ -103,7 +103,7 @@ export async function PATCH(req: NextRequest) {
       }
       const historyJobs = await queryD1<{ id: string; file_key: string }>(query, params);
 
-      // Purge files from R2
+      // Purge files from R2 and set file_key = NULL in D1 (Keep revenue & job records permanent)
       for (const hj of historyJobs) {
         if (hj.file_key) {
           try {
@@ -114,17 +114,17 @@ export async function PATCH(req: NextRequest) {
         }
       }
 
-      // Delete rows from D1
-      let deleteSql = `DELETE FROM print_jobs WHERE status IN ('COMPLETED', 'FAILED')`;
+      // Mark files as purged in D1 without deleting the accounting row
+      let updateSql = `UPDATE print_jobs SET file_key = 'ARCHIVED_LOCALLY' WHERE status IN ('COMPLETED', 'FAILED')`;
       if (stationId) {
-        deleteSql += ` AND station_id = ?`;
+        updateSql += ` AND station_id = ?`;
       }
-      await executeD1(deleteSql, params);
+      await executeD1(updateSql, params);
 
       return NextResponse.json({
         success: true,
         clearedCount: historyJobs.length,
-        message: `Successfully cleared ${historyJobs.length} job(s) from history and purged files`,
+        message: `Successfully purged cloud storage files for ${historyJobs.length} finished job(s). Order records and revenue analytics remain permanent.`,
       });
     }
 
@@ -180,7 +180,7 @@ export async function PATCH(req: NextRequest) {
           console.warn(`Failed to delete ${job.file_key} from R2:`, r2Err);
         }
       }
-      await executeD1(`UPDATE print_jobs SET file_key = NULL WHERE id = ?`, [jobId]);
+      await executeD1(`UPDATE print_jobs SET file_key = 'ARCHIVED_LOCALLY' WHERE id = ?`, [jobId]);
 
       return NextResponse.json({
         success: true,

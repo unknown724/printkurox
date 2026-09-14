@@ -43,6 +43,7 @@ next-env.d.ts
 .open-next/
 daemon/sumatra/
 daemon/temp_prints/
+daemon/printed_archive/
 daemon/.env
 daemon/logs/
 walkthrough.md
