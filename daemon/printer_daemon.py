@@ -637,6 +637,36 @@ def archive_printed_file(job, local_file_path):
     except Exception as e:
         log(f"Notice: Failed to archive local file copy: {e}", "WARN")
 
+def find_local_archived_file(pickup_code, job_id=None, file_name=None):
+    """
+    Searches TEMP_DIR and ARCHIVE_DIR recursively for any file matching pickup_code or job_id.
+    Enables instant reprinting of finished/purged jobs from local disk with 0 cloud dependencies.
+    """
+    clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code or '').upper()
+
+    # 1. Search in working TEMP_DIR
+    if os.path.exists(TEMP_DIR):
+        for fname in os.listdir(TEMP_DIR):
+            fpath = os.path.join(TEMP_DIR, fname)
+            if os.path.isfile(fpath):
+                f_upper = fname.upper()
+                if clean_pickup and (f_upper.startswith(f"{clean_pickup}_") or f"_{clean_pickup}_" in f_upper or f_upper.startswith(clean_pickup)):
+                    return fpath
+                if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
+                    return fpath
+
+    # 2. Search in date-organized ARCHIVE_DIR
+    if os.path.exists(ARCHIVE_DIR):
+        for root, dirs, files in os.walk(ARCHIVE_DIR):
+            for fname in files:
+                f_upper = fname.upper()
+                if clean_pickup and (f_upper.startswith(f"{clean_pickup}_") or f"_{clean_pickup}_" in f_upper or f_upper.startswith(clean_pickup)):
+                    return os.path.join(root, fname)
+                if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
+                    return os.path.join(root, fname)
+
+    return None
+
 def purge_old_local_files():
     """
     Cleans up temp working files older than 2 hours from temp_prints.
@@ -857,20 +887,30 @@ def main():
                         log(f"Job {job_id[:8]} was already claimed by another worker. Skipping.", "WARN")
                         continue
 
-                    # 1. Download file from Cloudflare R2
+                    # 1. Resolve document file: Check local PC archive first, then Cloudflare R2
                     raw_name = os.path.basename(file_name.replace('\\', '/'))
                     base_name = re.sub(r'[^a-zA-Z0-9._-]', '_', raw_name) or "document"
-                    if file_key.lower().endswith('.pdf') and not base_name.lower().endswith('.pdf'):
-                        base_name += '.pdf'
                     clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code)
                     local_filename = f"{clean_pickup}_{job_id[:6]}_{base_name}"
+                    if not local_filename.lower().endswith('.pdf'):
+                        local_filename += '.pdf'
                     local_path = os.path.join(TEMP_DIR, local_filename)
 
-                    try:
-                        log(f"Downloading from R2 ({file_key})...")
-                        s3_client.download_file(R2_BUCKET_NAME, file_key, local_path)
-                    except Exception as s3_err:
-                        log(f"Failed to download {file_key} from R2: {s3_err}", "ERROR")
+                    # Search local disk storage (printed_archive and temp_prints)
+                    local_archived = find_local_archived_file(pickup_code, job_id, file_name)
+                    if local_archived and os.path.exists(local_archived):
+                        log(f"Found document in local PC archive: {os.path.basename(local_archived)}! Printing directly from local disk.", "SUCCESS")
+                        local_path = local_archived
+                    elif file_key and file_key.startswith('uploads/'):
+                        try:
+                            log(f"Downloading from R2 ({file_key})...")
+                            s3_client.download_file(R2_BUCKET_NAME, file_key, local_path)
+                        except Exception as s3_err:
+                            log(f"Failed to download {file_key} from R2: {s3_err}", "ERROR")
+                            update_job_status(job_id, "FAILED")
+                            continue
+                    else:
+                        log(f"Document for Job {pickup_code} not found in local PC archive and cloud copy was purged.", "ERROR")
                         update_job_status(job_id, "FAILED")
                         continue
 

@@ -196,8 +196,8 @@ export async function PATCH(req: NextRequest) {
       // Station operator approves counter payment -> queues for printing
       newStatus = 'PAID';
       paymentIdUpdate = `CASH_COUNTER_${Date.now()}`;
-    } else if (action === 'reprint') {
-      // Re-trigger printing
+    } else if (action === 'reprint' || action === 'retry') {
+      // Re-trigger printing (daemon will check local PC archive if cloud file was purged)
       newStatus = 'PAID';
     } else if (action === 'cancel') {
       newStatus = 'FAILED';

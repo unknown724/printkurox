@@ -1642,7 +1642,7 @@ export default function AdminKuroxPage() {
                           {/* Right Column: Status badge and action buttons */}
                           <div className="flex items-center gap-2 shrink-0 flex-wrap">
                             {/* Document Viewer */}
-                            {j.file_key ? (
+                            {j.file_key && !j.is_purged && j.file_key !== 'ARCHIVED_LOCALLY' ? (
                               <a
                                 href={`/api/view-file?key=${encodeURIComponent(j.file_key)}`}
                                 target="_blank"
@@ -1654,9 +1654,16 @@ export default function AdminKuroxPage() {
                                 <span>View</span>
                               </a>
                             ) : (
-                              <span className="px-2 py-1 rounded text-[10px] text-zinc-400 dark:text-zinc-600 border border-zinc-200 dark:border-zinc-800" title="File purged for privacy">
-                                Purged
-                              </span>
+                              <a
+                                href="/api/view-file?key=ARCHIVED_LOCALLY"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800/80 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700/60 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                                title="File saved in local shop PC archive (daemon/printed_archive)"
+                              >
+                                <Laptop className="w-3 h-3 text-indigo-400" />
+                                <span>PC Archive</span>
+                              </a>
                             )}
 
                             {/* Approve Button for Counter / Pending Cash orders */}

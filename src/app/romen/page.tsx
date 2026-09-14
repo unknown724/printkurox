@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Trash2,
   Lock,
+  Laptop,
 } from 'lucide-react';
 import { BorderBeam } from '@/components/ui/BorderBeam';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
@@ -593,7 +594,7 @@ export default function RomenStationPortal() {
                   </div>
 
                   {/* View document / Purged indicator */}
-                  {job.file_key && !job.is_purged ? (
+                  {job.file_key && !job.is_purged && job.file_key !== 'ARCHIVED_LOCALLY' ? (
                     <a
                       href={`/api/view-file?key=${encodeURIComponent(job.file_key)}`}
                       target="_blank"
@@ -605,13 +606,16 @@ export default function RomenStationPortal() {
                       <span>View</span>
                     </a>
                   ) : (
-                    <span
-                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-zinc-800/30 text-zinc-500 border border-zinc-800/60 cursor-not-allowed select-none"
-                      title="Document permanently wiped from cloud storage (Zero-Retention Policy)"
+                    <a
+                      href="/api/view-file?key=ARCHIVED_LOCALLY"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-zinc-800/30 text-zinc-400 border border-zinc-800/60 hover:bg-zinc-800/60 cursor-pointer select-none transition-colors"
+                      title="Document stored in Local PC Archive (daemon/printed_archive)"
                     >
-                      <Lock className="w-3.5 h-3.5 text-zinc-600" />
-                      <span>Purged</span>
-                    </span>
+                      <Laptop className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>PC Archive</span>
+                    </a>
                   )}
 
                   {/* Approve and Print (if pending) */}

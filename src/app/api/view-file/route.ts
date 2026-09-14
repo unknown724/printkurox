@@ -9,8 +9,43 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const fileKey = searchParams.get('key');
 
-  if (!fileKey || !fileKey.startsWith('uploads/') || fileKey.includes('..')) {
-    return NextResponse.json({ error: 'Invalid or missing file key' }, { status: 400 });
+  if (!fileKey || fileKey === 'ARCHIVED_LOCALLY' || !fileKey.startsWith('uploads/') || fileKey.includes('..')) {
+    return new Response(
+      `<!DOCTYPE html>
+<html>
+<head>
+  <title>PrintKurox - Stored in Local PC Archive</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background:#09090b; color:#f4f4f5; font-family:system-ui,-apple-system,sans-serif; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; padding:20px; box-sizing:border-box; }
+    .card { background:#18181b; border:1px solid #27272a; border-radius:20px; padding:36px; max-width:480px; text-align:center; box-shadow:0 12px 30px rgba(0,0,0,0.6); }
+    .icon { font-size:42px; margin-bottom:14px; }
+    h2 { font-size:20px; font-weight:700; margin:0 0 10px 0; color:#fafafa; }
+    p { font-size:14px; color:#a1a1aa; line-height:1.6; margin:0 0 16px 0; }
+    .badge { display:inline-block; background:rgba(99,102,241,0.15); color:#818cf8; border:1px solid rgba(99,102,241,0.3); border-radius:8px; padding:6px 14px; font-size:12px; font-family:monospace; margin-bottom:18px; }
+    .tip { font-size:12px; color:#71717a; border-top:1px solid #27272a; padding-top:16px; line-height:1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">💻📁</div>
+    <h2>Saved in Local PC Archive</h2>
+    <p>This document has completed printing. To eliminate cloud storage costs and protect customer privacy, the cloud copy was purged.</p>
+    <div class="badge">Stored locally on Shop PC &bull; printed_archive/</div>
+    <p style="font-size:13px; color:#d4d4d8;">
+      <b>On the Shop Laptop:</b> The PDF file is safely stored on disk in <code>daemon/printed_archive/</code>. You can click <b>Reprint</b> in the Admin Panel to print it again directly!
+    </p>
+    <div class="tip">
+      📱 <b>Viewing on Phone?</b> The physical document is saved locally on your shop computer hard drive.
+    </div>
+  </div>
+</body>
+</html>`,
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      }
+    );
   }
 
   try {
