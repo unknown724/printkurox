@@ -607,10 +607,10 @@ export default function RomenStationPortal() {
                     </a>
                   ) : (
                     <a
-                      href="/api/view-file?key=ARCHIVED_LOCALLY"
+                      href={`/api/view-file?key=ARCHIVED_LOCALLY&pickup=${encodeURIComponent(job.pickup_code)}&name=${encodeURIComponent(job.file_name)}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-zinc-800/30 text-zinc-400 border border-zinc-800/60 hover:bg-zinc-800/60 cursor-pointer select-none transition-colors"
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-zinc-800/30 text-zinc-300 border border-zinc-800/60 hover:bg-zinc-800/60 cursor-pointer select-none transition-colors"
                       title="Document stored in Local PC Archive (daemon/printed_archive)"
                     >
                       <Laptop className="w-3.5 h-3.5 text-indigo-400" />

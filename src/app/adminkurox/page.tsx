@@ -1655,10 +1655,10 @@ export default function AdminKuroxPage() {
                               </a>
                             ) : (
                               <a
-                                href="/api/view-file?key=ARCHIVED_LOCALLY"
+                                href={`/api/view-file?key=ARCHIVED_LOCALLY&pickup=${encodeURIComponent(j.pickup_code)}&name=${encodeURIComponent(j.file_name)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="px-2.5 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800/80 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700/60 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                                className="px-2.5 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700/60 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
                                 title="File saved in local shop PC archive (daemon/printed_archive)"
                               >
                                 <Laptop className="w-3 h-3 text-indigo-400" />

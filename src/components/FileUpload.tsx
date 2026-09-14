@@ -233,6 +233,32 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
   const [prevBatch, setPrevBatch] = useState(uploadedBatch);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isAddingMoreRef = useRef(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showPwaGuide, setShowPwaGuide] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleBeforeInstall = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+  }, []);
+
+  const handlePwaInstallClick = async () => {
+    if (deferredPrompt) {
+      try {
+        await deferredPrompt.prompt();
+        setDeferredPrompt(null);
+      } catch {
+        setShowPwaGuide((prev) => !prev);
+      }
+    } else {
+      setShowPwaGuide((prev) => !prev);
+    }
+  };
 
   // Synchronize local rawFiles when uploadedBatch is cleared or updated
   if (prevBatch !== uploadedBatch) {
@@ -732,9 +758,47 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         <span>Automatic A4 sizing • Fast edge processing</span>
       </div>
 
-      <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-300 bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 py-1.5 px-3 rounded-xl text-center">
-        <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Tip for WhatsApp:</span>
-        <span>In WhatsApp, tap <b>Share (⋮)</b> &rarr; select <b>PrintKurox</b> to upload without browsing storage!</span>
+      {/* WhatsApp Easy Upload Helper */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-3 space-y-2 text-left shadow-2xs">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+            <span>💬 Printing from WhatsApp?</span>
+          </div>
+          <button
+            type="button"
+            onClick={handlePwaInstallClick}
+            className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 transition-all cursor-pointer"
+          >
+            📲 Install App for WhatsApp Share
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+          <div className="p-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200/60 dark:border-zinc-700/40">
+            <span className="font-semibold text-zinc-800 dark:text-zinc-200">⚡ Method 1 (No App Needed):</span>
+            <p className="mt-0.5">
+              In WhatsApp, tap document &rarr; <b>Save / Download</b>. Then tap <b>Choose files</b> above &mdash; it appears at the top of your <b>Recent</b> files!
+            </p>
+          </div>
+
+          <div className="p-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200/60 dark:border-zinc-700/40">
+            <span className="font-semibold text-zinc-800 dark:text-zinc-200">📲 Method 2 (Direct Share):</span>
+            <p className="mt-0.5">
+              Tap <b>Install App</b> above. Once installed, open WhatsApp, tap your document &rarr; <b>Share &rarr; PrintKurox</b>!
+            </p>
+          </div>
+        </div>
+
+        {showPwaGuide && (
+          <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-[11px] space-y-1">
+            <p className="font-bold">How to enable WhatsApp Share on Android:</p>
+            <ol className="list-decimal list-inside space-y-0.5 text-zinc-700 dark:text-zinc-300">
+              <li>In Chrome on your phone, tap the <b>3 dots (⋮)</b> in the top-right.</li>
+              <li>Tap <b>&ldquo;Install app&rdquo;</b> (or <b>&ldquo;Add to Home screen&rdquo;</b>).</li>
+              <li>Open WhatsApp, tap your document &rarr; tap <b>Share &rarr; PrintKurox</b>.</li>
+            </ol>
+          </div>
+        )}
       </div>
 
       {errorMessage && (

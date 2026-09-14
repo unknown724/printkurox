@@ -18,6 +18,9 @@ import socket
 import json
 import re
 from datetime import datetime, timezone
+import threading
+import urllib.parse
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import boto3
 from botocore.client import Config
 from dotenv import load_dotenv
@@ -639,10 +642,11 @@ def archive_printed_file(job, local_file_path):
 
 def find_local_archived_file(pickup_code, job_id=None, file_name=None):
     """
-    Searches TEMP_DIR and ARCHIVE_DIR recursively for any file matching pickup_code or job_id.
-    Enables instant reprinting of finished/purged jobs from local disk with 0 cloud dependencies.
+    Searches TEMP_DIR and ARCHIVE_DIR recursively for any file matching pickup_code, job_id, or file_name.
+    Enables instant reprinting & local PDF previewing of finished/purged jobs from local disk with 0 cloud dependencies.
     """
     clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code or '').upper()
+    clean_name = re.sub(r'[^a-zA-Z0-9]', '', (file_name or '').replace('.pdf', '')).lower()
 
     # 1. Search in working TEMP_DIR
     if os.path.exists(TEMP_DIR):
@@ -654,6 +658,8 @@ def find_local_archived_file(pickup_code, job_id=None, file_name=None):
                     return fpath
                 if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
                     return fpath
+                if clean_name and len(clean_name) >= 6 and clean_name in fname.lower():
+                    return fpath
 
     # 2. Search in date-organized ARCHIVE_DIR
     if os.path.exists(ARCHIVE_DIR):
@@ -664,8 +670,106 @@ def find_local_archived_file(pickup_code, job_id=None, file_name=None):
                     return os.path.join(root, fname)
                 if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
                     return os.path.join(root, fname)
+                if clean_name and len(clean_name) >= 6 and clean_name in fname.lower():
+                    return os.path.join(root, fname)
 
     return None
+
+# =============================================================================
+# LOCAL PC ARCHIVE HTTP SERVICE (Port 7250)
+# Enables the local Admin PC to preview local archived PDFs directly in browser
+# =============================================================================
+LOCAL_ARCHIVE_PORT = 7250
+
+class LocalArchiveHTTPHandler(BaseHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        pickup = params.get('pickup', [None])[0]
+        job_id = params.get('job_id', [None])[0]
+        name = params.get('name', [None])[0]
+
+        if parsed.path in ('/check', '/health'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "online",
+                "service": "PrintKurox Local Daemon",
+                "archive_dir": ARCHIVE_DIR,
+                "temp_dir": TEMP_DIR,
+            }).encode('utf-8'))
+            return
+
+        if parsed.path == '/open-folder':
+            fpath = find_local_archived_file(pickup, job_id, name)
+            target = fpath if fpath and os.path.exists(fpath) else ARCHIVE_DIR
+            try:
+                if fpath and os.path.exists(fpath):
+                    subprocess.Popen(f'explorer /select,"{fpath}"')
+                else:
+                    subprocess.Popen(f'explorer "{ARCHIVE_DIR}"')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"success": true, "message": "Opened Windows Explorer"}')
+            except Exception as exp_err:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(exp_err)}).encode('utf-8'))
+            return
+
+        if parsed.path in ('/archive', '/view'):
+            fpath = find_local_archived_file(pickup, job_id, name)
+            if fpath and os.path.exists(fpath):
+                try:
+                    with open(fpath, 'rb') as f:
+                        data = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/pdf')
+                    self.send_header('Content-Disposition', f'inline; filename="{os.path.basename(fpath)}"')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except Exception as read_err:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(f"Error reading file: {read_err}".encode('utf-8'))
+                    return
+            else:
+                self.send_response(404)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(f"<h3>Document not found in local PC archive</h3><p>Checked {ARCHIVE_DIR}</p>".encode('utf-8'))
+                return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        # Silence routine HTTP request logging to keep daemon stdout clean
+        pass
+
+def start_local_archive_server():
+    try:
+        server = ThreadingHTTPServer(('127.0.0.1', LOCAL_ARCHIVE_PORT), LocalArchiveHTTPHandler)
+        log(f"Local Archive HTTP server online at http://127.0.0.1:{LOCAL_ARCHIVE_PORT}", "SUCCESS")
+        server.serve_forever()
+    except Exception as srv_err:
+        log(f"Notice: Local Archive HTTP server could not start on port {LOCAL_ARCHIVE_PORT}: {srv_err}", "WARN")
 
 def purge_old_local_files():
     """
@@ -853,7 +957,13 @@ def main():
         log(f"SumatraPDF Engine: {sumatra_found}", "SUCCESS")
     else:
         log("SumatraPDF not found in Program Files. (Will run in simulation mode)", "WARN")
-    log(f"Polling Cloudflare D1 for [{STATION_ID}] every {POLL_INTERVAL_SECONDS}s...", "INFO")
+    # Start local HTTP archive preview server (port 7250)
+    http_thread = threading.Thread(target=start_local_archive_server, daemon=True)
+    http_thread.start()
+
+    # Track daemon script file modification time for automatic hot-reload
+    daemon_file = os.path.abspath(__file__)
+    start_mtime = os.path.getmtime(daemon_file)
 
     # Write initial heartbeat so the frontend sees us immediately
     write_heartbeat()
@@ -861,6 +971,14 @@ def main():
 
     while True:
         try:
+            # Hot reload if script file is edited on disk
+            try:
+                if os.path.getmtime(daemon_file) > start_mtime:
+                    log("Detected update in printer_daemon.py! Exiting to auto-restart via NSSM...", "ALERT")
+                    sys.exit(0)
+            except Exception:
+                pass
+
             # Query for PAID jobs filtered strictly by station
             if STATION_ID == 'main':
                 sql = "SELECT * FROM print_jobs WHERE status = 'PAID' AND (station_id = 'main' OR station_id IS NULL) ORDER BY created_at ASC LIMIT 5"
