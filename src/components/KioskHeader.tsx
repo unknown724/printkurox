@@ -6,6 +6,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { AdminBadge } from '@/components/AdminBadge';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
+import { PwaInstallButton } from '@/components/PwaInstallButton';
 import { getStationConfig } from '@/lib/stations';
 
 function HeaderContent() {
@@ -85,6 +86,7 @@ function HeaderContent() {
 
         {/* Right controls */}
         <div className="flex items-center gap-1.5 sm:gap-2">
+          <PwaInstallButton />
           <ThemeToggle />
           <AdminBadge />
           <PrinterStatusPill />
