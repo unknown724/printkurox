@@ -129,13 +129,13 @@ export function DocumentStudio({
       {currentStep === 1 && (
         <div className="space-y-3 animate-fade-in-up">
           {/* Header */}
-          <div className="flex items-center justify-between px-0.5 pt-1">
-            <div>
+          <div className="flex items-center justify-between gap-3 px-0.5 pt-1">
+            <div className="min-w-0">
               <h2 className="text-base sm:text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                Upload Document
+                Upload PDF or Photos
               </h2>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                PDF or Images (PNG, JPG, WEBP). Automatic A4 layout.
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                PDF &amp; Images · Automatic A4 layout
               </p>
             </div>
 
@@ -143,57 +143,51 @@ export function DocumentStudio({
               type="button"
               onClick={() => setShowRatesModal((prev) => !prev)}
               aria-label="View or close kiosk rate card"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white px-2.5 py-1.5 rounded-lg border border-zinc-200/80 dark:border-white/10 bg-zinc-100/70 dark:bg-white/[0.04] hover:dark:bg-white/[0.08] hover:dark:border-white/20 transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white px-2.5 py-1.5 rounded-lg border border-zinc-200/80 dark:border-white/10 bg-zinc-100/70 dark:bg-white/[0.04] hover:dark:bg-white/[0.08] hover:dark:border-white/20 transition-all shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] cursor-pointer shrink-0"
             >
               <HelpCircle className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-400" />
               <span>Rate Card</span>
             </button>
           </div>
 
-          {/* High-Impact Upfront Campus Pricing Banner */}
-          <div className="p-2.5 sm:p-3 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-blue-500/10 to-indigo-500/10 dark:from-emerald-950/30 dark:via-blue-950/20 dark:to-transparent flex items-center justify-between gap-2 shadow-xs">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap text-xs">
-                <span className="font-bold text-zinc-900 dark:text-white">
-                  Campus Offer:
-                </span>
-                <span className="font-semibold text-sky-600 dark:text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/20">
-                  ₹3 B&amp;W
-                </span>
-                <span className="font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                  ₹5 Color
-                </span>
-              </div>
+          {/* High-Impact Upfront Campus Pricing Banner - Clean Neutral Glass with Emerald Price */}
+          <div className="px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl border border-zinc-200/80 dark:border-white/10 bg-zinc-50/70 dark:bg-white/[0.03] backdrop-blur-md flex items-center gap-2 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className="font-bold text-zinc-900 dark:text-white whitespace-nowrap">
+                Website Offer Price:
+              </span>
+              <span className="font-semibold text-zinc-800 dark:text-zinc-200 bg-zinc-200/80 dark:bg-white/10 px-2.5 py-0.5 rounded-md border border-zinc-300 dark:border-white/15 whitespace-nowrap">
+                ₹3 B&amp;W
+              </span>
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20 whitespace-nowrap">
+                ₹5 Color
+              </span>
             </div>
-            <span className="text-[10px] font-mono font-bold text-blue-600 dark:text-blue-400 shrink-0">
-              ⚡ 10s Print
-            </span>
           </div>
 
-          {/* Target Hostel Print Station Card */}
-          <div className="p-3 sm:p-3.5 rounded-2xl border border-blue-500/25 bg-gradient-to-r from-blue-50/80 via-indigo-50/40 to-transparent dark:from-blue-950/25 dark:via-[#13141c]/60 dark:to-transparent backdrop-blur-md flex items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                <Building2 className="w-4 h-4" />
+          {/* Target Hostel Print Station Card - Prominent, Generous & Highly Legible */}
+          <div className="p-3.5 sm:p-4 rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-zinc-50/80 dark:bg-white/[0.03] backdrop-blur-xl flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
+              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 dark:bg-white/[0.08] text-zinc-800 dark:text-white flex items-center justify-center shrink-0 border border-zinc-200 dark:border-white/10 shadow-xs">
+                <Building2 className="w-5 h-5 text-zinc-700 dark:text-zinc-200" />
               </div>
-              <div className="min-w-0 space-y-0.5">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Hostel Station:
                   </span>
-                  <span className="font-bold text-xs sm:text-sm text-zinc-900 dark:text-zinc-100 truncate">
-                    {currentStation.name}
-                  </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/25">
-                    🟢 Ready
+                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/25 inline-flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Ready
                   </span>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-1">
+                <h3 className="text-sm sm:text-base font-bold text-zinc-900 dark:text-white leading-snug">
+                  {currentStation.name}
+                </h3>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1 mt-0.5">
                   <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-                  <span className="truncate">Room 29 (1st Floor) · Pare Hostel</span>
-                  <span className="text-zinc-300 dark:text-zinc-600">•</span>
-                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">₹3 B&amp;W / ₹5 Color</span>
+                  <span>Room 29 (1st Floor) · Pare Hostel</span>
                 </p>
               </div>
             </div>
@@ -201,8 +195,8 @@ export function DocumentStudio({
             <button
               type="button"
               onClick={() => setShowStationModal(true)}
-              className="h-8 px-2.5 sm:px-3 rounded-xl border border-zinc-200 dark:border-white/10 bg-white hover:bg-zinc-100 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] text-zinc-900 dark:text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-colors shadow-2xs cursor-pointer"
-              title="Station switching in setup · Feature to be updated soon"
+              className="h-8 px-3 rounded-xl border border-zinc-200 dark:border-white/15 bg-white hover:bg-zinc-100 dark:bg-white/[0.08] dark:hover:bg-white/[0.15] text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all shadow-2xs cursor-pointer active:scale-95"
+              title="Change station"
             >
               <Lock className="w-3 h-3 text-zinc-400" />
               <span>Change</span>

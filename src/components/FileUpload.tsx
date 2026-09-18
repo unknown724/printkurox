@@ -651,12 +651,12 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
             fileInputRef.current?.click();
           }
         }}
-        className={`rounded-xl p-6 sm:p-8 flex flex-col items-center justify-center text-center transition-all relative overflow-hidden backdrop-blur-xl group ${
+        className={`rounded-2xl p-7 sm:p-9 flex flex-col items-center justify-center text-center transition-all relative overflow-hidden backdrop-blur-xl group ${
           isUploading
             ? 'border border-zinc-200 dark:border-white/10 bg-zinc-50/50 dark:bg-white/[0.02] cursor-default'
             : isDragging
-            ? 'border-2 border-dashed border-zinc-900 bg-zinc-900/[0.04] dark:border-white/50 dark:bg-white/[0.06] cursor-pointer'
-            : 'border border-zinc-200/90 hover:border-zinc-300 dark:border-white/[0.08] hover:dark:border-white/[0.18] bg-zinc-50/60 hover:bg-zinc-100/70 dark:bg-white/[0.02] hover:dark:bg-white/[0.045] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] cursor-pointer'
+            ? 'border-2 border-dashed border-emerald-500 bg-emerald-500/10 dark:border-emerald-400 dark:bg-emerald-950/20 cursor-pointer shadow-lg'
+            : 'border-2 border-dashed border-zinc-300 hover:border-zinc-400 dark:border-white/15 hover:dark:border-white/30 bg-zinc-50/50 hover:bg-zinc-100/70 dark:bg-white/[0.02] hover:dark:bg-white/[0.04] shadow-xs cursor-pointer'
         }`}
       >
         <input
@@ -707,22 +707,29 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           </div>
         ) : (
           <>
-            {/* Icon Container - Stealth Monochrome Glass */}
-            <div className="w-14 h-14 rounded-2xl bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-800 dark:text-zinc-200 mb-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_12px_rgba(0,0,0,0.3)] group-hover:scale-105 group-hover:border-zinc-400 dark:group-hover:border-white/25 transition-all">
-              <UploadCloud className="w-7 h-7" />
+            {/* Icon Container - Stealth Frosted Glass */}
+            <div className="w-13 h-13 rounded-2xl bg-zinc-100 dark:bg-white/[0.06] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-800 dark:text-zinc-200 mb-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_12px_rgba(0,0,0,0.25)] group-hover:scale-105 group-hover:border-zinc-400 dark:group-hover:border-white/25 transition-all">
+              <UploadCloud className="w-6 h-6 text-zinc-700 dark:text-zinc-200 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors" />
             </div>
-            <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-              Tap to select document or drag &amp; drop
+
+            {/* Obvious Primary Action Button - Perfectly Themed (Obsidian / Crisp White) */}
+            <div className="px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 text-xs sm:text-sm font-bold shadow-md shadow-black/15 dark:shadow-white/10 flex items-center gap-2 transition-all group-hover:scale-[1.02] active:scale-[0.98]">
+              <UploadCloud className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+              <span>Tap to Select PDF or Photos</span>
+            </div>
+
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-2">
+              or drag &amp; drop files anywhere here
             </p>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Select PDF or image documents for 100% vector print accuracy
-            </p>
-            <div className="flex items-center gap-1.5 mt-3.5 text-[10px] text-zinc-600 dark:text-zinc-400 bg-white/70 dark:bg-white/[0.04] backdrop-blur-md px-3 py-1 rounded-full border border-zinc-200/80 dark:border-white/10 font-mono shadow-2xs">
-              <span className="text-blue-600 dark:text-blue-400 font-bold">PDF (Guaranteed)</span>
-              <span>•</span>
-              <span>PNG / JPG / WEBP</span>
-              <span>•</span>
-              <span>Up to 10 files</span>
+
+            <div className="inline-flex items-center justify-center flex-wrap gap-2 mt-3 px-3.5 py-1.5 rounded-full bg-white/80 dark:bg-white/[0.05] border border-zinc-200/80 dark:border-white/10 text-[11px] text-zinc-600 dark:text-zinc-400 shadow-2xs max-w-full">
+              <span className="text-zinc-900 dark:text-white font-bold whitespace-nowrap">
+                PDF (Guaranteed)
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
+              <span className="font-medium whitespace-nowrap">PNG / JPG / WEBP</span>
+              <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
+              <span className="font-medium whitespace-nowrap">Up to 10 files</span>
             </div>
           </>
         )}
@@ -735,7 +742,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         </span>
         <span className="text-zinc-300 dark:text-zinc-700 select-none">•</span>
         <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-          <span className="text-blue-600 dark:text-blue-400 font-semibold">Word files:</span>
+          <span className="text-zinc-900 dark:text-zinc-100 font-semibold">Word files:</span>
           <span>Save as PDF in Word/Docs for 100% exact layout</span>
         </span>
         <span className="text-zinc-300 dark:text-zinc-700 select-none hidden sm:inline">•</span>

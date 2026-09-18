@@ -168,8 +168,8 @@ export function HostelSelectorModal({
           className="relative w-full max-w-sm sm:max-w-md rounded-3xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-[#0f0f13] shadow-2xl p-6 sm:p-7 overflow-hidden text-center animate-scale-in"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Top Decorative Gradient Line */}
-          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-500 to-emerald-500" />
+          {/* Subtle Top Hairline Highlight */}
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-zinc-300 dark:via-white/20 to-transparent" />
 
           {/* Close button */}
           <button
@@ -181,13 +181,13 @@ export function HostelSelectorModal({
             <X className="w-4 h-4" />
           </button>
 
-          {/* Lock Icon */}
-          <div className="w-14 h-14 rounded-2xl bg-blue-500/10 dark:bg-blue-500/15 border border-blue-500/25 flex items-center justify-center text-blue-600 dark:text-blue-400 mx-auto mt-2 mb-4 shadow-xs">
-            <Lock className="w-7 h-7 stroke-[2.2]" />
+          {/* Lock Icon - Frosted Stealth Glass */}
+          <div className="w-13 h-13 rounded-2xl bg-zinc-100 dark:bg-white/[0.06] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-700 dark:text-zinc-200 mx-auto mt-2 mb-4 shadow-xs">
+            <Lock className="w-6 h-6 stroke-[2.2]" />
           </div>
 
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/40 text-[11px] font-semibold text-blue-600 dark:text-blue-400 mb-2.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-100 dark:bg-white/[0.06] border border-zinc-200/80 dark:border-white/10 text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-2.5">
+            <Sparkles className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
             <span>Campus Network Expansion</span>
           </div>
 
@@ -200,8 +200,8 @@ export function HostelSelectorModal({
             <span className="font-semibold text-zinc-900 dark:text-zinc-200">Hostel Block B (Pare, Room 29)</span>.
           </p>
 
-          {/* Active Station Card */}
-          <div className="mt-5 p-3.5 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] text-left flex items-center justify-between">
+          {/* Active Station Card - Clean Frosted Glass */}
+          <div className="mt-5 p-3.5 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-zinc-50/70 dark:bg-white/[0.03] text-left flex items-center justify-between shadow-2xs">
             <div className="flex items-center gap-3">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
               <div>
@@ -214,11 +214,11 @@ export function HostelSelectorModal({
             </span>
           </div>
 
-          {/* Dismiss Button */}
+          {/* Dismiss Button - Theme High-Contrast (Obsidian / Crisp White) */}
           <button
             type="button"
             onClick={onClose}
-            className="mt-6 w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs sm:text-sm transition-colors shadow-xs cursor-pointer"
+            className="mt-6 w-full py-2.5 sm:py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 font-bold text-xs sm:text-sm transition-all shadow-md shadow-black/10 dark:shadow-white/5 cursor-pointer active:scale-98"
           >
             Got it
           </button>
