@@ -28,6 +28,7 @@ import { AdobePageHandling, AdobePagesToPrint } from './AdobePageSizing';
 import { EnhanceMode } from '@/lib/image-enhancer';
 import { HostelSelectorModal } from '@/components/HostelSelectorModal';
 import { getStationConfig } from '@/lib/stations';
+import { useHostelChangeSetting } from '@/lib/useHostelChangeSetting';
 
 interface DocumentStudioProps {
   uploadedBatch: UploadedBatchData | null;
@@ -79,6 +80,7 @@ export function DocumentStudio({
   const [showStationModal, setShowStationModal] = useState(false);
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
 
+  const { hostelChangeEnabled } = useHostelChangeSetting();
   const currentStation = getStationConfig(stationId || 'block_b');
 
   // Close Rate Card modal on Escape key press
@@ -192,15 +194,16 @@ export function DocumentStudio({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowStationModal(true)}
-              className="h-8 px-3 rounded-xl border border-zinc-200 dark:border-white/15 bg-white hover:bg-zinc-100 dark:bg-white/[0.08] dark:hover:bg-white/[0.15] text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all shadow-2xs cursor-pointer active:scale-95"
-              title="Change station"
-            >
-              <Lock className="w-3 h-3 text-zinc-400" />
-              <span>Change</span>
-            </button>
+            {hostelChangeEnabled && (
+              <button
+                type="button"
+                onClick={() => setShowStationModal(true)}
+                className="h-8 px-3 rounded-xl border border-zinc-200 dark:border-white/15 bg-white hover:bg-zinc-100 dark:bg-white/[0.08] dark:hover:bg-white/[0.15] text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all shadow-2xs cursor-pointer active:scale-95"
+                title="Change station"
+              >
+                <span>Change</span>
+              </button>
+            )}
           </div>
 
           {/* File Upload Zone */}
@@ -482,7 +485,7 @@ export function DocumentStudio({
                 pageConfigs={pageConfigs}
                 onPageConfigsChange={onPageConfigsChange}
                 stationId={stationId}
-                onOpenStationModal={() => setShowStationModal(true)}
+                onOpenStationModal={hostelChangeEnabled ? () => setShowStationModal(true) : undefined}
               />
 
               {/* Advanced Settings (Collapsible) */}
@@ -513,7 +516,8 @@ export function DocumentStudio({
                 customScale={layoutSettings.customScale || advancedOptions.customScale || 100}
                 fitMode={layoutSettings.fitMode || advancedOptions.scaling || 'fit'}
                 drawBorder={layoutSettings.drawBorder}
-                onOpenStationModal={() => setShowStationModal(true)}
+                autoRotate={layoutSettings.autoRotate}
+                onOpenStationModal={hostelChangeEnabled ? () => setShowStationModal(true) : undefined}
               />
             </div>
           </div>
@@ -838,17 +842,19 @@ export function DocumentStudio({
       )}
 
       {/* Central Hostel Selector Modal accessible across all studio stages */}
-      <HostelSelectorModal
-        isOpen={showStationModal}
-        onClose={() => setShowStationModal(false)}
-        currentStationId={stationId}
-        onStationSelect={(id) => {
-          if (onStationSelect) {
-            onStationSelect(id);
-          }
-          setShowStationModal(false);
-        }}
-      />
+      {hostelChangeEnabled && (
+        <HostelSelectorModal
+          isOpen={showStationModal}
+          onClose={() => setShowStationModal(false)}
+          currentStationId={stationId}
+          onStationSelect={(id) => {
+            if (onStationSelect) {
+              onStationSelect(id);
+            }
+            setShowStationModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

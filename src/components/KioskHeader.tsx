@@ -10,10 +10,12 @@ import { PwaInstallButton } from '@/components/PwaInstallButton';
 import { HostelSelectorModal } from '@/components/HostelSelectorModal';
 import { getStationConfig } from '@/lib/stations';
 import { ChevronDown, Building2, Lock } from 'lucide-react';
+import { useHostelChangeSetting } from '@/lib/useHostelChangeSetting';
 
 function HeaderContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { hostelChangeEnabled } = useHostelChangeSetting();
 
   const isRomenPath = pathname?.startsWith('/romen');
   const stationParam = searchParams.get('station') || searchParams.get('station_id');
@@ -74,42 +76,54 @@ function HeaderContent() {
             </div>
           </Link>
 
-          {/* Interactive Hostel Station Trigger */}
-          <button
-            type="button"
-            onClick={() => {
-              if (!isRomen) setShowHostelModal(true);
-            }}
-            className={`text-left group/station flex items-center gap-1.5 p-1 -ml-1 rounded-xl transition-all ${
-              !isRomen ? 'hover:bg-zinc-100 dark:hover:bg-white/[0.06] cursor-pointer' : ''
-            }`}
-            title={!isRomen ? 'Click to view & select NERIST hostel stations' : undefined}
-          >
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#f4f4f5] flex items-center gap-1">
-                  {isRomen ? 'Romen Xerox' : 'NERIST PrintHub'}
+          {/* Hostel Station Trigger / Static Badge */}
+          {hostelChangeEnabled && !isRomen ? (
+            <button
+              type="button"
+              onClick={() => setShowHostelModal(true)}
+              className="text-left group/station flex items-center gap-1.5 p-1 -ml-1 rounded-xl transition-all hover:bg-zinc-100 dark:hover:bg-white/[0.06] cursor-pointer"
+              title="Click to view & select NERIST hostel stations"
+            >
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#f4f4f5] flex items-center gap-1">
+                    NERIST PrintHub
+                  </span>
+                  <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full border bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25">
+                    {station.blockCode || 'Hostel'}
+                  </span>
+                  <ChevronDown className="w-3 h-3 text-zinc-400 group-hover/station:text-blue-500 transition-colors" />
+                </div>
+                <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-normal -mt-0.5 truncate max-w-[170px] sm:max-w-[210px]">
+                  {`${station.shortName || 'Block B · Pare'} (Room 29)`}
                 </span>
-                <span
-                  className={`text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full border ${
-                    isRomen
-                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                      : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25'
-                  }`}
-                >
-                  {isRomen ? 'External' : station.blockCode || 'Hostel'}
-                </span>
-                {!isRomen && (
-                  <Lock className="w-3 h-3 text-zinc-400 group-hover/station:text-blue-500 transition-colors" />
-                )}
               </div>
-              <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-normal -mt-0.5 truncate max-w-[170px] sm:max-w-[210px]">
-                {isRomen
-                  ? 'Near Main Gate · Self-Service'
-                  : `${station.shortName || 'Block B · Pare'} (Room 29)`}
-              </span>
+            </button>
+          ) : (
+            <div className="text-left flex items-center gap-1.5 p-1 -ml-1 select-none">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#f4f4f5] flex items-center gap-1">
+                    {isRomen ? 'Romen Xerox' : 'NERIST PrintHub'}
+                  </span>
+                  <span
+                    className={`text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full border ${
+                      isRomen
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                        : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25'
+                    }`}
+                  >
+                    {isRomen ? 'External' : station.blockCode || 'Hostel'}
+                  </span>
+                </div>
+                <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-normal -mt-0.5 truncate max-w-[170px] sm:max-w-[210px]">
+                  {isRomen
+                    ? 'Near Main Gate · Self-Service'
+                    : `${station.shortName || 'Block B · Pare'} (Room 29)`}
+                </span>
+              </div>
             </div>
-          </button>
+          )}
         </div>
 
         {/* Right controls */}
@@ -121,12 +135,14 @@ function HeaderContent() {
         </div>
       </div>
 
-      {/* Campus Hostel Selector Modal */}
-      <HostelSelectorModal
-        isOpen={showHostelModal}
-        onClose={() => setShowHostelModal(false)}
-        currentStationId={station.id}
-      />
+      {/* Campus Hostel Selector Modal (Rendered only when hostel change is enabled) */}
+      {hostelChangeEnabled && (
+        <HostelSelectorModal
+          isOpen={showHostelModal}
+          onClose={() => setShowHostelModal(false)}
+          currentStationId={station.id}
+        />
+      )}
     </header>
   );
 }

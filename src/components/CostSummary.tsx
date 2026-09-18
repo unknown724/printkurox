@@ -43,6 +43,7 @@ interface CostSummaryProps {
   customRows?: number;
   textOverlay?: TextOverlayConfig;
   orientation?: 'auto' | 'portrait' | 'landscape';
+  autoRotate?: boolean;
   stationId?: string;
   customScale?: number;
   fitMode?: 'fit' | 'fill' | 'actual' | 'custom';
@@ -62,6 +63,7 @@ export function CostSummary({
   customRows,
   textOverlay,
   orientation = 'auto',
+  autoRotate = true,
   stationId = 'main',
   customScale = 100,
   fitMode = 'fit',
@@ -145,14 +147,15 @@ export function CostSummary({
   }, [station.id]);
 
   const getEffectiveOrientation = () => {
-    if (orientation && orientation !== 'auto') {
-      return orientation;
+    if (orientation === 'landscape') return 'landscape';
+    if (pageConfigs && pageConfigs.length > 0) {
+      const hasLandscape = pageConfigs.some(
+        (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
+      );
+      if (hasLandscape) return 'landscape';
     }
-    if (!pageConfigs || pageConfigs.length === 0) return 'portrait';
-    const hasLandscape = pageConfigs.some(
-      (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
-    );
-    return hasLandscape ? 'landscape' : 'portrait';
+    if (orientation === 'portrait') return 'portrait';
+    return 'portrait';
   };
 
   const handleAdminBypass = async () => {
@@ -180,6 +183,7 @@ export function CostSummary({
           customScale,
           fitMode,
           drawBorder,
+          autoRotate,
         }),
       });
       const data = await res.json();
@@ -218,6 +222,7 @@ export function CostSummary({
           customScale,
           fitMode,
           drawBorder,
+          autoRotate,
         }),
       });
       const data = await res.json();
@@ -260,6 +265,7 @@ export function CostSummary({
           customScale,
           fitMode,
           drawBorder,
+          autoRotate,
         }),
       });
 
@@ -310,6 +316,7 @@ export function CostSummary({
           customScale,
           fitMode,
           drawBorder,
+          autoRotate,
           phone: phoneNumber.length === 10 ? phoneNumber : undefined,
         }),
       });

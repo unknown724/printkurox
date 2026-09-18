@@ -255,7 +255,9 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
 
     const validExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.webp'];
     const invalidFile = newFileList.find(
-      (f) => !validExtensions.some((ext) => f.name.toLowerCase().endsWith(ext))
+      (f) =>
+        !validExtensions.some((ext) => f.name.toLowerCase().endsWith(ext)) &&
+        !f.type.startsWith('image/')
     );
 
     if (invalidFile) {
@@ -567,18 +569,24 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
 
           {/* Add more files footer action */}
           <div className="pt-3 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => {
-                isAddingMoreRef.current = true;
-                fileInputRef.current?.click();
-              }}
-              disabled={isUploading}
-              className="inline-flex items-center space-x-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-white/[0.08] py-1.5 px-3 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 transition-all cursor-pointer"
+            <label
+              className="relative inline-flex items-center space-x-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-white/[0.08] py-1.5 px-3 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 transition-all cursor-pointer overflow-hidden touch-manipulation active:scale-95"
             >
+              <input
+                type="file"
+                multiple
+                accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp"
+                onChange={(e) => {
+                  isAddingMoreRef.current = true;
+                  handleInputChange(e);
+                }}
+                disabled={isUploading}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 touch-manipulation"
+                aria-label="Add More Files"
+              />
               <Plus className="w-3.5 h-3.5" />
               <span>Add More Files</span>
-            </button>
+            </label>
 
             <button
               type="button"
@@ -593,12 +601,12 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           </div>
         </div>
 
-        {/* Hidden File Input */}
+        {/* Standby File Input for programmatic clicks */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,image/png,image/jpeg,image/webp"
+          accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp"
           onChange={handleInputChange}
           className="hidden"
         />
@@ -645,13 +653,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => {
-          if (!isUploading) {
-            isAddingMoreRef.current = false;
-            fileInputRef.current?.click();
-          }
-        }}
-        className={`rounded-2xl p-7 sm:p-9 flex flex-col items-center justify-center text-center transition-all relative overflow-hidden backdrop-blur-xl group ${
+        className={`rounded-2xl p-7 sm:p-9 flex flex-col items-center justify-center text-center transition-all relative overflow-hidden backdrop-blur-xl group touch-manipulation ${
           isUploading
             ? 'border border-zinc-200 dark:border-white/10 bg-zinc-50/50 dark:bg-white/[0.02] cursor-default'
             : isDragging
@@ -659,14 +661,19 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
             : 'border-2 border-dashed border-zinc-300 hover:border-zinc-400 dark:border-white/15 hover:dark:border-white/30 bg-zinc-50/50 hover:bg-zinc-100/70 dark:bg-white/[0.02] hover:dark:bg-white/[0.04] shadow-xs cursor-pointer'
         }`}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept=".pdf,image/png,image/jpeg,image/webp"
-          onChange={handleInputChange}
-          className="hidden"
-        />
+        {/* Full-bleed overlay input for zero-lag native mobile and desktop tap */}
+        {!isUploading && (
+          <input
+            id="initial-file-upload-input"
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp"
+            onChange={handleInputChange}
+            aria-label="Select PDF or Photos"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30 touch-manipulation"
+          />
+        )}
 
         {isUploading ? (
           <div className="flex flex-col items-center py-3 space-y-3.5 w-full max-w-[280px]">

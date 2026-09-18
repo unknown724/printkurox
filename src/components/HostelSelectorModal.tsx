@@ -44,8 +44,8 @@ function getCleanRoomLocation(st: StationConfig): string {
   return 'Common Area';
 }
 
-// Lock flag: Hides upcoming campus hostel cards and shows 'Features to be updated soon' dialog
-export const IS_FEATURE_LOCKED = true;
+// Lock flag: Set to false to allow interactive station selection when enabled by admin
+export const IS_FEATURE_LOCKED = false;
 
 export function HostelSelectorModal({
   isOpen,

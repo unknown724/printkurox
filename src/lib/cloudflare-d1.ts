@@ -23,6 +23,8 @@ export interface PrintJobRecord {
   order_id: string | null;
   status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING_ODD' | 'AWAITING_FLIP' | 'PRINTING_EVEN' | 'COMPLETED' | 'FAILED';
   station_id?: string | null;
+  orientation?: 'portrait' | 'landscape' | 'auto';
+  page_configs?: string | null;
   created_at: string;
   expires_at: string;
 }

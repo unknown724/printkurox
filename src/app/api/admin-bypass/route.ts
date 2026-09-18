@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
       customScale,
       fitMode,
       drawBorder,
+      autoRotate,
     } = body;
 
     const station = getStationConfig(rawStationId);
@@ -146,6 +147,16 @@ export async function POST(req: NextRequest) {
 
     const isNotPdf = Boolean(fileName && !fileName.toLowerCase().endsWith('.pdf'));
 
+    const hasPageOverrides = Boolean(
+      Array.isArray(pageConfigs) &&
+      pageConfigs.some((p: { rotation?: number; customScale?: number; included?: boolean; orientation?: string }) =>
+        (p.rotation && p.rotation !== 0) ||
+        (p.customScale && p.customScale !== 100) ||
+        p.included === false ||
+        p.orientation === 'landscape'
+      )
+    );
+
     // Only perform heavy server-side PDF manipulation when physically required (e.g. converting images, N-up grid layouts, custom borders, text overlays).
     // Standard PDFs are printed natively by SumatraPDF in printer_daemon.py with orientation, copies, page range, monochrome, and fit.
     const needsTransform = Boolean(
@@ -153,7 +164,9 @@ export async function POST(req: NextRequest) {
       (customScale && Number(customScale) !== 100) ||
       (layoutMode && layoutMode !== '1-up') ||
       drawBorder ||
-      hasTextOverlay
+      hasTextOverlay ||
+      orientation === 'landscape' ||
+      hasPageOverrides
     );
 
     if (needsTransform) {
@@ -168,6 +181,7 @@ export async function POST(req: NextRequest) {
             customRows: customRows ? Number(customRows) : undefined,
             fitMode: fitMode || 'fit',
             drawBorder: Boolean(drawBorder),
+            autoRotate: autoRotate ?? true,
             textOverlay,
             orientation: orientation || 'auto',
             pageConfigs,

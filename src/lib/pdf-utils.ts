@@ -330,16 +330,16 @@ export async function mergeFilesToPdf(
     isFill: boolean,
     showBorder: boolean,
     rotationDeg: number = 0,
-    pageScaleMultiplier?: number
+    pageScaleMultiplier?: number,
+    allowAutoRotate90: boolean = true
   ) => {
     let w = item.width;
     let h = item.height;
 
-    const isMultiple = layoutMode !== '1-up';
     const isSlotLandscape = boxW > boxH;
     const isImgLandscape = w > h;
     let rotate = rotationDeg;
-    if (rotate === 0 && autoRotate && isMultiple && isSlotLandscape !== isImgLandscape) {
+    if (allowAutoRotate90 && rotate === 0 && (autoRotate ?? true) && isSlotLandscape !== isImgLandscape) {
       rotate = 90;
     }
 
@@ -693,7 +693,8 @@ export async function mergeFilesToPdf(
         fitMode === 'fill',
         drawBorder,
         pageCfg?.rotation || 0,
-        pageScaleMultiplier
+        pageScaleMultiplier,
+        false // Keep upright in 1-Up mode (Adobe Acrobat style)
       );
     }
   }

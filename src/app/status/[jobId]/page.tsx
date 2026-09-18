@@ -242,12 +242,59 @@ export default function JobStatusPage({
           className="inline-flex items-center space-x-1.5 text-xs text-zinc-400 hover:text-white transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Print New Document</span>
+          <span>Back to Home</span>
         </Link>
         <span className="text-[11px] text-emerald-400 flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           Live Realtime Status
         </span>
+      </div>
+
+      {/* Primary Highlighted Action: Print Another Document (Quick Top Action) */}
+      <div className="print:hidden">
+        <Link
+          href="/"
+          className={`w-full py-3 sm:py-3.5 px-4 sm:px-5 rounded-2xl flex items-center justify-between transition-all duration-300 shadow-xl group cursor-pointer ${
+            job.status === 'COMPLETED'
+              ? 'bg-white hover:bg-zinc-100 text-black shadow-[0_0_35px_rgba(255,255,255,0.45)] border-2 border-white ring-4 ring-white/20 hover:scale-[1.01] active:scale-[0.99]'
+              : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-500/25 ring-1 ring-white/20 hover:scale-[1.01] active:scale-[0.99]'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-inner ${
+              job.status === 'COMPLETED' ? 'bg-black/10 text-black' : 'bg-white/20 text-white'
+            }`}>
+              <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+            </div>
+            <div className="text-left">
+              <div className="flex items-center gap-2">
+                <p className={`text-xs sm:text-sm font-black uppercase tracking-wider ${
+                  job.status === 'COMPLETED' ? 'text-black' : 'text-white'
+                }`}>
+                  {job.status === 'COMPLETED' ? 'Document Printed!' : 'Print Another Document'}
+                </p>
+                {job.status === 'COMPLETED' && (
+                  <span className="text-[9px] font-black bg-emerald-600 text-white px-2 py-0.5 rounded-full uppercase shadow-xs">
+                    Ready
+                  </span>
+                )}
+              </div>
+              <p className={`text-[11px] font-semibold ${
+                job.status === 'COMPLETED' ? 'text-zinc-700' : 'text-white/90'
+              }`}>
+                {job.status === 'COMPLETED'
+                  ? 'Tap here to print your next file instantly'
+                  : 'Start another print job while this one processes'}
+              </p>
+            </div>
+          </div>
+          <div className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs transition-colors shrink-0 shadow-xs ${
+            job.status === 'COMPLETED' ? 'bg-black text-white group-hover:bg-zinc-800' : 'bg-white/20 text-white group-hover:bg-white/30'
+          }`}>
+            <span>Print Next</span>
+            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+          </div>
+        </Link>
       </div>
 
       {/* Apple Wallet / Boarding Pass Digital Ticket with Moving Border Beam */}
@@ -299,19 +346,35 @@ export default function JobStatusPage({
             <p className="font-black text-emerald-600 dark:text-emerald-400 text-base">₹{job.totalPrice}</p>
           </div>
         </div>
+
+        {/* Highlighted Pure White Action Button Directly on Boarding Pass Ticket */}
+        {job.status === 'COMPLETED' && (
+          <div className="mt-4 pt-3.5 border-t border-zinc-200/80 dark:border-white/10 relative z-10 print:hidden">
+            <Link
+              href="/"
+              className="w-full py-3 px-4 rounded-xl bg-white hover:bg-zinc-100 text-black font-black text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(255,255,255,0.4)] border-2 border-white ring-2 ring-white/20 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-black stroke-[2.5]" />
+              <span>Print Another Document</span>
+              <ArrowRight className="w-3.5 h-3.5 text-black" />
+            </Link>
+          </div>
+        )}
       </div>
 
-      {/* Primary Hero Action: Print Another Document (New Print) */}
-      <div className="print:hidden">
-        <Link
-          href="/"
-          className="w-full py-3.5 sm:py-4 px-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-xl shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer group"
-        >
-          <Sparkles className="w-4 h-4 text-blue-200 group-hover:rotate-12 transition-transform" />
-          <span>Print Another Document (New Print)</span>
-          <ArrowRight className="w-4 h-4 text-white/80 group-hover:translate-x-1 transition-transform" />
-        </Link>
-      </div>
+      {/* Primary Hero Action: Print Another Document while processing (hidden when completed since ticket has primary action) */}
+      {job.status !== 'COMPLETED' && (
+        <div className="print:hidden">
+          <Link
+            href="/"
+            className="w-full py-3.5 sm:py-4 px-6 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2.5 transition-all cursor-pointer group bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white shadow-xl shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-[1.01] active:scale-[0.99]"
+          >
+            <Sparkles className="w-4 h-4 text-blue-200 group-hover:rotate-12 transition-transform" />
+            <span>Print Another Document (New Print)</span>
+            <ArrowRight className="w-4 h-4 text-white/80 group-hover:translate-x-1 transition-transform" />
+          </Link>
+        </div>
+      )}
 
       {/* Prominent Collection Point Banner */}
       <div className="rounded-2xl p-4 sm:p-5 border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl relative overflow-hidden shadow-xs print:border-black print:bg-slate-50 print:text-black">
@@ -404,6 +467,20 @@ export default function JobStatusPage({
             </div>
           </div>
         </div>
+
+        {/* Highlighted Pure White Action Button directly inside Live Progress Card */}
+        {job.status === 'COMPLETED' && (
+          <div className="pt-2.5">
+            <Link
+              href="/"
+              className="w-full py-3.5 sm:py-4 px-5 rounded-2xl bg-white hover:bg-zinc-100 text-black font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_30px_rgba(255,255,255,0.45)] border-2 border-white ring-4 ring-white/20 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] cursor-pointer group"
+            >
+              <RotateCcw className="w-4 h-4 text-black stroke-[2.5] group-hover:-rotate-90 transition-transform duration-300" />
+              <span>Print Another Document</span>
+              <ArrowRight className="w-4 h-4 text-black group-hover:translate-x-1 transition-transform" />
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* 15-Minute Privacy Policy & Retention Countdown */}
@@ -424,14 +501,13 @@ export default function JobStatusPage({
           </div>
         </div>
 
-        {/* Quick Reprint Action - Highlighted */}
+        {/* Quick Reprint Action - Highlighted Pure White */}
         {!job.isExpired && (
           <Link
             href="/"
-            className="relative overflow-hidden group px-4 py-2 rounded-xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-xs flex items-center space-x-1.5 shadow-[0_0_18px_rgba(245,158,11,0.45)] hover:shadow-[0_0_24px_rgba(245,158,11,0.65)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-95 cursor-pointer shrink-0"
+            className="px-4 py-2.5 rounded-xl bg-white hover:bg-zinc-100 text-black font-black text-xs flex items-center space-x-1.5 shadow-[0_0_20px_rgba(255,255,255,0.4)] border-2 border-white ring-2 ring-white/20 transition-all duration-300 active:scale-95 cursor-pointer shrink-0"
           >
-            <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent animate-shimmer-sheen pointer-events-none" />
-            <RotateCcw className="w-3.5 h-3.5 text-zinc-950 stroke-[2.5] group-hover:-rotate-90 transition-transform duration-300" />
+            <RotateCcw className="w-3.5 h-3.5 text-black stroke-[2.5] group-hover:-rotate-90 transition-transform duration-300" />
             <span className="tracking-wide">Print Another</span>
           </Link>
         )}

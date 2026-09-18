@@ -36,6 +36,7 @@ import {
   Building2,
 } from 'lucide-react';
 import { getClientDetailedDevice } from '@/lib/device-detection';
+import { broadcastHostelChangeSetting } from '@/lib/useHostelChangeSetting';
 
 interface AdminDevice {
   device_id: string;
@@ -188,6 +189,11 @@ export default function AdminKuroxPage() {
   const [showInkSlidersModal, setShowInkSlidersModal] = useState(false);
   const [refilling, setRefilling] = useState(false);
 
+  // Hostel Station Switching State
+  const [hostelChangeEnabled, setHostelChangeEnabled] = useState<boolean>(false);
+  const [togglingHostelChange, setTogglingHostelChange] = useState<boolean>(false);
+  const [hostelChangeSuccessMsg, setHostelChangeSuccessMsg] = useState<string | null>(null);
+
   // Hardware Calibration Inputs
   const [calibTotal, setCalibTotal] = useState<number>(24741);
   const [calibBw, setCalibBw] = useState<number>(13845);
@@ -316,6 +322,47 @@ export default function AdminKuroxPage() {
     }
   }, [period]);
 
+  const fetchSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/settings', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        setHostelChangeEnabled(Boolean(data.hostelChangeEnabled));
+      }
+    } catch (err) {
+      console.error('Failed to fetch app settings:', err);
+    }
+  }, []);
+
+  const handleToggleHostelChange = async () => {
+    const nextVal = !hostelChangeEnabled;
+    setTogglingHostelChange(true);
+    setHostelChangeSuccessMsg(null);
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hostelChangeEnabled: nextVal }),
+      });
+      if (res.ok) {
+        setHostelChangeEnabled(nextVal);
+        broadcastHostelChangeSetting(nextVal);
+        setHostelChangeSuccessMsg(
+          nextVal ? 'Hostel change enabled across campus' : 'Hostel change disabled & hidden from UI'
+        );
+        setTimeout(() => setHostelChangeSuccessMsg(null), 4000);
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to update hostel change setting');
+      }
+    } catch (err) {
+      console.error('Failed to toggle hostel change setting:', err);
+      alert('Network error updating setting');
+    } finally {
+      setTogglingHostelChange(false);
+    }
+  };
+
   const checkAuthAndLoad = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/auth?action=devices');
@@ -327,6 +374,7 @@ export default function AdminKuroxPage() {
         setCurrentDeviceId(data.currentDeviceId || null);
         fetchRecentJobs();
         fetchStats('all');
+        fetchSettings();
       } else {
         setIsAdmin(false);
       }
@@ -335,7 +383,7 @@ export default function AdminKuroxPage() {
     } finally {
       setLoading(false);
     }
-  }, [fetchRecentJobs, fetchStats]);
+  }, [fetchRecentJobs, fetchStats, fetchSettings]);
 
   useEffect(() => {
     let active = true;
@@ -355,6 +403,7 @@ export default function AdminKuroxPage() {
           setCurrentDeviceId(data.currentDeviceId || null);
           fetchRecentJobs();
           fetchStats('all');
+          fetchSettings();
         } else {
           setIsAdmin(false);
         }
@@ -370,7 +419,7 @@ export default function AdminKuroxPage() {
     return () => {
       active = false;
     };
-  }, [fetchRecentJobs, fetchStats]);
+  }, [fetchRecentJobs, fetchStats, fetchSettings]);
 
   const handlePeriodChange = (newPeriod: 'all' | 'today' | 'week' | 'month' | 'year') => {
     setPeriod(newPeriod);
@@ -516,6 +565,7 @@ export default function AdminKuroxPage() {
 
       fetchRecentJobs();
       fetchStats('all');
+      fetchSettings();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid Passcode');
     } finally {
@@ -652,6 +702,78 @@ export default function AdminKuroxPage() {
       ) : (
         /* Authenticated Admin Dashboard */
         <div className="space-y-6">
+          {/* CAMPUS HOSTEL STATION SWITCHING CONTROL */}
+          <div className="rounded-2xl p-4 sm:p-5 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] shadow-2xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border transition-all ${
+                    hostelChangeEnabled
+                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                      : 'bg-zinc-100 dark:bg-zinc-800/80 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
+                  }`}
+                >
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
+                      Hostel Print Station Switching
+                    </span>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1.5 ${
+                        hostelChangeEnabled
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          hostelChangeEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'
+                        }`}
+                      />
+                      {hostelChangeEnabled ? 'ENABLED (VISIBLE TO STUDENTS)' : 'DISABLED (HIDDEN FROM UI)'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 max-w-xl">
+                    {hostelChangeEnabled
+                      ? 'Students can select and change their target hostel print station in the kiosk header and studio.'
+                      : 'All hostel change buttons and station switching options are hidden from the user interface.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                {hostelChangeSuccessMsg && (
+                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold animate-fade-in flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{hostelChangeSuccessMsg}</span>
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleToggleHostelChange}
+                  disabled={togglingHostelChange}
+                  className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50 ${
+                    hostelChangeEnabled
+                      ? 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700'
+                      : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20'
+                  }`}
+                >
+                  {togglingHostelChange ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : hostelChangeEnabled ? (
+                    <EyeOff className="w-3.5 h-3.5 text-zinc-400" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5 text-white" />
+                  )}
+                  <span>{hostelChangeEnabled ? 'Disable & Hide Hostel Change' : 'Enable Hostel Change'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* SECTION 1: EPSON ECOTANK L3212 HARDWARE & SUPPLIES TELEMETRY */}
           <div className="rounded-2xl p-5 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-5 shadow-2xs">
             {/* Header with real hardware identity */}

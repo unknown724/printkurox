@@ -1025,7 +1025,7 @@ export function AdobePageHandling({
                             onClick={() => {
                               const currentPt = activeItem.customFontSize || (activeItem.fontSize === 'sm' ? 12 : activeItem.fontSize === 'md' ? 18 : activeItem.fontSize === 'lg' ? 28 : 28);
                               const step = currentPt > 40 ? 5 : 2;
-                              const nextPt = Math.max(6, currentPt - step);
+                              const nextPt = Math.max(4, currentPt - step);
                               updateActiveItem({
                                 fontSize: 'custom',
                                 customFontSize: nextPt,
@@ -1040,7 +1040,7 @@ export function AdobePageHandling({
                           <div className="flex-1 flex items-center justify-center h-7 px-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700">
                             <input
                               type="number"
-                              min={6}
+                              min={4}
                               max={500}
                               value={activeItem.customFontSize || (activeItem.fontSize === 'sm' ? 12 : activeItem.fontSize === 'md' ? 18 : activeItem.fontSize === 'lg' ? 28 : 28)}
                               onChange={(e) => {

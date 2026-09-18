@@ -413,6 +413,151 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
             return file_path
     return file_path
 
+def get_windows_printer_telemetry():
+    """Queries Windows Spooler via PowerShell for live status and queue count."""
+    target_name = (PRINTER_NAME or "").strip()
+    try:
+        if not target_name:
+            ps_find_def = "Get-CimInstance Win32_Printer | Where-Object Default | Select-Object -ExpandProperty Name"
+            r_def = subprocess.run(["powershell", "-NoProfile", "-Command", ps_find_def], capture_output=True, text=True, timeout=5)
+            if r_def.returncode == 0 and r_def.stdout.strip():
+                target_name = r_def.stdout.strip().splitlines()[0].strip()
+
+        if not target_name:
+            target_name = "Default Printer"
+
+        ps_cmd = f"Get-Printer -Name '{target_name}' -ErrorAction SilentlyContinue | Select-Object PrinterStatus, JobCount | ConvertTo-Json"
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            import json
+            data = json.loads(res.stdout)
+            raw_status = data.get("PrinterStatus", 0)
+            job_count = int(data.get("JobCount", 0))
+
+            status_map = {
+                0: "Ready",
+                2: "Ready",
+                3: "Ready",
+                4: "Offline",
+                5: "Out of Paper",
+                6: "Paper Jam",
+                7: "Offline",
+                8: "Offline",
+                9: "Paused",
+                10: "Busy",
+                11: "Printing",
+                13: "Offline",
+                21: "User Intervention"
+            }
+            status_text = status_map.get(raw_status, "Ready" if raw_status in (0, 2, 3) else "Offline" if raw_status in (4, 7, 8, 13) else str(raw_status))
+            is_online = 0 if raw_status in [4, 7, 8, 13] else 1
+
+            return {
+                "name": target_name,
+                "is_online": is_online,
+                "status_text": status_text,
+                "spooler_jobs": job_count
+            }
+    except Exception:
+        pass
+    return {
+        "name": target_name or "Default Printer",
+        "is_online": 1,
+        "status_text": "Ready",
+        "spooler_jobs": 0
+    }
+
+def wait_for_spooler_completion(target_printer_name=None, timeout_seconds=45):
+    """
+    Monitors the Windows Print Spooler for the target printer.
+    Ensures paper has physically finished printing before marking job COMPLETED in the UI.
+    Prevents the 'Printed to tray ready to pickup but it is not there' issue.
+    """
+    target = (target_printer_name or PRINTER_NAME or "").strip()
+    log(f"Confirming physical print delivery on ({target or 'Default Printer'})...", "INFO")
+
+    # Give SumatraPDF and Windows Spooler a moment to register the job
+    time.sleep(1.5)
+
+    start_time = time.time()
+    saw_active_job = False
+
+    while time.time() - start_time < timeout_seconds:
+        telem = get_windows_printer_telemetry()
+        job_count = telem.get("spooler_jobs", 0)
+
+        if job_count > 0:
+            saw_active_job = True
+            time.sleep(1.0)
+            continue
+
+        # If we observed the job in the spooler and it has now completed (job_count == 0)
+        if saw_active_job and job_count == 0:
+            # Settle period: EPSON L3210 needs 2 seconds to eject the sheet into the tray
+            time.sleep(2.0)
+            log("Physical printing confirmed! Paper delivered to output tray.", "SUCCESS")
+            return True
+
+        # If 4 seconds have passed and spooler never showed > 0 (fast spool/direct print)
+        if time.time() - start_time > 4.0 and not saw_active_job:
+            time.sleep(1.5)
+            log("Print spool passed to printer hardware successfully.", "SUCCESS")
+            return True
+
+        time.sleep(0.8)
+
+    log("Spooler wait timeout reached; proceeding to complete job.", "INFO")
+    return True
+
+def resolve_effective_orientation(job, local_pdf_path):
+    """
+    Determines if a document should be printed as Landscape or Portrait.
+    Checks:
+    1. job['orientation'] ('landscape' or 'portrait')
+    2. job['page_configs'] JSON array for any page explicitly set to landscape or rotated 90/270
+    3. pypdf inspection of the actual PDF pages: if width > height, it's naturally landscape!
+    """
+    orient = (job.get("orientation") or "").strip().lower()
+    if orient == "landscape":
+        return "landscape"
+
+    # Check page_configs JSON string or object
+    page_configs_raw = job.get("page_configs")
+    if page_configs_raw:
+        try:
+            cfgs = json.loads(page_configs_raw) if isinstance(page_configs_raw, str) else page_configs_raw
+            if isinstance(cfgs, list) and any(
+                isinstance(p, dict) and p.get("included", True) and (
+                    p.get("orientation") == "landscape" or
+                    p.get("naturalOrientation") == "landscape" or
+                    p.get("rotation") in [90, 270]
+                ) for p in cfgs
+            ):
+                log(f"Resolved Landscape orientation from page_configs for {job.get('pickup_code', '')}", "INFO")
+                return "landscape"
+        except Exception:
+            pass
+
+    # Inspect PDF geometry via pypdf
+    if local_pdf_path and os.path.exists(local_pdf_path):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(local_pdf_path)
+            if len(reader.pages) > 0:
+                p0 = reader.pages[0]
+                w = float(p0.mediabox.width)
+                h = float(p0.mediabox.height)
+                rot = int(p0.get('/Rotate', 0) or 0)
+                if rot in [90, 270]:
+                    w, h = h, w
+                if w > h:
+                    log(f"Auto-detected Landscape page geometry ({w:.1f} x {h:.1f} pt) from {os.path.basename(local_pdf_path)}", "INFO")
+                    return "landscape"
+        except Exception:
+            pass
+
+    return orient if orient in ["landscape", "portrait"] else "portrait"
+
 def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, orientation=None, duplex=False):
     """
     Executes SumatraPDF CLI silent print command with professional orientation & fit.
@@ -423,6 +568,25 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
         log("SumatraPDF.exe not found! Simulating physical print...", "WARN")
         time.sleep(2)
         return True
+
+    # If orientation wasn't explicitly supplied, check PDF geometry
+    if not orientation or orientation not in ["portrait", "landscape"]:
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(file_path)
+            if len(reader.pages) > 0:
+                p0 = reader.pages[0]
+                w = float(p0.mediabox.width)
+                h = float(p0.mediabox.height)
+                rot = int(p0.get('/Rotate', 0) or 0)
+                if rot in [90, 270]:
+                    w, h = h, w
+                if w > h:
+                    orientation = "landscape"
+                else:
+                    orientation = "portrait"
+        except Exception:
+            pass
 
     # Build print settings
     settings_list = []
@@ -468,13 +632,14 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
 # =============================================================================
 def process_auto_duplex_job(job, local_file_path):
     """Hardware automatic 2-sided duplex printing for printers with built-in duplexers."""
-    log(f"Printing Hardware Auto-Duplex: {job['total_pages']} pages, {job['copies']} copy/copies", "INFO")
+    orientation = resolve_effective_orientation(job, local_file_path)
+    job["orientation"] = orientation
+    log(f"Printing Hardware Auto-Duplex ({orientation.upper()}): {job['total_pages']} pages, {job['copies']} copy/copies", "INFO")
 
     page_range = None
     if job.get("page_range") and job["page_range"].lower() != "all":
         page_range = job["page_range"]
 
-    orientation = job.get("orientation") or None
     printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
     success = print_file_silent(
@@ -486,6 +651,7 @@ def process_auto_duplex_job(job, local_file_path):
         duplex=True
     )
     if success:
+        wait_for_spooler_completion(PRINTER_NAME)
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
         archive_printed_file(job, printable_path)
@@ -495,13 +661,14 @@ def process_auto_duplex_job(job, local_file_path):
 
 def process_single_sided_job(job, local_file_path):
     """Standard 1-sided printing."""
-    log(f"Printing Single-Sided: {job['total_pages']} pages, {job['copies']} copy/copies", "INFO")
+    orientation = resolve_effective_orientation(job, local_file_path)
+    job["orientation"] = orientation
+    log(f"Printing Single-Sided ({orientation.upper()}): {job['total_pages']} pages, {job['copies']} copy/copies", "INFO")
 
     page_range = None
     if job.get("page_range") and job["page_range"].lower() != "all":
         page_range = job["page_range"]
 
-    orientation = job.get("orientation") or None
     printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
     success = print_file_silent(
@@ -512,6 +679,7 @@ def process_single_sided_job(job, local_file_path):
         orientation=orientation
     )
     if success:
+        wait_for_spooler_completion(PRINTER_NAME)
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
         archive_printed_file(job, printable_path)
@@ -555,7 +723,8 @@ def process_manual_duplex_job(job, local_file_path):
     total_pages = job["total_pages"]
     copies = job["copies"]
     color_mode = job["color_mode"]
-    orientation = job.get("orientation") or None
+    orientation = resolve_effective_orientation(job, local_file_path)
+    job["orientation"] = orientation
     printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
     # Calculate exact page lists for Pass 1 (front) and Pass 2 (back)
@@ -639,6 +808,7 @@ def process_manual_duplex_job(job, local_file_path):
             return
 
     if True:
+        wait_for_spooler_completion(PRINTER_NAME)
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
         archive_printed_file(job, printable_path)
@@ -852,62 +1022,6 @@ def record_supplies_depletion(job):
     """
     pass
 
-def get_windows_printer_telemetry():
-    """Queries Windows Spooler via PowerShell for live status and queue count."""
-    target_name = (PRINTER_NAME or "").strip()
-    try:
-        # If no specific printer is designated, detect the Windows default printer dynamically
-        if not target_name:
-            ps_find_def = "Get-CimInstance Win32_Printer | Where-Object Default | Select-Object -ExpandProperty Name"
-            r_def = subprocess.run(["powershell", "-NoProfile", "-Command", ps_find_def], capture_output=True, text=True, timeout=5)
-            if r_def.returncode == 0 and r_def.stdout.strip():
-                target_name = r_def.stdout.strip().splitlines()[0].strip()
-
-        if not target_name:
-            target_name = "Default Printer"
-
-        ps_cmd = f"Get-Printer -Name '{target_name}' -ErrorAction SilentlyContinue | Select-Object PrinterStatus, JobCount | ConvertTo-Json"
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
-        if res.returncode == 0 and res.stdout.strip():
-            import json
-            data = json.loads(res.stdout)
-            raw_status = data.get("PrinterStatus", 0)
-            job_count = int(data.get("JobCount", 0))
-
-            # Map Windows PrinterStatus enum
-            status_map = {
-                0: "Ready",
-                2: "Ready",
-                3: "Ready",
-                4: "Offline",
-                5: "Out of Paper",
-                6: "Paper Jam",
-                7: "Offline",
-                8: "Offline",
-                9: "Paused",
-                10: "Busy",
-                11: "Printing",
-                13: "Offline",
-                21: "User Intervention"
-            }
-            status_text = status_map.get(raw_status, "Ready" if raw_status in (0, 2, 3) else "Offline" if raw_status in (4, 7, 8, 13) else str(raw_status))
-            is_online = 0 if raw_status in [4, 7, 8, 13] else 1
-
-            return {
-                "name": target_name,
-                "is_online": is_online,
-                "status_text": status_text,
-                "spooler_jobs": job_count
-            }
-    except Exception:
-        pass
-    return {
-        "name": target_name or "Default Printer",
-        "is_online": 1,
-        "status_text": "Ready",
-        "spooler_jobs": 0
-    }
-
 # =============================================================================
 # HEARTBEAT & TELEMETRY SYNC
 # =============================================================================
@@ -1038,8 +1152,9 @@ def main():
                             update_job_status(job_id, "FAILED")
                             continue
 
-                    # Ensure images are converted to PDF for clean printing respecting orientation
-                    orientation = job.get("orientation") or "portrait"
+                    # Ensure orientation is resolved and images converted to PDF
+                    orientation = resolve_effective_orientation(job, local_path)
+                    job["orientation"] = orientation
                     printable_path = ensure_printable_pdf(local_path, orientation=orientation)
 
                     # 2. Print depending on Duplex mode

@@ -21,14 +21,14 @@ export async function POST(req: NextRequest) {
     let params: (string | number)[];
 
     if (isMain) {
-      sql = `SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at
+      sql = `SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at, orientation, page_configs
              FROM print_jobs
              WHERE status = 'PAID' AND (station_id = 'main' OR station_id = 'block_b' OR station_id IS NULL)
              ORDER BY created_at ASC
              LIMIT 5`;
       params = [];
     } else {
-      sql = `SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at
+      sql = `SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at, orientation, page_configs
              FROM print_jobs
              WHERE status = 'PAID' AND station_id = ?
              ORDER BY created_at ASC

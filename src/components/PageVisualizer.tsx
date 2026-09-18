@@ -190,7 +190,7 @@ export function PageVisualizer({
   pageConfigs,
   onChange,
   orientation = 'auto',
-  onOrientationChange: _onOrientationChange,
+  onOrientationChange,
   enhanceMode = 'none',
   fitMode = 'fill',
   scaling = 'fit',
@@ -675,6 +675,18 @@ export function PageVisualizer({
     () => sheetChunks[currentSheetIndex] || [],
     [sheetChunks, currentSheetIndex]
   );
+
+  // Auto-sync selectedPageNum to the active sheet's primary page when sheet changes
+  useEffect(() => {
+    if (activeSheetItems.length > 0) {
+      const isSelectedOnCurrentSheet = activeSheetItems.some(
+        (item) => item && item.pageNumber === selectedPageNum
+      );
+      if (!isSelectedOnCurrentSheet && activeSheetItems[0]) {
+        setSelectedPageNum(activeSheetItems[0].pageNumber);
+      }
+    }
+  }, [currentSheetIndex, activeSheetItems, selectedPageNum]);
   const getPageEffectiveOrientation = (cfg?: PageConfig | null): 'portrait' | 'landscape' => {
     if (!cfg) return 'portrait';
     const detected = naturalOrientations[cfg.pageNumber];
@@ -848,16 +860,23 @@ export function PageVisualizer({
       {viewMode === 'pager' ? (
         <div className="space-y-1.5">
           {/* Dimension Header (Matching Adobe Acrobat) */}
-          <div className="text-center text-[11px] font-mono font-medium text-zinc-500 dark:text-zinc-400 select-none">
-            {layoutMode === 'booklet'
-              ? `11.69 x 8.27 Inches • A4 · Booklet Spread (2-Up Folded)`
-              : layoutMode === 'poster'
-              ? `${gridConfig.dimensionText} • A4 · Poster (Tiled Grid)`
-              : pagesPerSheet === 1 && !isCustomLayout
-              ? `${currentDimensionText} • A4 · 1-Up`
-              : isCustomLayout
-              ? `${gridConfig.dimensionText} • A4 · Custom (${gridConfig.cols}x${gridConfig.rows})`
-              : `${gridConfig.dimensionText} • A4 · ${pagesPerSheet}-Up`}
+          <div className="flex items-center justify-center gap-2 text-[11px] font-mono font-medium text-zinc-500 dark:text-zinc-400 select-none">
+            {pagesPerSheet === 1 && !isCustomLayout && isSheetLandscape !== (currentEffectiveOrient === 'landscape') && (
+              <span className="px-1.5 py-0.5 rounded-md bg-zinc-200/90 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 font-bold text-[10px]">
+                Scale: {scaling === 'actual' ? '100%' : '69%'}
+              </span>
+            )}
+            <span>
+              {layoutMode === 'booklet'
+                ? `11.69 x 8.27 Inches • A4 · Booklet Spread (2-Up Folded)`
+                : layoutMode === 'poster'
+                ? `${gridConfig.dimensionText} • A4 · Poster (Tiled Grid)`
+                : pagesPerSheet === 1 && !isCustomLayout
+                ? `${currentDimensionText} • A4 · 1-Up`
+                : isCustomLayout
+                ? `${gridConfig.dimensionText} • A4 · Custom (${gridConfig.cols}x${gridConfig.rows})`
+                : `${gridConfig.dimensionText} • A4 · ${pagesPerSheet}-Up`}
+            </span>
           </div>
 
           {/* Physical Sheet Canvas Container */}
@@ -895,14 +914,22 @@ export function PageVisualizer({
                           const isDraggingThis = draggingItemId === item.id;
 
                           const getOverlayFontSize = (baseDefault: number) => {
+                            let pt: number;
                             if (item.fontSize === 'custom' || item.customFontSize) {
-                              const pt = item.customFontSize || 28;
-                              return `${Math.max(8, Math.min(84, Math.round(pt * 0.35)))}px`;
+                              pt = item.customFontSize || 28;
+                            } else if (item.fontSize === 'xl') {
+                              pt = item.position === 'watermark' ? 52 : Math.round(baseDefault * 1.8);
+                            } else if (item.fontSize === 'lg') {
+                              pt = item.position === 'watermark' ? 42 : Math.round(baseDefault * 1.4);
+                            } else if (item.fontSize === 'md') {
+                              pt = item.position === 'watermark' ? 32 : Math.round(baseDefault * 1.0);
+                            } else {
+                              pt = item.position === 'watermark' ? 24 : Math.round(baseDefault * 0.75);
                             }
-                            if (item.fontSize === 'xl') return `${baseDefault * 1.45}px`;
-                            if (item.fontSize === 'lg') return `${baseDefault * 1.2}px`;
-                            if (item.fontSize === 'md') return `${baseDefault}px`;
-                            return `${baseDefault * 0.85}px`;
+                            // Proportional scaling for preview sheet (1pt ~ 0.65px).
+                            // Allows 4pt, 6pt, 8pt to visibly shrink down cleanly without clamping at 8px.
+                            const px = Math.max(2.5, Math.min(160, +(pt * 0.65).toFixed(1)));
+                            return `${px}px`;
                           };
 
                           const fontClass =
@@ -1423,18 +1450,24 @@ export function PageVisualizer({
                     const thumb = thumbnails[cfg.pageNumber];
                     const isExcluded = !cfg.included;
 
+                    // Dynamic Cell & Document Orientation Detection:
+                    const cellW = (isSheetLandscape ? 297 : 210) / Math.max(1, gridConfig.cols);
+                    const cellH = (isSheetLandscape ? 210 : 297) / Math.max(1, gridConfig.rows);
+                    const isSlotLandscape = cellW > cellH;
+
+                    const naturalIsLandscape = (cfg.naturalOrientation || naturalOrientations[cfg.pageNumber]) === 'landscape';
+                    const docIsLandscape = naturalOrientations[cfg.pageNumber] ? naturalIsLandscape : (cfg.orientation === 'landscape');
+
                     // Auto-rotate logic:
-                    // Never rotate upright documents sideways into an unreadable orientation.
-                    // Only apply 90° auto-rotation in 2-up mode on a portrait sheet (stacked) if needed.
-                    // In 4-up, 6-up, 8-up, 9-up, etc., documents always preserve their natural upright reading orientation.
-                    const isMultiple = pagesPerSheet > 1;
+                    // Only auto-rotate in multi-up layouts (N-Up > 1, e.g. 2-up, 4-up) to pack pages efficiently.
+                    // In 1-Up ("Size") mode, sheet orientation should never rotate the document sideways (matches Adobe Acrobat).
+                    const isMultiUp = (gridConfig.cols * gridConfig.rows) > 1;
+                    const effectiveAutoRotate = autoRotate ?? true;
                     const autoRot90 =
-                      autoRotate &&
-                      isMultiple &&
-                      pagesPerSheet === 2 &&
-                      !gridConfig.isLandscapeSheet &&
+                      effectiveAutoRotate &&
+                      isMultiUp &&
                       (!cfg.rotation || cfg.rotation === 0) &&
-                      cfg.orientation !== 'landscape'
+                      isSlotLandscape !== docIsLandscape
                         ? 90
                         : 0;
 
@@ -1460,8 +1493,20 @@ export function PageVisualizer({
                       return 0.92;
                     };
                     const scaleValue = getScaleFactor();
-                    // When rotated 90 deg inside a slot, adjust scale slightly so rotated image fits comfortably without edge clipping
-                    const rotFitScale = isRotated90 ? 0.72 : 1.0;
+
+                    // When rotated 90 deg inside a slot, dynamically calculate the exact scale needed
+                    // to fit the transposed aspect ratio cleanly into the cell without clipping or letterboxing
+                    let rotFitScale = 1.0;
+                    if (isRotated90) {
+                      const slotRatio = cellW / cellH;
+                      const imgRatio = docIsLandscape ? (297 / 210) : (210 / 297);
+                      const unrotW = imgRatio < slotRatio ? cellH * imgRatio : cellW;
+                      const unrotH = imgRatio < slotRatio ? cellH : cellW / imgRatio;
+                      rotFitScale = Math.min(cellW / unrotH, cellH / unrotW);
+                      if (!Number.isFinite(rotFitScale) || rotFitScale <= 0) {
+                        rotFitScale = 1.0;
+                      }
+                    }
                     const finalScale = scaleValue * rotFitScale;
 
                     return (
@@ -1472,11 +1517,11 @@ export function PageVisualizer({
                         className={`relative w-full h-full rounded-[2px] overflow-hidden flex items-center justify-center cursor-pointer group transition-all select-none bg-white ${
                           isSelected
                             ? 'ring-2 ring-blue-600 ring-offset-1 ring-offset-white shadow-sm z-10'
-                            : ''
+                            : 'border border-zinc-300 dark:border-zinc-600 hover:border-blue-400 shadow-[0_1px_3px_rgba(0,0,0,0.06)]'
                         } ${
                           drawBorder
                             ? 'border border-dashed border-zinc-400'
-                            : 'border border-zinc-200/60 hover:border-zinc-300'
+                            : ''
                         } ${isExcluded ? 'opacity-30 grayscale' : ''}`}
                       >
                         {/* Page Number & Copies Badge */}
@@ -1557,7 +1602,7 @@ export function PageVisualizer({
                                 style={{
                                   filter: getLiveFilter(cfg.colorMode, enhanceMode),
                                 }}
-                                className={`max-w-full max-h-full transition-all duration-150 rounded-[1px] shadow-2xs ${
+                                className={`max-w-full max-h-full transition-all duration-150 rounded-[1px] shadow-[0_1px_4px_rgba(0,0,0,0.14)] border border-zinc-200/90 dark:border-zinc-700/80 ${
                                   fitMode === 'fill' ? 'object-contain scale-[1.02]' : 'object-contain scale-[0.98]'
                                 }`}
                               />
@@ -1688,6 +1733,12 @@ export function PageVisualizer({
                               : p
                           );
                           onChange(updated);
+                          const stillHasLandscape = updated.some(
+                            (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
+                          );
+                          if (!stillHasLandscape) {
+                            onOrientationChange?.('portrait');
+                          }
                         }}
                         className={`h-5.5 px-2 rounded-md flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer ${
                           currentEffectiveOrient === 'portrait'
@@ -1709,6 +1760,7 @@ export function PageVisualizer({
                               : p
                           );
                           onChange(updated);
+                          onOrientationChange?.('landscape');
                         }}
                         className={`h-5.5 px-2 rounded-md flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer ${
                           currentEffectiveOrient === 'landscape'
