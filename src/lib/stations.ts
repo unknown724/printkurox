@@ -24,6 +24,8 @@ export interface StationConfig {
   status: StationOperationalStatus;
   isPublicCampus: boolean; // Set false to hide external partner kiosks like Romen from main campus web app
   slot: number;
+  razorpayAccountId?: string; // Razorpay Route sub-merchant account id (e.g. 'acc_xxxxxxxxxxxxxx')
+  commissionPercent?: number; // Platform fee percentage (default 10%)
 }
 
 export const DEFAULT_STATION_ID = 'block_b';

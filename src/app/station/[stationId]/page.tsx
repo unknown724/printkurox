@@ -28,6 +28,9 @@ import {
   Building2,
   ShieldCheck,
   ChevronRight,
+  IndianRupee,
+  Settings,
+  Save,
 } from 'lucide-react';
 import { BorderBeam } from '@/components/ui/BorderBeam';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
@@ -80,6 +83,19 @@ export default function StationOperatorPortal() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [clearHistoryLoading, setClearHistoryLoading] = useState(false);
 
+  // Station Pricing & Payout State
+  const [pricingBw, setPricingBw] = useState<number>(4.0);
+  const [pricingColor, setPricingColor] = useState<number>(7.0);
+  const [pricingBwBulk, setPricingBwBulk] = useState<number>(3.0);
+  const [pricingColorBulk, setPricingColorBulk] = useState<number>(5.5);
+  const [razorpayAccountId, setRazorpayAccountId] = useState<string>('');
+  const [commissionPercent, setCommissionPercent] = useState<number>(10);
+  const [pricingLoading, setPricingLoading] = useState<boolean>(false);
+  const [pricingSaving, setPricingSaving] = useState<boolean>(false);
+  const [pricingSuccess, setPricingSuccess] = useState<string | null>(null);
+  const [pricingError, setPricingError] = useState<string | null>(null);
+  const [showPricingCard, setShowPricingCard] = useState<boolean>(true);
+
   // Check auth session
   const checkAuth = useCallback(async () => {
     try {
@@ -91,6 +107,30 @@ export default function StationOperatorPortal() {
       setIsAuthenticated(false);
     }
   }, [station.id]);
+
+  const fetchPricing = useCallback(async () => {
+    setPricingLoading(true);
+    try {
+      const res = await fetch(`/api/station-pricing?station_id=${encodeURIComponent(station.id)}`);
+      const data = await res.json();
+      if (data.success && data.config) {
+        setPricingBw(Number(data.config.bwSingle) || 4.0);
+        setPricingColor(Number(data.config.colorSingle) || 7.0);
+        setPricingBwBulk(Number(data.config.bwBulk) || 3.0);
+        setPricingColorBulk(Number(data.config.colorBulk) || 5.5);
+        setRazorpayAccountId(data.config.razorpayAccountId || '');
+        setCommissionPercent(Number(data.config.commissionPercent) ?? 10);
+      }
+    } catch (err) {
+      console.warn('Failed fetching station pricing:', err);
+    } finally {
+      setPricingLoading(false);
+    }
+  }, [station.id]);
+
+  useEffect(() => {
+    fetchPricing();
+  }, [fetchPricing]);
 
   useEffect(() => {
     checkAuth();
@@ -216,6 +256,39 @@ export default function StationOperatorPortal() {
       console.error('Clear history error:', err);
     } finally {
       setClearHistoryLoading(false);
+    }
+  };
+
+  const handleSavePricing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPricingSaving(true);
+    setPricingSuccess(null);
+    setPricingError(null);
+    try {
+      const res = await fetch('/api/station-pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          station_id: station.id,
+          bwSingle: Number(pricingBw),
+          colorSingle: Number(pricingColor),
+          bwBulk: Number(pricingBwBulk),
+          colorBulk: Number(pricingColorBulk),
+          pin: pin || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update rates');
+      }
+      setPricingSuccess(`Updated rates for ${station.shortName}!`);
+      await fetchPricing();
+      setTimeout(() => setPricingSuccess(null), 3500);
+    } catch (err: unknown) {
+      setPricingError(err instanceof Error ? err.message : 'Failed to update rates');
+      setTimeout(() => setPricingError(null), 5000);
+    } finally {
+      setPricingSaving(false);
     }
   };
 
@@ -462,6 +535,174 @@ export default function StationOperatorPortal() {
               <p className="text-sm font-bold text-slate-200 truncate">{station.operatorName}</p>
             </div>
           </div>
+        </div>
+
+        {/* STATION PRICING & REVENUE SPLIT SETTINGS */}
+        <div className="rounded-2xl p-5 border border-slate-800 bg-slate-900/60 backdrop-blur-xs space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center">
+                <IndianRupee className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white tracking-tight">Hostel Print Rates & Revenue Split</h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    Live Dynamic Rates
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Set prices for {station.shortName}. Changes apply instantly to students selecting this hostel.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-center">
+              {razorpayAccountId ? (
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Auto-Split: {100 - commissionPercent}% Bank Direct ({razorpayAccountId.slice(0, 10)}...)
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/25 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Direct Payout: Pending Admin Linking
+                </span>
+              )}
+            </div>
+          </div>
+
+          {pricingSuccess && (
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs flex items-center gap-2 animate-fade-in">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{pricingSuccess}</span>
+            </div>
+          )}
+
+          {pricingError && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-400 text-xs flex items-center gap-2 animate-fade-in">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{pricingError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSavePricing} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* B&W Single */}
+              <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-200 border border-slate-400" />
+                    B&W Single Page
+                  </label>
+                  <span className="text-xs font-mono font-bold text-indigo-400">₹{pricingBw.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-bold">₹</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="2.0"
+                    max="10.0"
+                    value={pricingBw}
+                    onChange={(e) => setPricingBw(parseFloat(e.target.value) || 2.0)}
+                    required
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">Standard: ₹4.00 (Guardrail: ₹2–₹10)</p>
+              </div>
+
+              {/* Color Single */}
+              <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+                    Color Single Page
+                  </label>
+                  <span className="text-xs font-mono font-bold text-pink-400">₹{pricingColor.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-bold">₹</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="4.0"
+                    max="20.0"
+                    value={pricingColor}
+                    onChange={(e) => setPricingColor(parseFloat(e.target.value) || 4.0)}
+                    required
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">Standard: ₹7.00 (Guardrail: ₹4–₹20)</p>
+              </div>
+
+              {/* B&W Bulk */}
+              <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                    B&amp;W Bulk (10+ pgs)
+                  </label>
+                  <span className="text-xs font-mono font-bold text-indigo-400">₹{pricingBwBulk.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-bold">₹</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1.5"
+                    max="8.0"
+                    value={pricingBwBulk}
+                    onChange={(e) => setPricingBwBulk(parseFloat(e.target.value) || 2.0)}
+                    required
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">Standard: ₹3.00 (Guardrail: ₹1.50–₹8.00)</p>
+              </div>
+
+              {/* Color Bulk */}
+              <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-pink-400" />
+                    Color Bulk (10+ pgs)
+                  </label>
+                  <span className="text-xs font-mono font-bold text-pink-300">₹{pricingColorBulk.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-bold">₹</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="3.0"
+                    max="15.0"
+                    value={pricingColorBulk}
+                    onChange={(e) => setPricingColorBulk(parseFloat(e.target.value) || 3.0)}
+                    required
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">Standard: ₹5.50 (Guardrail: ₹3.00–₹15.00)</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-[11px] text-slate-500">
+                Bulk discounts (Assignment Saver & Mega Saver) scale automatically based on these base rates.
+              </span>
+              <button
+                type="submit"
+                disabled={pricingSaving}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition-all shadow-md shadow-indigo-600/20 disabled:opacity-50 cursor-pointer"
+              >
+                {pricingSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                <span>Save Station Rates</span>
+              </button>
+            </div>
+          </form>
         </div>
 
         {/* Filter and Search Bar */}

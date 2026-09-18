@@ -34,9 +34,14 @@ import {
   CheckCircle2,
   Printer,
   Building2,
+  Save,
+  ExternalLink,
+  Sliders,
 } from 'lucide-react';
 import { getClientDetailedDevice } from '@/lib/device-detection';
 import { broadcastHostelChangeSetting } from '@/lib/useHostelChangeSetting';
+import { STATIONS } from '@/lib/stations';
+import { StationPricingConfig, PRICING_GUARDRAILS } from '@/lib/station-pricing';
 
 interface AdminDevice {
   device_id: string;
@@ -193,6 +198,15 @@ export default function AdminKuroxPage() {
   const [hostelChangeEnabled, setHostelChangeEnabled] = useState<boolean>(false);
   const [togglingHostelChange, setTogglingHostelChange] = useState<boolean>(false);
   const [hostelChangeSuccessMsg, setHostelChangeSuccessMsg] = useState<string | null>(null);
+
+  // Campus Hostel Stations Dynamic Pricing State
+  const [stationsPricing, setStationsPricing] = useState<Record<string, StationPricingConfig>>({});
+  const [loadingPricing, setLoadingPricing] = useState<boolean>(false);
+  const [editingStationId, setEditingStationId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Partial<StationPricingConfig>>({});
+  const [savingStationPricing, setSavingStationPricing] = useState<boolean>(false);
+  const [stationPricingSuccess, setStationPricingSuccess] = useState<string | null>(null);
+  const [stationPricingError, setStationPricingError] = useState<string | null>(null);
 
   // Hardware Calibration Inputs
   const [calibTotal, setCalibTotal] = useState<number>(24741);
@@ -363,6 +377,53 @@ export default function AdminKuroxPage() {
     }
   };
 
+  const fetchStationsPricing = useCallback(async () => {
+    try {
+      setLoadingPricing(true);
+      const res = await fetch('/api/station-pricing');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.stations) {
+          setStationsPricing(data.stations);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch stations pricing:', err);
+    } finally {
+      setLoadingPricing(false);
+    }
+  }, []);
+
+  const handleSaveStationPricing = async (stationId: string) => {
+    setSavingStationPricing(true);
+    setStationPricingSuccess(null);
+    setStationPricingError(null);
+    try {
+      const res = await fetch('/api/station-pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          station_id: stationId,
+          ...editForm,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save station rates');
+      }
+      setStationPricingSuccess(`Saved rates & route settings for ${stationId.toUpperCase()}!`);
+      setEditingStationId(null);
+      setEditForm({});
+      await fetchStationsPricing();
+      setTimeout(() => setStationPricingSuccess(null), 3500);
+    } catch (err: unknown) {
+      setStationPricingError(err instanceof Error ? err.message : 'Failed to save');
+      setTimeout(() => setStationPricingError(null), 5000);
+    } finally {
+      setSavingStationPricing(false);
+    }
+  };
+
   const checkAuthAndLoad = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/auth?action=devices');
@@ -375,6 +436,7 @@ export default function AdminKuroxPage() {
         fetchRecentJobs();
         fetchStats('all');
         fetchSettings();
+        fetchStationsPricing();
       } else {
         setIsAdmin(false);
       }
@@ -383,7 +445,7 @@ export default function AdminKuroxPage() {
     } finally {
       setLoading(false);
     }
-  }, [fetchRecentJobs, fetchStats, fetchSettings]);
+  }, [fetchRecentJobs, fetchStats, fetchSettings, fetchStationsPricing]);
 
   useEffect(() => {
     let active = true;
@@ -404,6 +466,7 @@ export default function AdminKuroxPage() {
           fetchRecentJobs();
           fetchStats('all');
           fetchSettings();
+          fetchStationsPricing();
         } else {
           setIsAdmin(false);
         }
@@ -419,7 +482,7 @@ export default function AdminKuroxPage() {
     return () => {
       active = false;
     };
-  }, [fetchRecentJobs, fetchStats, fetchSettings]);
+  }, [fetchRecentJobs, fetchStats, fetchSettings, fetchStationsPricing]);
 
   const handlePeriodChange = (newPeriod: 'all' | 'today' | 'week' | 'month' | 'year') => {
     setPeriod(newPeriod);
@@ -771,6 +834,326 @@ export default function AdminKuroxPage() {
                   <span>{hostelChangeEnabled ? 'Disable & Hide Hostel Change' : 'Enable Hostel Change'}</span>
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* CAMPUS HOSTEL STATIONS, PRICING & RAZORPAY ROUTE SPLIT CONSOLE */}
+          <div className="rounded-2xl p-5 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-5 shadow-2xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-100 dark:border-[#282a2c]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
+                      Campus Hostel Stations & Razorpay Route Splits
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                      Multi-Station Marketplace
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    Customize print rates per hostel and link Razorpay Sub-Merchant IDs (<code>acc_...</code>) for automated 90/10 bank revenue splits.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href="https://dashboard.razorpay.com/app/partners/client-onboarding"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-[#131314] hover:bg-zinc-200 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-[#282a2c] text-zinc-700 dark:text-zinc-300 text-[11px] font-bold flex items-center gap-1.5 transition-colors"
+                  title="Open Razorpay Partner Dashboard to invite co-hostellers and view their Account IDs"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Razorpay Onboarding</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={fetchStationsPricing}
+                  disabled={loadingPricing}
+                  className="p-1.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-100 dark:hover:bg-[#131314] text-zinc-600 dark:text-zinc-300 transition-colors cursor-pointer"
+                  title="Refresh Station Pricing"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${loadingPricing ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            </div>
+
+            {stationPricingSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2 animate-fade-in">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{stationPricingSuccess}</span>
+              </div>
+            )}
+
+            {stationPricingError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2 animate-fade-in">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{stationPricingError}</span>
+              </div>
+            )}
+
+            {/* Stations Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(() => {
+                const uniqueStations = Object.values(STATIONS).filter(
+                  (s, idx, arr) => arr.findIndex((x) => x.id === s.id) === idx
+                );
+
+                return uniqueStations.map((station) => {
+                  const pricing = stationsPricing[station.id] || {
+                    bwSingle: 4.0,
+                    colorSingle: 7.0,
+                    bwBulk: 3.0,
+                    colorBulk: 5.5,
+                    commissionPercent: 10,
+                    razorpayAccountId: station.razorpayAccountId || '',
+                  };
+
+                  const isEditing = editingStationId === station.id;
+                  const isSaving = savingStationPricing && editingStationId === station.id;
+
+                  return (
+                    <div
+                      key={station.id}
+                      className={`p-4 rounded-xl border transition-all space-y-3.5 ${
+                        isEditing
+                          ? 'border-blue-500/50 bg-blue-500/[0.02] dark:bg-[#131314]'
+                          : 'border-zinc-200 dark:border-[#282a2c] bg-zinc-50/40 dark:bg-[#131314]/50'
+                      }`}
+                    >
+                      {/* Station Header */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-zinc-900 dark:text-white">
+                              {station.name}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                station.status === 'active'
+                                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                                  : station.status === 'standby'
+                                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+                                  : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                              }`}
+                            >
+                              {station.status}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-zinc-400 mt-0.5">{station.tagline}</p>
+                        </div>
+
+                        {!isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingStationId(station.id);
+                              setEditForm({
+                                bwSingle: pricing.bwSingle,
+                                colorSingle: pricing.colorSingle,
+                                bwBulk: pricing.bwBulk ?? 3.0,
+                                colorBulk: pricing.colorBulk ?? 5.5,
+                                razorpayAccountId: pricing.razorpayAccountId || '',
+                                commissionPercent: pricing.commissionPercent ?? 10,
+                              });
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-[10px] font-bold transition-all cursor-pointer"
+                          >
+                            Edit Station
+                          </button>
+                        )}
+                      </div>
+
+                      {!isEditing ? (
+                        /* Readonly Overview */
+                        <div className="space-y-2.5">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div className="p-2 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-800">
+                              <span className="text-[9px] text-zinc-400 uppercase font-bold block">B&W Single</span>
+                              <span className="text-xs font-mono font-bold text-zinc-900 dark:text-white">
+                                ₹{pricing.bwSingle?.toFixed(2) || '4.00'}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-800">
+                              <span className="text-[9px] text-zinc-400 uppercase font-bold block">Color Single</span>
+                              <span className="text-xs font-mono font-bold text-pink-600 dark:text-pink-400">
+                                ₹{pricing.colorSingle?.toFixed(2) || '7.00'}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-800">
+                              <span className="text-[9px] text-zinc-400 uppercase font-bold block">B&W Bulk (10+)</span>
+                              <span className="text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                ₹{(pricing.bwBulk ?? 3.0).toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-800">
+                              <span className="text-[9px] text-zinc-400 uppercase font-bold block">Color Bulk (10+)</span>
+                              <span className="text-xs font-mono font-bold text-purple-600 dark:text-purple-400">
+                                ₹{(pricing.colorBulk ?? 5.5).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Route Account Status */}
+                          <div className="p-2 rounded-lg bg-zinc-100/50 dark:bg-[#1e1f20] border border-zinc-200/50 dark:border-zinc-800 flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-500 font-medium">Razorpay Route Split:</span>
+                            {pricing.razorpayAccountId ? (
+                              <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                {100 - (pricing.commissionPercent ?? 10)}% Host ({pricing.razorpayAccountId})
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400 italic">No sub-merchant (100% Platform)</span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        /* Edit Form */
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveStationPricing(station.id);
+                          }}
+                          className="space-y-3 pt-1"
+                        >
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">B&W Single (₹)</label>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min={PRICING_GUARDRAILS.bwSingle.min}
+                                max={PRICING_GUARDRAILS.bwSingle.max}
+                                value={editForm.bwSingle ?? 4.0}
+                                onChange={(e) =>
+                                  setEditForm((prev) => ({ ...prev, bwSingle: parseFloat(e.target.value) || 2.0 }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
+                                required
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">Color Single (₹)</label>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min={PRICING_GUARDRAILS.colorSingle.min}
+                                max={PRICING_GUARDRAILS.colorSingle.max}
+                                value={editForm.colorSingle ?? 7.0}
+                                onChange={(e) =>
+                                  setEditForm((prev) => ({ ...prev, colorSingle: parseFloat(e.target.value) || 4.0 }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
+                                required
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">B&W Bulk 10+ (₹)</label>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min={PRICING_GUARDRAILS.bwBulk.min}
+                                max={PRICING_GUARDRAILS.bwBulk.max}
+                                value={editForm.bwBulk ?? 3.0}
+                                onChange={(e) =>
+                                  setEditForm((prev) => ({ ...prev, bwBulk: parseFloat(e.target.value) || 2.0 }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
+                                required
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">Color Bulk 10+ (₹)</label>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min={PRICING_GUARDRAILS.colorBulk.min}
+                                max={PRICING_GUARDRAILS.colorBulk.max}
+                                value={editForm.colorBulk ?? 5.5}
+                                onChange={(e) =>
+                                  setEditForm((prev) => ({ ...prev, colorBulk: parseFloat(e.target.value) || 3.0 }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
+                                required
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">
+                                Razorpay Sub-Merchant Account ID
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="acc_xxxxxxxxxxxxxx"
+                                value={editForm.razorpayAccountId ?? ''}
+                                onChange={(e) =>
+                                  setEditForm((prev) => ({ ...prev, razorpayAccountId: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono text-zinc-900 dark:text-white placeholder-zinc-400"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">
+                                Platform Commission (%)
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={50}
+                                  value={editForm.commissionPercent ?? 10}
+                                  onChange={(e) =>
+                                    setEditForm((prev) => ({
+                                      ...prev,
+                                      commissionPercent: parseInt(e.target.value) || 0,
+                                    }))
+                                  }
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
+                                />
+                                <span className="text-[10px] text-zinc-400 font-mono whitespace-nowrap">
+                                  {100 - (editForm.commissionPercent ?? 10)}% to Host
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingStationId(null);
+                                setEditForm({});
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={isSaving}
+                              className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            >
+                              {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                              <span>Save Station Rates</span>
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
 

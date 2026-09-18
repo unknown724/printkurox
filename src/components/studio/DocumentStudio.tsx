@@ -7,21 +7,18 @@ import { PrintSettings, PrintSettingsState } from '@/components/PrintSettings';
 import { CostSummary } from '@/components/CostSummary';
 import { PageVisualizer } from '@/components/PageVisualizer';
 import { AdvancedSettings, AdvancedPrintOptions } from '@/components/AdvancedSettings';
-import { PricingResult, PageConfig, TIER_RATES } from '@/lib/pricing';
+import { PricingResult, PageConfig, TIER_RATES, CustomTierRates } from '@/lib/pricing';
 import {
   HelpCircle,
   ArrowRight,
   ArrowLeft,
-  ArrowDown,
   FileText,
   Layers,
   Minimize2,
   X,
   Building2,
   MapPin,
-  ChevronDown,
   Sparkles,
-  Lock,
 } from 'lucide-react';
 import { PhotoLayoutSettings } from './PhotoLayoutSelector';
 import { AdobePageHandling, AdobePagesToPrint } from './AdobePageSizing';
@@ -51,6 +48,7 @@ interface DocumentStudioProps {
   onRangeChange: (type: 'all' | 'custom', rangeStr: string) => void;
   stationId?: string;
   onStationSelect?: (stationId: string) => void;
+  stationTierRates?: CustomTierRates;
 }
 
 export function DocumentStudio({
@@ -74,6 +72,7 @@ export function DocumentStudio({
   onRangeChange,
   stationId,
   onStationSelect,
+  stationTierRates,
 }: DocumentStudioProps) {
   const [currentStep, setCurrentStep] = useState<StudioStep>(1);
   const [showRatesModal, setShowRatesModal] = useState(false);
@@ -82,6 +81,10 @@ export function DocumentStudio({
 
   const { hostelChangeEnabled } = useHostelChangeSetting();
   const currentStation = getStationConfig(stationId || 'block_b');
+
+  const activeTiers = stationTierRates || TIER_RATES;
+  const currentBwSingle = activeTiers.standard.bw.single;
+  const currentColorSingle = activeTiers.standard.color.single;
 
   // Close Rate Card modal on Escape key press
   useEffect(() => {
@@ -152,22 +155,6 @@ export function DocumentStudio({
             </button>
           </div>
 
-          {/* High-Impact Upfront Campus Pricing Banner - Clean Neutral Glass with Emerald Price */}
-          <div className="px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl border border-zinc-200/80 dark:border-white/10 bg-zinc-50/70 dark:bg-white/[0.03] backdrop-blur-md flex items-center gap-2 shadow-xs">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="font-bold text-zinc-900 dark:text-white whitespace-nowrap">
-                Website Offer Price:
-              </span>
-              <span className="font-semibold text-zinc-800 dark:text-zinc-200 bg-zinc-200/80 dark:bg-white/10 px-2.5 py-0.5 rounded-md border border-zinc-300 dark:border-white/15 whitespace-nowrap">
-                ₹3 B&amp;W
-              </span>
-              <span className="font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20 whitespace-nowrap">
-                ₹5 Color
-              </span>
-            </div>
-          </div>
-
           {/* Target Hostel Print Station Card - Prominent, Generous & Highly Legible */}
           <div className="p-3.5 sm:p-4 rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-zinc-50/80 dark:bg-white/[0.03] backdrop-blur-xl flex items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
@@ -175,14 +162,28 @@ export function DocumentStudio({
                 <Building2 className="w-5 h-5 text-zinc-700 dark:text-zinc-200" />
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
+                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                   <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Hostel Station:
                   </span>
-                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/25 inline-flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Ready
-                  </span>
+                  {currentStation.status === 'active' ? (
+                    <>
+                      <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/25 inline-flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Ready
+                      </span>
+                      {/* Compact Live Station Rate Pill */}
+                      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-zinc-200/70 dark:bg-white/10 text-zinc-800 dark:text-zinc-200 border border-zinc-300/80 dark:border-white/15 inline-flex items-center gap-1.5">
+                        <span>₹{currentBwSingle} B&amp;W</span>
+                        <span className="text-zinc-400 dark:text-zinc-500">·</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold">₹{currentColorSingle} Color</span>
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-md bg-zinc-100 dark:bg-white/[0.06] text-zinc-500 dark:text-zinc-400 border border-zinc-200/80 dark:border-white/10">
+                      To be Updated
+                    </span>
+                  )}
                 </div>
                 <h3 className="text-sm sm:text-base font-bold text-zinc-900 dark:text-white leading-snug">
                   {currentStation.name}
@@ -432,7 +433,7 @@ export function DocumentStudio({
               </span>
               <span className="text-zinc-300 dark:text-zinc-600">•</span>
               <span className="text-emerald-600 dark:text-emerald-400 font-bold shrink-0">
-                ₹{pricing?.totalPrice || (bwCount * 3 + colorCount * 5) || 3}
+                ₹{pricing?.totalPrice || (bwCount * TIER_RATES.standard.bw.single + colorCount * TIER_RATES.standard.color.single) || TIER_RATES.standard.bw.single}
               </span>
             </div>
 
@@ -562,7 +563,7 @@ export function DocumentStudio({
                       Standard (1 – 9 sheets)
                     </span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold">
-                      Save 40% vs Offline
+                      Save 20–30% vs Offline
                     </span>
                   </div>
                 </div>
@@ -587,8 +588,8 @@ export function DocumentStudio({
                     <span className="font-bold text-blue-950 dark:text-blue-200 text-xs">
                       Assignment Saver (10 – 29 sheets)
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-600 text-white font-bold">
-                      ₹2.50 / pg
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-600 text-white font-bold shadow-2xs">
+                      ₹{TIER_RATES.assignment.bw.single.toFixed(2)} / pg
                     </span>
                   </div>
                 </div>
@@ -596,12 +597,12 @@ export function DocumentStudio({
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
                     <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
                     <p className="text-zinc-500">Web: <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">₹{TIER_RATES.assignment.bw.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save 50% vs shop</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save 40% vs shop</p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
                     <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.assignment.color.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹5.50/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹4.50/sheet</p>
                   </div>
                 </div>
               </div>
@@ -613,8 +614,8 @@ export function DocumentStudio({
                     <span className="font-bold text-emerald-950 dark:text-emerald-200 text-xs">
                       Mega Bulk Saver (30+ sheets)
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold">
-                      ₹2.00 / pg!
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold shadow-2xs">
+                      ₹{TIER_RATES.mega.bw.single.toFixed(2)} / pg!
                     </span>
                   </div>
                 </div>
@@ -622,12 +623,12 @@ export function DocumentStudio({
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
                     <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
                     <p className="text-zinc-500">Web: <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">₹{TIER_RATES.mega.bw.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save 60% vs shop</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save 50% vs shop</p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
                     <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.mega.color.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹6.00/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹5.50/sheet</p>
                   </div>
                 </div>
               </div>
@@ -670,7 +671,7 @@ export function DocumentStudio({
                   NERIST Campus Rate Schedule &amp; Volume Discounts
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl leading-relaxed">
-                  Web-exclusive student pricing: <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">₹3.00 B&amp;W</strong> and <strong className="text-pink-600 dark:text-pink-400 font-semibold">₹5.00 Color</strong> (save up to 40%–50% vs offline shop rates). Online jobs print single-sided for 100% paper-feed reliability.
+                  Web-exclusive student pricing: <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{TIER_RATES.standard.bw.single}.00 B&amp;W</strong> and <strong className="text-pink-600 dark:text-pink-400 font-semibold">₹{TIER_RATES.standard.color.single}.00 Color</strong> (save vs offline shop rates). Online jobs print single-sided for 100% paper-feed reliability.
                 </p>
               </div>
 
@@ -689,74 +690,74 @@ export function DocumentStudio({
             </div>
 
             {/* Master Pricing Table with Horizontal Scroll Protection */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 shadow-xs overflow-hidden">
-              <table className="w-full text-left border-collapse table-fixed">
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 shadow-xs overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[540px]">
                 <thead>
                   <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/80 dark:bg-zinc-950/90 text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">
-                    <th className="py-3 px-4 sm:px-5 w-[28%]">Tier &amp; Volume</th>
-                    <th className="py-3 px-3 sm:px-4 w-[20%]">B&amp;W (Web App)</th>
-                    <th className="py-3 px-3 sm:px-4 w-[20%]">Color (Web App)</th>
-                    <th className="py-3 px-3 sm:px-4 w-[18%]">Offline Market Rate</th>
-                    <th className="py-3 px-3 sm:px-4 w-[14%]">Savings</th>
+                    <th className="py-3 px-4 sm:px-5 w-[30%]">Tier &amp; Volume</th>
+                    <th className="py-3 px-3 sm:px-4 w-[20%]">B&amp;W Single</th>
+                    <th className="py-3 px-3 sm:px-4 w-[20%]">Color Single</th>
+                    <th className="py-3 px-3 sm:px-4 w-[15%]">Rate Type</th>
+                    <th className="py-3 px-3 sm:px-4 w-[15%]">Bulk Discount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800/70 text-xs sm:text-sm">
                   {/* Tier 1: Standard */}
                   <tr className="hover:bg-zinc-100/60 dark:hover:bg-zinc-800/30 transition-colors">
                     <td className="py-3 px-4 sm:px-5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-zinc-900 dark:text-white">Standard</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold">
-                          Web Special
-                        </span>
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-sm text-zinc-900 dark:text-white">Standard</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-zinc-200/70 dark:bg-white/10 text-zinc-700 dark:text-zinc-300 font-bold border border-zinc-300/80 dark:border-white/15">
+                            Base Price
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">1 – 9 sheets</div>
                       </div>
-                      <div className="text-xs text-zinc-500 dark:text-zinc-400 font-mono mt-0.5">1 – 9 sheets</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-zinc-900 dark:text-white">₹{TIER_RATES.standard.bw.single}</div>
+                      <div className="font-bold text-lg font-mono text-zinc-900 dark:text-white">₹{activeTiers.standard.bw.single.toFixed(2)}</div>
                       <div className="text-[10px] text-zinc-500">per sheet</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.standard.color.single}</div>
+                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.standard.color.single.toFixed(2)}</div>
                       <div className="text-[10px] text-zinc-500">per sheet</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="text-xs font-mono text-zinc-500">₹5 (B&amp;W) / ₹10 (Color)</div>
-                      <div className="text-[10px] text-zinc-400">Campus shops</div>
+                      <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400 font-medium">Standard</span>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                        Save 40–50%
-                      </span>
+                      <span className="text-xs text-zinc-400 font-mono">Base Rate</span>
                     </td>
                   </tr>
 
                   {/* Tier 2: Assignment Saver */}
                   <tr className="bg-sky-50/40 dark:bg-sky-950/20 hover:bg-sky-50/70 dark:hover:bg-sky-950/30 transition-colors">
                     <td className="py-3 px-4 sm:px-5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-sky-950 dark:text-sky-200">Assignment Saver</span>
-                        <span className="px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-700 dark:text-sky-300 font-mono font-bold text-[10px] border border-sky-500/40">
-                          Bulk Discount
-                        </span>
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-sm text-sky-950 dark:text-sky-200">Assignment Saver</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-700 dark:text-sky-300 font-bold border border-sky-500/40">
+                            Bulk 10+
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-sky-700 dark:text-sky-300/90 font-mono font-semibold">10 – 29 sheets</div>
                       </div>
-                      <div className="text-xs text-sky-700 dark:text-sky-300/90 font-mono font-semibold mt-0.5">10 – 29 sheets</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-sky-700 dark:text-sky-300">₹{TIER_RATES.assignment.bw.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-sky-600 dark:text-sky-400 font-mono">₹2.50 / pg</div>
+                      <div className="font-bold text-lg font-mono text-sky-700 dark:text-sky-300">₹{activeTiers.assignment.bw.single.toFixed(2)}</div>
+                      <div className="text-[10px] text-sky-600 dark:text-sky-400 font-mono">₹{activeTiers.assignment.bw.single.toFixed(2)} / pg</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.assignment.color.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-zinc-500">₹4.50 / pg</div>
+                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.assignment.color.single.toFixed(2)}</div>
+                      <div className="text-[10px] text-zinc-500">₹{activeTiers.assignment.color.single.toFixed(2)} / pg</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="text-xs font-mono text-zinc-500">₹50 – ₹145</div>
-                      <div className="text-[10px] text-zinc-400">Standard offline</div>
+                      <span className="text-xs font-mono text-sky-600 dark:text-sky-400 font-medium">Bulk Discount</span>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
                       <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                        Save 50%+
+                        Save ₹{(activeTiers.standard.bw.single - activeTiers.assignment.bw.single).toFixed(2)}/pg
                       </span>
                     </td>
                   </tr>
@@ -764,29 +765,30 @@ export function DocumentStudio({
                   {/* Tier 3: Mega Bulk Saver */}
                   <tr className="bg-emerald-50/40 dark:bg-emerald-950/20 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30 transition-colors">
                     <td className="py-3 px-4 sm:px-5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-emerald-950 dark:text-emerald-200">Mega Bulk Saver</span>
-                        <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-mono font-bold text-[10px] border border-emerald-500/40">
-                          Semester Notes
-                        </span>
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-sm text-emerald-950 dark:text-emerald-200">Mega Bulk Saver</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/40">
+                            Bulk 30+
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-emerald-700 dark:text-emerald-300/90 font-mono font-semibold">30+ sheets</div>
                       </div>
-                      <div className="text-xs text-emerald-700 dark:text-emerald-300/90 font-mono font-semibold mt-0.5">30+ sheets</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-emerald-700 dark:text-emerald-300">₹{TIER_RATES.mega.bw.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">₹2.00 / pg!</div>
+                      <div className="font-bold text-lg font-mono text-emerald-700 dark:text-emerald-300">₹{activeTiers.mega.bw.single.toFixed(2)}</div>
+                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">₹{activeTiers.mega.bw.single.toFixed(2)} / pg!</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.mega.color.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-zinc-500">₹4.00 / pg</div>
+                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.mega.color.single.toFixed(2)}</div>
+                      <div className="text-[10px] text-zinc-500">₹{activeTiers.mega.color.single.toFixed(2)} / pg</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="text-xs font-mono text-zinc-500">₹150+</div>
-                      <div className="text-[10px] text-zinc-400">Standard offline</div>
+                      <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-medium">Mega Discount</span>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
                       <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                        Save 60%
+                        Save ₹{(activeTiers.standard.bw.single - activeTiers.mega.bw.single).toFixed(2)}/pg
                       </span>
                     </td>
                   </tr>

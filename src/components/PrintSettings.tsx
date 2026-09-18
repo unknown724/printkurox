@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Minus, Plus, Palette, Copy, CheckCircle2, Info, Building2, MapPin, ChevronRight } from 'lucide-react';
-import { PageConfig } from '@/lib/pricing';
+import { PageConfig, TIER_RATES } from '@/lib/pricing';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { getStationConfig } from '@/lib/stations';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
@@ -92,9 +92,6 @@ export function PrintSettings({
               <Palette className="w-3.5 h-3.5" />
             </div>
             <span>Color Mode</span>
-            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
-              Web Discount
-            </span>
           </div>
 
           <span
@@ -107,12 +104,12 @@ export function PrintSettings({
             {settings.colorMode === 'custom'
               ? `${bwCount ?? 0} B&W + ${colorCount ?? 0} Color`
               : settings.colorMode === 'bw'
-              ? '₹3 / sheet'
-              : '₹5 / sheet'}
+              ? `₹${TIER_RATES.standard.bw.single} / sheet`
+              : `₹${TIER_RATES.standard.color.single} / sheet`}
           </span>
         </div>
 
-        {/* Highlighted Color Mode Options (₹3 B&W / ₹5 Color) */}
+        {/* Highlighted Color Mode Options */}
         <SegmentedControl
           value={settings.colorMode === 'custom' ? 'bw' : settings.colorMode}
           onChange={(val) => update({ colorMode: val as 'bw' | 'color' })}
@@ -120,7 +117,7 @@ export function PrintSettings({
             {
               value: 'bw',
               label: 'Black & White',
-              badge: '₹3/pg',
+              badge: `₹${TIER_RATES.standard.bw.single}/pg`,
               sublabel: 'Standard Notes & Labs',
               icon: <span className="w-2.5 h-2.5 rounded-full bg-zinc-300 dark:bg-zinc-400 shrink-0 shadow-2xs" />,
               activeClassName:
@@ -131,7 +128,7 @@ export function PrintSettings({
             {
               value: 'color',
               label: 'Full Color',
-              badge: '₹5/pg',
+              badge: `₹${TIER_RATES.standard.color.single}/pg`,
               sublabel: 'Diagrams & Certificates',
               icon: (
                 <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-blue-400 via-purple-400 to-pink-400 shrink-0 shadow-xs" />

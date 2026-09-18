@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { UploadedBatchData } from '@/components/FileUpload';
 import { PrintSettingsState } from '@/components/PrintSettings';
 import { AdvancedPrintOptions } from '@/components/AdvancedSettings';
-import { calculatePricing, PageConfig } from '@/lib/pricing';
+import { calculatePricing, PageConfig, CustomTierRates } from '@/lib/pricing';
 import { pagesToRangeString } from '@/lib/pdf-utils';
 import { DocumentStudio } from '@/components/studio/DocumentStudio';
 import { BorderBeam } from '@/components/ui/BorderBeam';
@@ -36,6 +36,23 @@ function HomePageContent() {
       setPreferredStation(stationParam);
     }
   }, [stationParam]);
+
+  const [stationTierRates, setStationTierRates] = useState<CustomTierRates | undefined>(undefined);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetch(`/api/station-pricing?station_id=${encodeURIComponent(station.id)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (isMounted && data.success && data.tierRates) {
+          setStationTierRates(data.tierRates);
+        }
+      })
+      .catch((err) => console.warn('Could not fetch station rates:', err));
+    return () => {
+      isMounted = false;
+    };
+  }, [station.id]);
 
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
@@ -88,6 +105,22 @@ function HomePageContent() {
       .catch(() => {});
   }, []);
 
+  const handleBatchUploaded = useCallback((data: UploadedBatchData | null) => {
+    setUploadedBatch(data);
+    if (data) {
+      const initial: PageConfig[] = Array.from({ length: data.totalPages }, (_, i) => ({
+        pageNumber: i + 1,
+        colorMode: settings.colorMode === 'color' ? 'color' : 'bw',
+        included: true,
+        orientation: orientation === 'auto' ? undefined : orientation,
+        copies: 1,
+      }));
+      setPageConfigs(initial);
+    } else {
+      setPageConfigs([]);
+    }
+  }, [settings.colorMode, orientation]);
+
   // Auto-detect and open file shared from WhatsApp / Android Web Share Target
   useEffect(() => {
     const sharedKey = searchParams.get('sharedKey');
@@ -122,23 +155,7 @@ function HomePageContent() {
 
       handleBatchUploaded(batch);
     }
-  }, [searchParams, uploadedBatch]);
-
-  const handleBatchUploaded = (data: UploadedBatchData | null) => {
-    setUploadedBatch(data);
-    if (data) {
-      const initial: PageConfig[] = Array.from({ length: data.totalPages }, (_, i) => ({
-        pageNumber: i + 1,
-        colorMode: settings.colorMode === 'color' ? 'color' : 'bw',
-        included: true,
-        orientation: orientation === 'auto' ? undefined : orientation,
-        copies: 1,
-      }));
-      setPageConfigs(initial);
-    } else {
-      setPageConfigs([]);
-    }
-  };
+  }, [searchParams, uploadedBatch, handleBatchUploaded]);
 
   const handlePageConfigsChange = (updated: PageConfig[]) => {
     setPageConfigs(updated);
@@ -183,6 +200,7 @@ function HomePageContent() {
     layoutMode: layoutSettings.layoutMode,
     customCols: layoutSettings.customCols,
     customRows: layoutSettings.customRows,
+    customRates: stationTierRates,
   });
 
   const bwCount = pageConfigs.filter((p) => p.included && p.colorMode === 'bw').length;
@@ -283,6 +301,7 @@ function HomePageContent() {
           colorCount={colorCount}
           onRangeChange={handleRangeChange}
           stationId={station.id}
+          stationTierRates={stationTierRates}
           onStationSelect={(newStationId) => {
             if (typeof window !== 'undefined') {
               localStorage.setItem('printkurox_preferred_station', newStationId);

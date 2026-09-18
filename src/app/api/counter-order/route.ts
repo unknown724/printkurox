@@ -6,6 +6,7 @@ import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange, transformPdfForPrint, getPdfPageCount } from '@/lib/pdf-utils';
 import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { getStationConfig } from '@/lib/stations';
+import { getStationPricing, buildTierRatesFromConfig } from '@/lib/station-pricing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -95,6 +96,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'At least one page must be selected' }, { status: 400 });
     }
 
+    const stationPricing = await getStationPricing(station.id);
+    const tierRates = buildTierRatesFromConfig(stationPricing);
+
     const pricing = calculatePricing({
       totalPages: activePagesCount,
       colorMode: colorMode,
@@ -104,6 +108,7 @@ export async function POST(req: NextRequest) {
       layoutMode,
       customCols,
       customRows,
+      customRates: tierRates,
     });
 
     // Generate unique pickup code (21,600 collision-resistant namespace)

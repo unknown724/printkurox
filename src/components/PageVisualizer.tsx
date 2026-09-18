@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { PageConfig } from '@/lib/pricing';
+import { PageConfig, TIER_RATES } from '@/lib/pricing';
 import {
   RotateCw,
   Loader2,
@@ -1829,7 +1829,7 @@ export function PageVisualizer({
                       }`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-                      <span>B&amp;W (₹3)</span>
+                      <span>B&amp;W (₹{TIER_RATES.standard.bw.single})</span>
                     </button>
                     <button
                       type="button"
@@ -1841,7 +1841,7 @@ export function PageVisualizer({
                       }`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-                      <span>Color (₹5)</span>
+                      <span>Color (₹{TIER_RATES.standard.color.single})</span>
                     </button>
                   </div>
 
@@ -2162,7 +2162,7 @@ export function PageVisualizer({
                   }}
                   className="px-3.5 py-1.5 rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 text-xs font-semibold hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors shadow-2xs"
                 >
-                  Set B&amp;W (₹3)
+                  Set B&amp;W (₹{TIER_RATES.standard.bw.single})
                 </button>
                 <button
                   type="button"
@@ -2172,7 +2172,7 @@ export function PageVisualizer({
                   }}
                   className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 text-white text-xs font-semibold hover:opacity-90 transition-opacity shadow-2xs"
                 >
-                  Set Color (₹5)
+                  Set Color (₹{TIER_RATES.standard.color.single})
                 </button>
               </div>
             </div>

@@ -7,6 +7,7 @@ import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange, transformPdfForPrint, getPdfPageCount } from '@/lib/pdf-utils';
 import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { getStationConfig } from '@/lib/stations';
+import { getStationPricing, buildTierRatesFromConfig } from '@/lib/station-pricing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,7 +52,6 @@ export async function POST(req: NextRequest) {
     let pickupCode: string | undefined;
     let pricing: ReturnType<typeof calculatePricing> | undefined;
     let effectivePageRange = pageRange;
-    let cachedBuffer: Buffer | null = null;
 
     // Check if this is a direct amount request or a print kiosk order
     if (directAmount !== undefined && directAmount !== null) {
@@ -108,7 +108,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'At least one page must be selected' }, { status: 400 });
       }
 
-      // 2. Strict Server-Side Pricing Calculation
+      // 2. Strict Server-Side Pricing Calculation using Station Custom Rates
+      const stationPricing = await getStationPricing(station.id);
+      const tierRates = buildTierRatesFromConfig(stationPricing);
+
       pricing = calculatePricing({
         totalPages: activePagesCount,
         colorMode: colorMode,
@@ -118,6 +121,7 @@ export async function POST(req: NextRequest) {
         layoutMode,
         customCols,
         customRows,
+        customRates: tierRates,
       });
 
       amountInPaise = Math.round(pricing.totalPrice * 100);
@@ -163,12 +167,41 @@ export async function POST(req: NextRequest) {
         key_secret: keySecret,
       });
 
-      rzpOrder = await razorpay.orders.create({
+      const stationPricing = await getStationPricing(station.id);
+      const targetAccountId = (stationPricing.razorpayAccountId || station.razorpayAccountId || '').trim();
+
+      // Base order payload
+      const orderPayload: Record<string, unknown> = {
         amount: amountInPaise,
         currency,
         receipt,
         notes: orderNotes,
-      });
+      };
+
+      // Automated Revenue Split via Razorpay Route (Marketplace)
+      if (targetAccountId && targetAccountId.startsWith('acc_')) {
+        const commissionPct = Number(stationPricing.commissionPercent ?? station.commissionPercent ?? 10);
+        const hostSharePct = Math.max(0, 100 - commissionPct);
+        const hostAmountPaise = Math.round((amountInPaise * hostSharePct) / 100);
+
+        if (hostAmountPaise > 0) {
+          orderPayload.transfers = [
+            {
+              account: targetAccountId,
+              amount: hostAmountPaise,
+              currency: 'INR',
+              notes: {
+                station_id: station.id,
+                job_name: fileName || 'PrintKurox Document',
+              },
+              on_hold: false,
+            },
+          ];
+        }
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rzpOrder = await razorpay.orders.create(orderPayload as any);
     } catch (rzpErr: unknown) {
       console.error('Razorpay order creation API error:', rzpErr);
       const errObj = rzpErr as { statusCode?: number; error?: { description?: string; code?: string }; message?: string };

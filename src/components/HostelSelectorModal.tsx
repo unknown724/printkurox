@@ -9,10 +9,8 @@ import {
   Building2,
   Clock,
   Sparkles,
-  ChevronRight,
   X,
   AlertCircle,
-  HelpCircle,
   Lock,
 } from 'lucide-react';
 import { getCampusStations, StationConfig } from '@/lib/stations';
@@ -59,7 +57,10 @@ export function HostelSelectorModal({
 
   const [mounted, setMounted] = useState(false);
   const [liveStatuses, setLiveStatuses] = useState<Record<string, StationLiveStatus>>({});
-  const [isLoading, setIsLoading] = useState(false);
+  const [stationPricingMap, setStationPricingMap] = useState<
+    Record<string, { bwSingle: number; colorSingle: number; bwBulk?: number }>
+  >({});
+  const [_isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const campusStations = getCampusStations();
@@ -90,9 +91,34 @@ export function HostelSelectorModal({
     }
   };
 
+  // Fetch live pricing for all campus stations
+  const fetchAllPricing = async () => {
+    try {
+      const res = await fetch('/api/station-pricing', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.stations) {
+          const map: Record<string, { bwSingle: number; colorSingle: number; bwBulk?: number }> = {};
+          Object.entries(data.stations).forEach(([key, rawVal]) => {
+            const val = rawVal as { bwSingle?: number; colorSingle?: number; bwBulk?: number };
+            map[key] = {
+              bwSingle: Number(val.bwSingle) || 4.0,
+              colorSingle: Number(val.colorSingle) || 7.0,
+              bwBulk: val.bwBulk ? Number(val.bwBulk) : 3.0,
+            };
+          });
+          setStationPricingMap(map);
+        }
+      }
+    } catch {
+      // Graceful fallback
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       fetchAllStatuses();
+      fetchAllPricing();
       const interval = setInterval(fetchAllStatuses, 20_000);
       return () => clearInterval(interval);
     }
@@ -346,6 +372,31 @@ export function HostelSelectorModal({
                         <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
                         <span className="truncate">{getCleanRoomLocation(st)}</span>
                       </div>
+
+                      {/* Compact Live Price Badge or Setup Notice */}
+                      {st.status === 'active' ? (
+                        (() => {
+                          const stPricing = stationPricingMap[st.id];
+                          const bw = stPricing?.bwSingle ?? 4;
+                          const col = stPricing?.colorSingle ?? 7;
+                          return (
+                            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-mono flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-white/[0.08] text-zinc-700 dark:text-zinc-300 font-semibold border border-zinc-200/80 dark:border-white/10">
+                                ₹{bw} B&amp;W
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
+                                ₹{col} Color
+                              </span>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="mt-1.5 flex items-center">
+                          <span className="text-[10px] font-mono font-medium text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-white/[0.06] px-2 py-0.5 rounded border border-zinc-200/80 dark:border-white/10">
+                            To be Updated
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

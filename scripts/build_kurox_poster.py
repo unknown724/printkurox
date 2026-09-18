@@ -202,8 +202,8 @@ def build_blue_poster(out_dir, public_dir):
     # 4. Instant Print: Room 29, Block B
     # 5. Self-Service: Upload from Phone
     items = [
-        ("Black & White:", " ₹3 / Page", (0, 240, 255)),
-        ("Color Print:", " ₹5 / Page", (52, 211, 153)),
+        ("Black & White:", " ₹4 / Page", (0, 240, 255)),
+        ("Color Print:", " ₹7 / Page", (52, 211, 153)),
         ("Mega Bulk:", " Up to 40% Off", (251, 191, 36)),
         ("Instant Print:", " Room 29, Block B", (255, 255, 255)),
         ("Self-Service:", " Upload from Phone", (186, 230, 253)),
@@ -403,8 +403,8 @@ def build_red_poster(out_dir, public_dir):
     draw_vector_star(draw, badge_center_x + star_offset, badge_center_y - 2, size=14, fill_color=(250, 204, 21, 255))
 
     items = [
-        ("Black & White:", " ₹3 / Page", (185, 28, 28)),
-        ("Color Print:", " ₹5 / Page", (16, 185, 129)),
+        ("Black & White:", " ₹4 / Page", (185, 28, 28)),
+        ("Color Print:", " ₹7 / Page", (16, 185, 129)),
         ("Mega Bulk:", " Up to 40% Off", (217, 119, 6)),
         ("Instant Print:", " Room 29, Block B", (15, 23, 42)),
         ("Self-Service:", " Upload from Phone", (15, 23, 42)),

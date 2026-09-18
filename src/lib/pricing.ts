@@ -3,16 +3,18 @@
  * 
  * Online Web App Student Rates:
  * 1. Standard (1 – 9 sheets):
- *    - B&W Single: ₹3.00 (vs ₹5.00 offline counter rate)
- *    - Color Single: ₹5.00 (vs ₹10.00 offline counter rate)
+ *    - B&W Single: ₹4.00 (vs ₹5.00 offline counter rate)
+ *    - Color Single: ₹7.00 (vs ₹10.00 offline counter rate)
+ *    - B&W Duplex: ₹6.00 (₹3.00/side)
+ *    - Color Duplex: ₹10.00 (₹5.00/side)
  * 
  * 2. Assignment Saver (10 – 29 sheets):
- *    - B&W Single: ₹2.50 (Save extra!)
- *    - Color Single: ₹4.50
+ *    - B&W Single: ₹3.00 (Save extra on labs & assignments)
+ *    - Color Single: ₹5.50
  * 
  * 3. Mega Bulk Saver (30+ sheets - Notes, Manuals, Projects):
- *    - B&W Single: ₹2.00
- *    - Color Single: ₹4.00
+ *    - B&W Single: ₹2.50
+ *    - Color Single: ₹4.50
  */
 
 export interface PageConfig {
@@ -28,6 +30,21 @@ export interface PageConfig {
 
 import { LayoutMode } from './layout-types';
 
+export interface CustomTierRates {
+  standard: {
+    bw: { single: number; duplex: number };
+    color: { single: number; duplex: number };
+  };
+  assignment: {
+    bw: { single: number; duplex: number };
+    color: { single: number; duplex: number };
+  };
+  mega: {
+    bw: { single: number; duplex: number };
+    color: { single: number; duplex: number };
+  };
+}
+
 export interface PricingInput {
   totalPages: number;
   colorMode: 'bw' | 'color' | 'custom';
@@ -37,6 +54,7 @@ export interface PricingInput {
   layoutMode?: LayoutMode;
   customCols?: number;
   customRows?: number;
+  customRates?: CustomTierRates;
 }
 
 export interface PricingResult {
@@ -66,27 +84,28 @@ export const OFFLINE_MARKET_RATES = {
 
 export const TIER_RATES = {
   standard: {
-    bw: { single: 3, duplex: 5 },
-    color: { single: 5, duplex: 8 },
+    bw: { single: 4, duplex: 6 },
+    color: { single: 7, duplex: 10 },
   },
   assignment: {
-    bw: { single: 2.5, duplex: 4 },
-    color: { single: 4.5, duplex: 7 },
+    bw: { single: 3.0, duplex: 5 },
+    color: { single: 5.5, duplex: 8.5 },
   },
   mega: {
-    bw: { single: 2.0, duplex: 3.5 },
-    color: { single: 4.0, duplex: 6 },
+    bw: { single: 2.5, duplex: 4.0 },
+    color: { single: 4.5, duplex: 7.0 },
   },
 } as const;
 
 export const RATES = TIER_RATES.standard;
 
-function getActiveTier(sheetCount: number) {
+function getActiveTier(sheetCount: number, customRates?: CustomTierRates) {
+  const activeTiers = customRates || TIER_RATES;
   if (sheetCount >= 30) {
     return {
       tierKey: 'mega' as const,
       tierName: 'Mega Bulk Saver' as const,
-      rates: TIER_RATES.mega,
+      rates: activeTiers.mega,
       nextTierSheetsNeeded: 0,
       nextTierName: null,
     };
@@ -95,17 +114,17 @@ function getActiveTier(sheetCount: number) {
     return {
       tierKey: 'assignment' as const,
       tierName: 'Assignment Saver' as const,
-      rates: TIER_RATES.assignment,
+      rates: activeTiers.assignment,
       nextTierSheetsNeeded: 30 - sheetCount,
-      nextTierName: 'Mega Bulk Saver (₹2.00/pg)',
+      nextTierName: `Mega Bulk Saver (₹${activeTiers.mega.bw.single.toFixed(2)}/pg)`,
     };
   }
   return {
     tierKey: 'standard' as const,
     tierName: 'Standard' as const,
-    rates: TIER_RATES.standard,
+    rates: activeTiers.standard,
     nextTierSheetsNeeded: 10 - sheetCount,
-    nextTierName: 'Assignment Saver (₹2.50/pg)',
+    nextTierName: `Assignment Saver (₹${activeTiers.assignment.bw.single.toFixed(2)}/pg)`,
   };
 }
 
@@ -187,7 +206,7 @@ export function calculatePricing(input: PricingInput): PricingResult {
 
     const totalSheetsPerCopy = duplexSheets + singleSheets;
     const totalPhysicalSheets = totalSheetsPerCopy * safeCopies;
-    const tier = getActiveTier(totalPhysicalSheets);
+    const tier = getActiveTier(totalPhysicalSheets, input.customRates);
 
     // Group pages onto physical sides and accurately detect whether each side contains color
     const sideColorModes: ('color' | 'bw')[] = [];
@@ -204,14 +223,15 @@ export function calculatePricing(input: PricingInput): PricingResult {
       else effectiveBwCount++;
     });
 
-    // Calculate at active tier rate vs offline market comparison
+    // Calculate at active tier rate vs base standard price (4 B&W / 7 Color)
+    const standardRates = (input.customRates || TIER_RATES).standard;
     let unitPrice = 0;
-    let offlineMarketUnitPrice = 0;
+    let standardUnitPrice = 0;
     const parts: string[] = [];
 
     if (!isDuplex) {
       unitPrice = (effectiveBwCount * tier.rates.bw.single) + (effectiveColorCount * tier.rates.color.single);
-      offlineMarketUnitPrice = (effectiveBwCount * OFFLINE_MARKET_RATES.bw.single) + (effectiveColorCount * OFFLINE_MARKET_RATES.color.single);
+      standardUnitPrice = (effectiveBwCount * standardRates.bw.single) + (effectiveColorCount * standardRates.color.single);
 
       if (effectiveBwCount > 0) {
         parts.push(`${effectiveBwCount} B&W Sheet${effectiveBwCount > 1 ? 's' : ''} (₹${tier.rates.bw.single} ea)`);
@@ -229,18 +249,18 @@ export function calculatePricing(input: PricingInput): PricingResult {
           if (hasColor) {
             colorDuplexCount++;
             unitPrice += tier.rates.color.duplex;
-            offlineMarketUnitPrice += OFFLINE_MARKET_RATES.color.duplex;
+            standardUnitPrice += standardRates.color.duplex;
           } else {
             bwDuplexCount++;
             unitPrice += tier.rates.bw.duplex;
-            offlineMarketUnitPrice += OFFLINE_MARKET_RATES.bw.duplex;
+            standardUnitPrice += standardRates.bw.duplex;
           }
         } else {
           const hasColor = sideColorModes[i] === 'color';
           const singleRate = hasColor ? tier.rates.color.single : tier.rates.bw.single;
-          const offlineRate = hasColor ? OFFLINE_MARKET_RATES.color.single : OFFLINE_MARKET_RATES.bw.single;
+          const stdRate = hasColor ? standardRates.color.single : standardRates.bw.single;
           unitPrice += singleRate;
-          offlineMarketUnitPrice += offlineRate;
+          standardUnitPrice += stdRate;
           parts.push(`1 Single ${hasColor ? 'Color' : 'B&W'} (₹${singleRate})`);
         }
       }
@@ -258,8 +278,9 @@ export function calculatePricing(input: PricingInput): PricingResult {
     }
 
     const finalTotalPrice = Math.round(unitPrice * safeCopies);
-    const finalOriginalPrice = Math.round(offlineMarketUnitPrice * safeCopies);
-    const savings = Math.max(0, finalOriginalPrice - finalTotalPrice);
+    const finalStandardPrice = Math.round(standardUnitPrice * safeCopies);
+    const savings = tier.tierKey !== 'standard' ? Math.max(0, finalStandardPrice - finalTotalPrice) : 0;
+    const finalOriginalPrice = savings > 0 ? finalStandardPrice : finalTotalPrice;
 
     let breakdownStr = parts.join(' + ');
     if (safeCopies > 1) {
@@ -306,18 +327,18 @@ export function calculatePricing(input: PricingInput): PricingResult {
 
   const totalSheetsPerCopy = duplexSheets + singleSheets;
   const totalPhysicalSheets = totalSheetsPerCopy * safeCopies;
-  const tier = getActiveTier(totalPhysicalSheets);
+  const tier = getActiveTier(totalPhysicalSheets, input.customRates);
 
   const activeRates = tier.rates[effectiveMode];
-  const offlineRates = OFFLINE_MARKET_RATES[effectiveMode];
+  const standardRates = (input.customRates || TIER_RATES).standard[effectiveMode];
 
   let unitPrice = 0;
-  let offlineUnitPrice = 0;
+  let standardUnitPrice = 0;
   let breakdown = '';
 
   if (isDuplex) {
     unitPrice = (duplexSheets * activeRates.duplex) + (singleSheets * activeRates.single);
-    offlineUnitPrice = (duplexSheets * offlineRates.duplex) + (singleSheets * offlineRates.single);
+    standardUnitPrice = (duplexSheets * standardRates.duplex) + (singleSheets * standardRates.single);
 
     const parts: string[] = [];
     if (duplexSheets > 0) {
@@ -329,13 +350,14 @@ export function calculatePricing(input: PricingInput): PricingResult {
     breakdown = parts.join(' + ');
   } else {
     unitPrice = safePages * activeRates.single;
-    offlineUnitPrice = safePages * offlineRates.single;
+    standardUnitPrice = safePages * standardRates.single;
     breakdown = `${safePages} Single-Sided (₹${activeRates.single} ea)`;
   }
 
   const rawTotalPrice = Math.round(unitPrice * safeCopies);
-  const rawOriginalPrice = Math.round(offlineUnitPrice * safeCopies);
-  const savings = Math.max(0, rawOriginalPrice - rawTotalPrice);
+  const rawStandardPrice = Math.round(standardUnitPrice * safeCopies);
+  const savings = tier.tierKey !== 'standard' ? Math.max(0, rawStandardPrice - rawTotalPrice) : 0;
+  const rawOriginalPrice = savings > 0 ? rawStandardPrice : rawTotalPrice;
 
   return {
     totalPages: safePages,
