@@ -700,8 +700,7 @@ export async function mergeFilesToPdf(
 
   // Canva-Style Multi-Text Overlay Mode
   const overlayItems = getTextOverlayItems(options.textOverlay);
-  const hasOverlayText = overlayItems.some((it) => it.text && it.text.trim().length > 0);
-  if ((options.textOverlay?.enabled || hasOverlayText) && overlayItems.length > 0) {
+  if (options.textOverlay?.enabled && overlayItems.length > 0) {
     const pdfPageCount = mergedPdf.getPageCount();
 
     const hexToRgb = (hex: string) => {

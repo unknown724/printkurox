@@ -1,24 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { queryD1, executeD1, PrintJobRecord } from '@/lib/cloudflare-d1';
-import { verifyAdminToken, ADMIN_COOKIE_NAME, validateAdminPin } from '@/lib/admin-auth';
+import {
+  verifyAdminToken,
+  ADMIN_COOKIE_NAME,
+  STATION_SESSION_COOKIE,
+  verifyStationSession,
+  validateAdminPin,
+  recordAuditLog,
+} from '@/lib/admin-auth';
 import { validateStationPin, getStationConfig } from '@/lib/stations';
 import { deleteFromR2 } from '@/lib/cloudflare-r2';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-async function getAuthDetails(req: NextRequest, stationId?: string | null): Promise<{ isAuthorized: boolean; isMaster: boolean }> {
+async function getAuthDetails(
+  req: NextRequest,
+  stationId?: string | null
+): Promise<{ isAuthorized: boolean; isMaster: boolean; activeStationId?: string }> {
   // 1. Check master admin device cookie
   const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
   if (token && (await verifyAdminToken(token))) {
     return { isAuthorized: true, isMaster: true };
   }
 
-  // 2. Check station-specific PIN or master PIN via header or cookie
+  // 2. Check cryptographically signed station session cookie
+  const sessionToken = req.cookies.get(STATION_SESSION_COOKIE)?.value;
+  if (sessionToken) {
+    const session = verifyStationSession(sessionToken);
+    if (session) {
+      if (session.role === 'master_admin') {
+        return { isAuthorized: true, isMaster: true };
+      }
+      if (stationId && session.stationId === stationId) {
+        return { isAuthorized: true, isMaster: false, activeStationId: session.stationId };
+      }
+      if (!stationId) {
+        return { isAuthorized: true, isMaster: false, activeStationId: session.stationId };
+      }
+    }
+  }
+
+  // 3. Check station-specific PIN or master PIN via header or legacy cookie
   const pinHeader = req.headers.get('x-station-pin') || req.cookies.get('station_admin_pin')?.value;
   if (pinHeader) {
     if (validateAdminPin(pinHeader)) return { isAuthorized: true, isMaster: true };
-    if (stationId && validateStationPin(stationId, pinHeader)) return { isAuthorized: true, isMaster: false };
+    if (stationId && validateStationPin(stationId, pinHeader)) return { isAuthorized: true, isMaster: false, activeStationId: stationId };
   }
 
   return { isAuthorized: false, isMaster: false };
@@ -191,14 +218,32 @@ export async function PATCH(req: NextRequest) {
 
     let newStatus = job.status;
     let paymentIdUpdate: string | null = null;
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '127.0.0.1';
+    const actorRole = auth.isMaster ? 'master_admin' : 'coadmin';
 
     if (action === 'approve') {
       // Station operator approves counter payment -> queues for printing
       newStatus = 'PAID';
       paymentIdUpdate = `CASH_COUNTER_${Date.now()}`;
+      await recordAuditLog({
+        station_id: job.station_id,
+        actor_role: actorRole,
+        action_type: 'COUNTER_PAYMENT_APPROVED',
+        target_id: jobId,
+        details: `Counter cash payment approved for job ${job.pickup_code}`,
+        ip_address: ip,
+      });
     } else if (action === 'reprint' || action === 'retry') {
       // Re-trigger printing (daemon will check local PC archive if cloud file was purged)
       newStatus = 'PAID';
+      await recordAuditLog({
+        station_id: job.station_id,
+        actor_role: actorRole,
+        action_type: 'JOB_REPRINT_REQUESTED',
+        target_id: jobId,
+        details: `Reprint queued for job ${job.pickup_code}`,
+        ip_address: ip,
+      });
     } else if (action === 'cancel') {
       newStatus = 'FAILED';
     } else if (action === 'complete') {
@@ -217,6 +262,13 @@ export async function PATCH(req: NextRequest) {
         `UPDATE print_jobs SET status = ? WHERE id = ?`,
         [newStatus, jobId]
       );
+    }
+
+    if (newStatus === 'PAID') {
+      fetch('http://127.0.0.1:7250/poll-now', {
+        method: 'POST',
+        signal: AbortSignal.timeout(300),
+      }).catch(() => {});
     }
 
     return NextResponse.json({

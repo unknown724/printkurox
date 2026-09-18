@@ -83,6 +83,12 @@ export async function POST(req: NextRequest) {
            WHERE id = ? AND status = 'PENDING_PAYMENT'`,
           [payment_id, matchedJob.id]
         );
+
+        // Instant local wake trigger to kiosk daemon (0ms queue polling delay)
+        fetch('http://127.0.0.1:7250/poll-now', {
+          method: 'POST',
+          signal: AbortSignal.timeout(300),
+        }).catch(() => {});
       }
     }
 

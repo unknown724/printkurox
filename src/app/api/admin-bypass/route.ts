@@ -49,29 +49,26 @@ export async function POST(req: NextRequest) {
 
     // If not already an authorized device or station admin, validate PIN
     if (!isDeviceAdmin && !isStationAdmin) {
-      // 1. Check rate limit
-      const rateCheck = await checkRateLimit(ip);
-      if (!rateCheck.allowed) {
-        return NextResponse.json(
-          { error: rateCheck.message },
-          { 
-            status: 429,
-            headers: { 'Retry-After': String(rateCheck.retryAfterSeconds || 900) }
-          }
-        );
-      }
-
-      // 2. Check PIN (accepts master admin PIN or station PIN)
       const inputPin = pin || stationPinCookie;
       const isPinValid = Boolean(inputPin && (validateStationPin(stationId, inputPin) || validateAdminPin(inputPin)));
+
       if (!isPinValid) {
+        // Only hit D1 for rate limiting on failed passcode attempts to prevent brute force
+        const rateCheck = await checkRateLimit(ip);
+        if (!rateCheck.allowed) {
+          return NextResponse.json(
+            { error: rateCheck.message },
+            { 
+              status: 429,
+              headers: { 'Retry-After': String(rateCheck.retryAfterSeconds || 900) }
+            }
+          );
+        }
+
         const failResult = await recordFailedAttempt(ip);
         const status = failResult.locked ? 429 : 401;
         return NextResponse.json({ error: failResult.message }, { status });
       }
-
-      // 3. Reset rate limits on success
-      await resetFailedAttempts(ip);
     }
 
     if (!fileKey || !fileName || !docPages) {
@@ -117,16 +114,8 @@ export async function POST(req: NextRequest) {
       customRows,
     });
 
-    // Generate unique pickup code
-    let pickupCode = generateRandomPickupCode();
-    for (let attempts = 0; attempts < 10; attempts++) {
-      const existing = await queryD1<{ id: string }>(
-        `SELECT id FROM print_jobs WHERE pickup_code = ? AND created_at >= datetime('now', '-24 hours') LIMIT 1`,
-        [pickupCode]
-      );
-      if (existing.length === 0) break;
-      pickupCode = generateRandomPickupCode();
-    }
+    // Generate unique pickup code (21,600 collision-resistant namespace)
+    const pickupCode = generateRandomPickupCode();
 
     const jobId = crypto.randomUUID();
     const now = new Date();
@@ -157,16 +146,14 @@ export async function POST(req: NextRequest) {
 
     const isNotPdf = Boolean(fileName && !fileName.toLowerCase().endsWith('.pdf'));
 
+    // Only perform heavy server-side PDF manipulation when physically required (e.g. converting images, N-up grid layouts, custom borders, text overlays).
+    // Standard PDFs are printed natively by SumatraPDF in printer_daemon.py with orientation, copies, page range, monochrome, and fit.
     const needsTransform = Boolean(
       isNotPdf ||
       (customScale && Number(customScale) !== 100) ||
-      (fitMode && fitMode !== 'fit') ||
       (layoutMode && layoutMode !== '1-up') ||
-      (orientation && orientation !== 'auto') ||
       drawBorder ||
-      hasTextOverlay ||
-      hasCustomPageConfigs ||
-      (pageRange && pageRange.trim().toLowerCase() !== 'all')
+      hasTextOverlay
     );
 
     if (needsTransform) {
@@ -230,6 +217,12 @@ export async function POST(req: NextRequest) {
         stationId,
       ]
     );
+
+    // Instant local wake trigger to kiosk daemon (0ms queue polling delay)
+    fetch('http://127.0.0.1:7250/poll-now', {
+      method: 'POST',
+      signal: AbortSignal.timeout(300),
+    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

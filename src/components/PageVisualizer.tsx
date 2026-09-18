@@ -861,21 +861,20 @@ export function PageVisualizer({
           </div>
 
           {/* Physical Sheet Canvas Container */}
-          <div className="p-2.5 sm:p-4 flex items-center justify-center bg-zinc-100/80 dark:bg-[#121316] rounded-xl relative border border-zinc-200/80 dark:border-[#282a2c] overflow-hidden h-[270px] sm:h-[300px] lg:h-[305px] w-full">
+          <div className="p-2.5 sm:p-4 flex items-center justify-center bg-zinc-100/80 dark:bg-[#121316] rounded-xl relative border border-zinc-200/80 dark:border-[#282a2c] overflow-hidden h-[280px] sm:h-[330px] md:h-[380px] lg:h-[470px] xl:h-[510px] w-full">
             {/* The Physical Paper Sheet */}
             <div
               ref={sheetRef}
               className={`relative bg-white text-zinc-900 shadow-xl shadow-black/20 dark:shadow-black/60 rounded-[3px] border border-zinc-300 dark:border-zinc-700 flex flex-col items-center justify-between p-1.5 sm:p-2 transition-all duration-300 select-none ${
                 isSheetLandscape
-                  ? 'h-[200px] sm:h-[230px] lg:h-[230px] aspect-[297/210] max-w-full w-auto'
-                  : 'h-[250px] sm:h-[280px] lg:h-[275px] aspect-[210/297] max-w-full w-auto'
+                  ? 'h-[190px] sm:h-[230px] md:h-[270px] lg:h-[330px] xl:h-[365px] aspect-[297/210] max-w-full w-auto'
+                  : 'h-[245px] sm:h-[290px] md:h-[340px] lg:h-[425px] xl:h-[465px] aspect-[210/297] max-w-full w-auto'
               }`}
             >
                   {/* Canva-Style Live Interactive Multi-Text Overlay Layer */}
                   {(() => {
                     const overlayItems = getTextOverlayItems(textOverlay);
-                    const hasText = overlayItems.some((it) => it.text && it.text.trim().length > 0);
-                    if (!textOverlay?.enabled && !hasText) return null;
+                    if (!textOverlay?.enabled) return null;
                     if (overlayItems.length === 0) return null;
 
                     const isFirstSheet = currentSheetIndex === 0;
@@ -1778,7 +1777,7 @@ export function PageVisualizer({
                       }`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-                      <span>B&amp;W (₹4)</span>
+                      <span>B&amp;W (₹3)</span>
                     </button>
                     <button
                       type="button"
@@ -1790,7 +1789,7 @@ export function PageVisualizer({
                       }`}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-                      <span>Color (₹7)</span>
+                      <span>Color (₹5)</span>
                     </button>
                   </div>
 
@@ -2111,7 +2110,7 @@ export function PageVisualizer({
                   }}
                   className="px-3.5 py-1.5 rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 text-xs font-semibold hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors shadow-2xs"
                 >
-                  Set B&amp;W (₹4)
+                  Set B&amp;W (₹3)
                 </button>
                 <button
                   type="button"
@@ -2121,7 +2120,7 @@ export function PageVisualizer({
                   }}
                   className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 text-white text-xs font-semibold hover:opacity-90 transition-opacity shadow-2xs"
                 >
-                  Set Color (₹7)
+                  Set Color (₹5)
                 </button>
               </div>
             </div>

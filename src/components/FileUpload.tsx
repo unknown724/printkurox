@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   RotateCcw,
   Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import { convertDocxToPdfClient } from '@/lib/client-docx-converter';
 
@@ -37,6 +38,7 @@ export interface UploadedBatchData {
 interface FileUploadProps {
   onBatchUploaded: (data: UploadedBatchData | null) => void;
   uploadedBatch: UploadedBatchData | null;
+  onProceed?: () => void;
 }
 
 // ─── Ultra-fast, non-blocking image optimizer for mobile cameras ─────────────
@@ -221,7 +223,7 @@ function legacyUploadToServer(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) {
+export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -243,13 +245,21 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
   const processAndUploadFiles = async (newFileList: File[]) => {
     setErrorMessage(null);
 
-    const validExtensions = ['.pdf', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.webp'];
+    const isWordDoc = newFileList.find((f) => /\.(docx?|rtf)$/i.test(f.name));
+    if (isWordDoc) {
+      setErrorMessage(
+        `📄 Please save "${isWordDoc.name}" as PDF before uploading: Word files can shift tables & layouts during online printing. In Microsoft Word or Google Docs, tap File → Save As / Export to PDF (takes 2 seconds) for 100% exact page-by-page accuracy!`
+      );
+      return;
+    }
+
+    const validExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.webp'];
     const invalidFile = newFileList.find(
       (f) => !validExtensions.some((ext) => f.name.toLowerCase().endsWith(ext))
     );
 
     if (invalidFile) {
-      setErrorMessage(`"${invalidFile.name}" has an unsupported format. Supported: PDF, DOCX, PNG, JPG, WEBP`);
+      setErrorMessage(`"${invalidFile.name}" has an unsupported format. Supported: PDF, PNG, JPG, JPEG, WEBP`);
       return;
     }
 
@@ -555,13 +565,6 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
             })}
           </div>
 
-          {uploadedBatch.fileItems.some((f) => f.name.match(/\.(docx?|rtf)$/i)) && (
-            <div className="my-2.5 flex items-center gap-2 px-3 py-2 text-[11px] text-blue-700 dark:text-blue-300 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/50 rounded-xl">
-              <Sparkles className="w-3.5 h-3.5 shrink-0 text-blue-500" />
-              <span>Word document formatted with native layout engine (tables &amp; styles preserved).</span>
-            </div>
-          )}
-
           {/* Add more files footer action */}
           <div className="pt-3 flex items-center justify-between">
             <button
@@ -595,7 +598,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.webp"
+          accept=".pdf,image/png,image/jpeg,image/webp"
           onChange={handleInputChange}
           className="hidden"
         />
@@ -660,7 +663,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.webp"
+          accept=".pdf,image/png,image/jpeg,image/webp"
           onChange={handleInputChange}
           className="hidden"
         />
@@ -712,14 +715,12 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
               Choose files or drag &amp; drop
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Select one or multiple documents
+              Select PDF or image documents for 100% vector print accuracy
             </p>
             <div className="flex items-center gap-1.5 mt-3.5 text-[10px] text-zinc-600 dark:text-zinc-400 bg-white/70 dark:bg-white/[0.04] backdrop-blur-md px-3 py-1 rounded-full border border-zinc-200/80 dark:border-white/10 font-mono shadow-2xs">
-              <span>PDF</span>
+              <span className="text-blue-600 dark:text-blue-400 font-bold">PDF (Guaranteed)</span>
               <span>•</span>
-              <span>DOCX</span>
-              <span>•</span>
-              <span>PNG / JPG</span>
+              <span>PNG / JPG / WEBP</span>
               <span>•</span>
               <span>Up to 10 files</span>
             </div>
@@ -734,8 +735,8 @@ export function FileUpload({ onBatchUploaded, uploadedBatch }: FileUploadProps) 
         </span>
         <span className="text-zinc-300 dark:text-zinc-700 select-none">•</span>
         <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">WhatsApp:</span>
-          <span>Save to Downloads to select directly</span>
+          <span className="text-blue-600 dark:text-blue-400 font-semibold">Word files:</span>
+          <span>Save as PDF in Word/Docs for 100% exact layout</span>
         </span>
       </div>
 

@@ -61,3 +61,7 @@ daemon/build_exe.py
 .env*
 __pycache__/
 *.pyc
+dist_stations/
+.cursor/
+.vscode/
+

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { UploadedBatchData } from '@/components/FileUpload';
 import { PrintSettingsState } from '@/components/PrintSettings';
 import { AdvancedPrintOptions } from '@/components/AdvancedSettings';
@@ -13,12 +13,29 @@ import { BorderBeam } from '@/components/ui/BorderBeam';
 import { Crown, ChevronRight, MessageCircle } from 'lucide-react';
 import { PhotoLayoutSettings } from '@/components/studio/PhotoLayoutSelector';
 import { EnhanceMode } from '@/lib/image-enhancer';
-import { getStationConfig } from '@/lib/stations';
+import { getStationConfig, DEFAULT_STATION_ID } from '@/lib/stations';
 
 function HomePageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const stationParam = searchParams.get('station') || searchParams.get('station_id');
-  const station = getStationConfig(stationParam);
+
+  const [preferredStation, setPreferredStation] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('printkurox_preferred_station') || DEFAULT_STATION_ID;
+    }
+    return DEFAULT_STATION_ID;
+  });
+
+  const activeStationId = stationParam || preferredStation;
+  const station = getStationConfig(activeStationId);
+
+  useEffect(() => {
+    if (stationParam && typeof window !== 'undefined') {
+      localStorage.setItem('printkurox_preferred_station', stationParam);
+      setPreferredStation(stationParam);
+    }
+  }, [stationParam]);
 
   const [uploadedBatch, setUploadedBatch] = useState<UploadedBatchData | null>(null);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
@@ -266,6 +283,15 @@ function HomePageContent() {
           colorCount={colorCount}
           onRangeChange={handleRangeChange}
           stationId={station.id}
+          onStationSelect={(newStationId) => {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('printkurox_preferred_station', newStationId);
+              setPreferredStation(newStationId);
+            }
+            const params = new URLSearchParams(searchParams.toString());
+            params.set('station', newStationId);
+            router.push(`/?${params.toString()}`);
+          }}
         />
       </div>
     </div>

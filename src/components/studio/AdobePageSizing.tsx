@@ -180,20 +180,12 @@ export function AdobePageHandling({
   pageConfigs,
   onPageConfigsChange,
 }: AdobePageHandlingProps) {
-  const [activeTab, setActiveTab] = useState<'size' | 'mode' | 'multiple' | 'text'>(
-    settings.layoutMode === 'booklet' || settings.layoutMode === 'poster'
-      ? 'mode'
-      : settings.layoutMode === '1-up'
-      ? 'size'
-      : 'multiple'
-  );
-  const [modeType, setModeType] = useState<'booklet' | 'poster'>(
-    settings.layoutMode === 'poster' ? 'poster' : 'booklet'
+  const [activeTab, setActiveTab] = useState<'size' | 'multiple' | 'text'>(
+    settings.layoutMode === '1-up' ? 'size' : 'multiple'
   );
   const customCols = settings.customCols || 2;
   const customRows = settings.customRows || 2;
   const isCustomActive = settings.layoutMode === 'custom';
-  const [posterScale, setPosterScale] = useState('100');
   const [prevCustomScale, setPrevCustomScale] = useState(customScale);
   const [scaleText, setScaleText] = useState(String(customScale || 100));
   const [isSizingOpen, setIsSizingOpen] = useState(true);
@@ -216,7 +208,7 @@ export function AdobePageHandling({
     setScaleText(String(customScale || 100));
   }
 
-  const handleTabSelect = (tab: 'size' | 'mode' | 'multiple' | 'text') => {
+  const handleTabSelect = (tab: 'size' | 'multiple' | 'text') => {
     setActiveTab(tab);
     if (tab === 'size') {
       onChange({
@@ -224,20 +216,6 @@ export function AdobePageHandling({
         layoutMode: '1-up',
         pagesPerSheet: 1,
       });
-    } else if (tab === 'mode') {
-      if (modeType === 'poster') {
-        onChange({
-          ...settings,
-          layoutMode: 'poster',
-          pagesPerSheet: 1,
-        });
-      } else {
-        onChange({
-          ...settings,
-          layoutMode: 'booklet',
-          pagesPerSheet: 2,
-        });
-      }
     } else if (tab === 'multiple') {
       if (isCustomActive) {
         onChange({
@@ -255,14 +233,14 @@ export function AdobePageHandling({
         });
       }
     } else if (tab === 'text') {
-      // Auto-enable text overlay when user clicks the Text tab so it is immediately visible
+      // Keep existing enabled state, do not force enable if user turned it off
       const existingText = settings.textOverlay?.text || (settings.textOverlay?.items && settings.textOverlay.items[0]?.text);
-      const textToUse = existingText && existingText.trim() ? existingText : 'SAMPLE STAMP';
+      const textToUse = existingText && existingText.trim() ? existingText : '';
       onChange({
         ...settings,
         textOverlay: {
           ...(settings.textOverlay || {}),
-          enabled: true,
+          enabled: settings.textOverlay?.enabled ?? false,
           text: textToUse,
           position: settings.textOverlay?.position || 'watermark',
           fontFamily: settings.textOverlay?.fontFamily || 'sans',
@@ -335,8 +313,6 @@ export function AdobePageHandling({
               <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/40 font-semibold">
                 {activeTab === 'size'
                   ? `Size: ${scaling === 'custom' ? `${scaleText}%` : scaling}`
-                  : activeTab === 'mode'
-                  ? modeType === 'booklet' ? 'Booklet' : 'Poster'
                   : activeTab === 'multiple'
                   ? `${settings.pagesPerSheet || 2}-Up`
                   : 'Text'}
@@ -355,15 +331,14 @@ export function AdobePageHandling({
 
         {isSizingOpen && (
           <>
-            {/* 4 Tabs: [ Size ] [ Mode ] [ Multiple ] [ Text ] */}
-            <div className="grid grid-cols-4 gap-1 p-0.5 bg-zinc-100 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
-          {(['size', 'mode', 'multiple', 'text'] as const).map((tab) => {
+            {/* 3 Tabs: [ Size ] [ Multiple ] [ Text ] */}
+            <div className="grid grid-cols-3 gap-1 p-0.5 bg-zinc-100 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
+          {(['size', 'multiple', 'text'] as const).map((tab) => {
             const isSelected = activeTab === tab;
             const labels: Record<typeof tab, string> = {
-              size: 'Size',
-              mode: 'Mode',
-              multiple: 'Multiple',
-              text: 'Text',
+              size: 'Size (1-Up)',
+              multiple: 'Multiple (N-Up)',
+              text: 'Text & Roll No',
             };
             return (
               <button
@@ -686,152 +661,12 @@ export function AdobePageHandling({
           </div>
         )}
 
-        {/* --- TAB CONTENT: MODE (BOOKLET & POSTER) --- */}
-        {activeTab === 'mode' && (
-          <div className="pt-0.5 space-y-2.5 text-xs">
-            {/* Sub-Switch: Booklet vs Poster */}
-            <div className="grid grid-cols-2 gap-1 p-0.5 bg-zinc-100 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <button
-                type="button"
-                onClick={() => {
-                  setModeType('booklet');
-                  onChange({
-                    ...settings,
-                    layoutMode: 'booklet',
-                    pagesPerSheet: 2,
-                  });
-                }}
-                className={`h-6.5 px-2 text-center text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                  modeType === 'booklet'
-                    ? 'bg-white text-zinc-950 dark:bg-zinc-800 dark:text-white shadow-2xs border border-zinc-200 dark:border-zinc-700'
-                    : 'text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white'
-                }`}
-              >
-                <span>📖 Booklet</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setModeType('poster');
-                  onChange({
-                    ...settings,
-                    layoutMode: 'poster',
-                    pagesPerSheet: 1,
-                  });
-                }}
-                className={`h-6.5 px-2 text-center text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                  modeType === 'poster'
-                    ? 'bg-white text-zinc-950 dark:bg-zinc-800 dark:text-white shadow-2xs border border-zinc-200 dark:border-zinc-700'
-                    : 'text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white'
-                }`}
-              >
-                <span>🖼️ Poster</span>
-              </button>
-            </div>
-
-            {/* Sub-Panel: Booklet */}
-            {modeType === 'booklet' && (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">Booklet subset:</label>
-                    <select
-                      value={settings.bookletSubset || 'both'}
-                      onChange={(e) => onChange({ ...settings, bookletSubset: e.target.value as 'both' | 'front' | 'back' })}
-                      className="w-full h-7 px-2 rounded-md bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-xs font-semibold cursor-pointer"
-                    >
-                      <option value="both">Both sides (Book)</option>
-                      <option value="front">Front side only</option>
-                      <option value="back">Back side only</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">Binding:</label>
-                    <select
-                      value={settings.bookletBinding || 'left'}
-                      onChange={(e) => onChange({ ...settings, bookletBinding: e.target.value as 'left' | 'right' })}
-                      className="w-full h-7 px-2 rounded-md bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-xs font-semibold cursor-pointer"
-                    >
-                      <option value="left">Left / Center fold</option>
-                      <option value="right">Right / Center fold</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Sub-Panel: Poster */}
-            {modeType === 'poster' && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between pt-0.5">
-                  <span className="text-zinc-600 dark:text-zinc-400 font-medium">Tile Scale:</span>
-                  <div className="flex items-center h-6.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/80 overflow-hidden shadow-2xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const cur = parseInt(posterScale, 10) || 100;
-                        const next = Math.max(10, cur - 5);
-                        setPosterScale(String(next));
-                        updateTargetScale(next);
-                      }}
-                      className="w-7 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-bold text-sm cursor-pointer select-none transition-colors"
-                      title="Decrease scale by 5%"
-                    >
-                      -
-                    </button>
-                    <div className="flex items-center px-1 bg-white dark:bg-zinc-900 h-full border-x border-zinc-300 dark:border-zinc-700">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={posterScale}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/[^0-9]/g, '');
-                          setPosterScale(val);
-                          const parsed = parseInt(val, 10);
-                          if (!isNaN(parsed)) updateTargetScale(parsed);
-                        }}
-                        onFocus={(e) => e.target.select()}
-                        onBlur={() => {
-                          const parsed = parseInt(posterScale, 10);
-                          const clamped = isNaN(parsed) ? 100 : Math.max(10, Math.min(500, parsed));
-                          setPosterScale(String(clamped));
-                          updateTargetScale(clamped);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            (e.target as HTMLInputElement).blur();
-                          }
-                        }}
-                        className="w-9 h-full bg-transparent font-mono text-xs text-center font-bold text-zinc-900 dark:text-zinc-100 focus:outline-none"
-                      />
-                      <span className="text-zinc-400 text-[10px] font-mono">%</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const cur = parseInt(posterScale, 10) || 100;
-                        const next = Math.min(500, cur + 5);
-                        setPosterScale(String(next));
-                        updateTargetScale(next);
-                      }}
-                      className="w-7 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-bold text-sm cursor-pointer select-none transition-colors"
-                      title="Increase scale by 5%"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* --- TAB CONTENT: TEXT (CANVA TEXT & WATERMARK OVERLAY) --- */}
         {activeTab === 'text' && (() => {
           const rawItems = getTextOverlayItems(settings.textOverlay);
           const defaultFirstItem: TextOverlayItem = {
             id: 'item-1',
-            text: settings.textOverlay?.text || 'PROJECT REPORT',
+            text: settings.textOverlay?.text || 'NERIST SUBMISSION',
             position: settings.textOverlay?.position || 'custom',
             customX: settings.textOverlay?.customX ?? 50,
             customY: settings.textOverlay?.customY ?? 50,
@@ -852,11 +687,10 @@ export function AdobePageHandling({
           const updateItems = (newItems: TextOverlayItem[], newActiveId?: string) => {
             const currentActiveId = newActiveId || activeItemId;
             const currentActive = newItems.find((it) => it.id === currentActiveId) || newItems[0];
-            const hasText = newItems.some((it) => it.text && it.text.trim().length > 0);
             onChange({
               ...settings,
               textOverlay: {
-                enabled: isEnabled || hasText,
+                enabled: isEnabled, // Strictly respect user toggle, do not override with hasText
                 items: newItems,
                 activeItemId: currentActive?.id,
                 text: currentActive?.text || '',

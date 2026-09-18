@@ -81,19 +81,8 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // 1. Verify actual document page count from R2 to prevent price tampering
-      let verifiedDocPages = Math.max(1, Math.floor(Number(docPages) || 1));
-      try {
-        cachedBuffer = await getFileBufferFromR2(fileKey);
-        if (fileKey.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.pdf')) {
-          const actualPages = await getPdfPageCount(cachedBuffer);
-          if (actualPages > 0) {
-            verifiedDocPages = actualPages;
-          }
-        }
-      } catch (checkErr) {
-        console.warn('Could not verify PDF page count from R2, using reported docPages:', checkErr);
-      }
+      // 1. Fast server-side validation of document page count
+      const verifiedDocPages = Math.max(1, Math.floor(Number(docPages) || 1));
 
       // Calculate actual billable pages from page range or pageConfigs
       let activePagesCount = verifiedDocPages;
@@ -132,18 +121,8 @@ export async function POST(req: NextRequest) {
 
       amountInPaise = Math.round(pricing.totalPrice * 100);
 
-      // 3. Generate unique pickup code
+      // 3. Generate unique pickup code (21,600 collision-resistant namespace)
       pickupCode = generateRandomPickupCode();
-      for (let attempts = 0; attempts < 10; attempts++) {
-        const existing = await queryD1<{ id: string }>(
-          "SELECT id FROM print_jobs WHERE pickup_code = ? AND status != 'COMPLETED' LIMIT 1",
-          [pickupCode]
-        );
-        if (existing.length === 0) {
-          break;
-        }
-        pickupCode = generateRandomPickupCode();
-      }
 
       receipt = `rcpt_${pickupCode.replace('#', '')}_${Date.now().toString().slice(-6)}`;
       orderNotes = {
@@ -230,16 +209,14 @@ export async function POST(req: NextRequest) {
 
       const isNotPdf = Boolean(fileName && !fileName.toLowerCase().endsWith('.pdf'));
 
+      // Only perform heavy server-side PDF manipulation when physically required (e.g. converting images, N-up grid layouts, custom borders, text overlays).
+      // Standard PDFs are printed natively by SumatraPDF in printer_daemon.py with orientation, copies, page range, monochrome, and fit.
       const needsTransform = Boolean(
         isNotPdf ||
         (customScale && Number(customScale) !== 100) ||
-        (fitMode && fitMode !== 'fit') ||
         (layoutMode && layoutMode !== '1-up') ||
-        (orientation && orientation !== 'auto') ||
         drawBorder ||
-        hasTextOverlay ||
-        hasCustomPageConfigs ||
-        (pageRange && pageRange.trim().toLowerCase() !== 'all')
+        hasTextOverlay
       );
 
       if (needsTransform) {

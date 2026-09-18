@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 
 export const ADMIN_COOKIE_NAME = 'printkurox_admin_device_id';
+export const STATION_SESSION_COOKIE = 'printkurox_station_session';
 export const MAX_ADMIN_DEVICES = 4;
 
 export interface AdminDevice {
@@ -13,7 +14,27 @@ export interface AdminDevice {
   last_active: string;
 }
 
-function safeCompare(a: string, b: string): boolean {
+export interface StationSession {
+  stationId: string;
+  role: 'coadmin' | 'master_admin';
+  iat: number;
+  exp: number;
+}
+
+export interface AuditLogEntry {
+  station_id?: string | null;
+  actor_role: 'master_admin' | 'coadmin' | 'daemon' | 'system';
+  action_type: string;
+  target_id?: string | null;
+  details?: Record<string, unknown> | string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
+}
+
+/**
+ * Constant-time safe string comparison to prevent timing attacks.
+ */
+export function safeCompare(a: string, b: string): boolean {
   if (!a || !b) return false;
   const bufA = Buffer.from(a.trim());
   const bufB = Buffer.from(b.trim());
@@ -22,7 +43,8 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 /**
- * Validates admin passcode using timing-safe comparison.
+ * Validates master admin passcode using timing-safe comparison.
+ * Zero hardcoded production fallbacks.
  */
 export function validateAdminPin(inputPin: string): boolean {
   if (!inputPin || typeof inputPin !== 'string') return false;
@@ -34,17 +56,106 @@ export function validateAdminPin(inputPin: string): boolean {
     return true;
   }
 
-  // 2. Direct match with master admin passcode Kurox725#29
-  if (safeCompare(trimmed, 'Kurox725#29')) {
-    return true;
-  }
-
-  // 3. Fallback in case #29 was stripped as an unquoted comment in .env
+  // 2. Fallback in case #29 was stripped as an unquoted comment in .env
   if (configuredSecret === 'Kurox725' && (trimmed === 'Kurox725#29' || trimmed === 'Kurox725')) {
     return true;
   }
 
+  // 3. Local dev fallback ONLY when ADMIN_SECRET_KEY is explicitly missing
+  if (process.env.NODE_ENV === 'development' && !configuredSecret) {
+    if (safeCompare(trimmed, 'Kurox725#29')) {
+      return true;
+    }
+  }
+
   return false;
+}
+
+/**
+ * Issues an HMAC-SHA256 signed JWT-like station session token.
+ * Prevents tampering with station ID, role, or expiration.
+ */
+export function createStationSession(
+  stationId: string,
+  role: 'coadmin' | 'master_admin' = 'coadmin',
+  maxAgeDays = 30
+): string {
+  const secret = process.env.ADMIN_SECRET_KEY || 'kurox_station_session_secret_2026';
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + maxAgeDays * 24 * 60 * 60;
+
+  const payload: StationSession = {
+    stationId: stationId.toLowerCase().trim(),
+    role,
+    iat: now,
+    exp,
+  };
+
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+
+  return `${payloadB64}.${signature}`;
+}
+
+/**
+ * Verifies a signed station session token and returns decoded session or null.
+ */
+export function verifyStationSession(token?: string | null): StationSession | null {
+  if (!token || typeof token !== 'string' || !token.includes('.')) {
+    return null;
+  }
+
+  try {
+    const [payloadB64, signature] = token.split('.');
+    if (!payloadB64 || !signature) return null;
+
+    const secret = process.env.ADMIN_SECRET_KEY || 'kurox_station_session_secret_2026';
+    const expectedSignature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+
+    if (!safeCompare(signature, expectedSignature)) {
+      return null; // Forged or tampered token!
+    }
+
+    const jsonStr = Buffer.from(payloadB64, 'base64url').toString('utf-8');
+    const session: StationSession = JSON.parse(jsonStr);
+
+    const now = Math.floor(Date.now() / 1000);
+    if (session.exp && session.exp < now) {
+      return null; // Expired session
+    }
+
+    return session;
+  } catch (err) {
+    console.error('Session verification error:', err);
+    return null;
+  }
+}
+
+/**
+ * Records an immutable audit log entry into Cloudflare D1.
+ */
+export async function recordAuditLog(entry: AuditLogEntry): Promise<void> {
+  try {
+    const detailsStr = typeof entry.details === 'object' ? JSON.stringify(entry.details) : entry.details || null;
+    const nowIso = new Date().toISOString();
+
+    await executeD1(
+      `INSERT INTO admin_audit_logs (station_id, actor_role, action_type, target_id, details, ip_address, user_agent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.station_id || null,
+        entry.actor_role,
+        entry.action_type,
+        entry.target_id || null,
+        detailsStr,
+        entry.ip_address || null,
+        entry.user_agent || null,
+        nowIso,
+      ]
+    );
+  } catch (err) {
+    console.error('Failed to write audit log:', err);
+  }
 }
 
 /**

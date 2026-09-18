@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       headers.set('Content-Type', 'application/pdf');
       headers.set('Content-Disposition', `inline; filename="${encodeURIComponent(localPdf.fileName)}"`);
       headers.set('Cache-Control', 'no-cache');
-      return new Response(localPdf.buffer, { headers });
+      return new Response(new Uint8Array(localPdf.buffer), { headers });
     } catch (e) {
       console.warn('Failed to stream local PDF file directly:', e);
     }

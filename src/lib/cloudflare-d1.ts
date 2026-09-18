@@ -76,6 +76,7 @@ export async function queryD1<T = unknown>(sql: string, params: (string | number
     headers: {
       'Authorization': `Bearer ${API_TOKEN}`,
       'Content-Type': 'application/json',
+      'User-Agent': 'PrintKuroxServer/1.0',
     },
     body: JSON.stringify({
       sql,
@@ -106,6 +107,7 @@ export async function executeD1(sql: string, params: (string | number | null)[] 
     headers: {
       'Authorization': `Bearer ${API_TOKEN}`,
       'Content-Type': 'application/json',
+      'User-Agent': 'PrintKuroxServer/1.0',
     },
     body: JSON.stringify({
       sql,
@@ -122,3 +124,4 @@ export async function executeD1(sql: string, params: (string | number | null)[] 
   const data = await response.json();
   return data.success === true;
 }
+

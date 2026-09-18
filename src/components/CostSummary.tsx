@@ -15,6 +15,7 @@ import {
   EyeOff,
   WifiOff,
   MessageCircle,
+  Phone,
 } from 'lucide-react';
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
@@ -46,6 +47,7 @@ interface CostSummaryProps {
   customScale?: number;
   fitMode?: 'fit' | 'fill' | 'actual' | 'custom';
   drawBorder?: boolean;
+  onOpenStationModal?: () => void;
 }
 
 export function CostSummary({
@@ -64,12 +66,22 @@ export function CostSummary({
   customScale = 100,
   fitMode = 'fit',
   drawBorder = false,
+  onOpenStationModal,
 }: CostSummaryProps) {
   const router = useRouter();
   const station = getStationConfig(stationId);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('kurox_admin_verified') || sessionStorage.getItem('kurox_admin_verified');
+        if (cached === 'true') return true;
+        if (document.cookie.includes('printkurox_admin_device_id') || document.cookie.includes('station_admin_pin')) return true;
+      } catch {}
+    }
+    return false;
+  });
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [staffPin, setStaffPin] = useState('');
   const [showStaffPin, setShowStaffPin] = useState(false);
@@ -87,14 +99,47 @@ export function CostSummary({
   // Live printer status
   const { online: printerOnline, loading: statusLoading } = usePrinterStatus(30_000);
 
+  // Student phone number for silent auto-prefill in Razorpay (from localStorage if saved)
+  const [phoneNumber, setPhoneNumber] = useState('');
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('nerist_print_user_phone');
+      if (saved && saved.length === 10) {
+        setPhoneNumber(saved);
+      }
+    } catch {}
+  }, []);
+
+  // Preload Razorpay checkout gateway so payment modal opens instantly with zero lag
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !window.Razorpay) {
+      const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+      if (!existing) {
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.async = true;
+        document.body.appendChild(script);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     // Check both master admin and station admin session
     fetch(`/api/station/auth?station_id=${encodeURIComponent(station.id)}`)
       .then((r) => r.json())
       .then((d) => {
-        if (d.isStationAdmin || d.isMasterAdmin) {
-          setIsAdmin(true);
-        }
+        const active = Boolean(d.isStationAdmin || d.isMasterAdmin);
+        setIsAdmin(active);
+        try {
+          if (active) {
+            localStorage.setItem('kurox_admin_verified', 'true');
+            sessionStorage.setItem('kurox_admin_verified', 'true');
+          } else {
+            localStorage.removeItem('kurox_admin_verified');
+            sessionStorage.removeItem('kurox_admin_verified');
+          }
+        } catch {}
       })
       .catch(() => {});
   }, [station.id]);
@@ -177,6 +222,10 @@ export function CostSummary({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Incorrect staff passcode');
+      try {
+        localStorage.setItem('kurox_admin_verified', 'true');
+        sessionStorage.setItem('kurox_admin_verified', 'true');
+      } catch {}
       setShowStaffModal(false);
       router.push(`/status/${data.jobId}`);
     } catch (err: unknown) {
@@ -261,6 +310,7 @@ export function CostSummary({
           customScale,
           fitMode,
           drawBorder,
+          phone: phoneNumber.length === 10 ? phoneNumber : undefined,
         }),
       });
 
@@ -274,23 +324,18 @@ export function CostSummary({
 
       if (typeof window !== 'undefined') {
         if (!window.Razorpay) {
+          // If script is still downloading in background, wait up to 3s
           await new Promise<void>((resolve, reject) => {
-            const existingScript = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
-            if (existingScript) {
-              existingScript.addEventListener('load', () => resolve());
-              existingScript.addEventListener('error', () => reject(new Error('Failed to load payment gateway.')));
-              setTimeout(() => {
-                if (window.Razorpay) resolve();
-                else reject(new Error('Payment gateway load timed out. Check your internet connection.'));
-              }, 4000);
-            } else {
-              const script = document.createElement('script');
-              script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-              script.async = true;
-              script.onload = () => resolve();
-              script.onerror = () => reject(new Error('Failed to load payment gateway.'));
-              document.body.appendChild(script);
-            }
+            const start = Date.now();
+            const checkTimer = setInterval(() => {
+              if (window.Razorpay) {
+                clearInterval(checkTimer);
+                resolve();
+              } else if (Date.now() - start > 4000) {
+                clearInterval(checkTimer);
+                reject(new Error('Payment gateway took too long to load. Check your connection.'));
+              }
+            }, 50);
           });
         }
 
@@ -305,6 +350,24 @@ export function CostSummary({
           name: process.env.NEXT_PUBLIC_SHOP_NAME || 'PrintKurox',
           description: `Order ${pickupCode} • ${pricing.totalPages} pgs (${pricing.copies}x)`,
           order_id: activeOrderId,
+          config: {
+            display: {
+              blocks: {
+                upi: {
+                  name: 'Pay via UPI / QR Code',
+                  instruments: [
+                    { method: 'upi' },
+                    { method: 'card' },
+                    { method: 'netbanking' },
+                  ],
+                },
+              },
+              sequence: ['block.upi'],
+              preferences: {
+                show_default_blocks: true,
+              },
+            },
+          },
           handler: async function (response: {
             razorpay_payment_id?: string;
             razorpay_order_id?: string;
@@ -333,7 +396,10 @@ export function CostSummary({
               setIsProcessing(false);
             }
           },
-          prefill: { name: 'Customer' },
+          prefill: {
+            name: 'Student',
+            ...(phoneNumber.length === 10 ? { contact: phoneNumber } : {}),
+          },
           theme: { color: '#6366f1', backdrop_color: 'rgba(7, 11, 20, 0.90)' },
           modal: {
             confirm_close: true,
@@ -358,6 +424,8 @@ export function CostSummary({
 
   return (
     <div className="space-y-4">
+
+
       {/* Itemized Summary Card (Glassmorphic with Qronos Moving Border Beam) */}
       <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/95 backdrop-blur-xl shadow-xs overflow-hidden group">
         {/* Dynamic Specular Border Beam gliding slowly & smoothly around perimeter */}
@@ -458,15 +526,18 @@ export function CostSummary({
       </div>
 
       {/* Printer Offline Warning */}
-      {!statusLoading && !printerOnline && (
-        <div className="flex items-start gap-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-xs text-amber-900 dark:text-amber-200">
-          <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold flex items-center gap-1.5">
-              Printer Offline (Jobs will Queue)
+      {/* Live Printer Status Badge */}
+      {!printerOnline && !statusLoading && (
+        <div className="flex items-start gap-3 p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 dark:bg-amber-950/20 text-xs text-amber-900 dark:text-amber-200">
+          <div className="w-7 h-7 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5 border border-amber-500/30">
+            <WifiOff className="w-3.5 h-3.5" />
+          </div>
+          <div className="space-y-0.5">
+            <p className="font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+              <span>Station Standby · Offline Auto-Queue Active</span>
             </p>
-            <p className="text-amber-800/80 dark:text-amber-300/80 mt-0.5 leading-relaxed text-[11px]">
-              You can still pay now. Your print job will be securely queued and automatically printed once the kiosk reconnects.
+            <p className="text-zinc-600 dark:text-zinc-300 leading-relaxed text-[11px]">
+              The printer station is currently in standby mode. You can proceed with payment — your job will be safely held in the high-priority queue and will auto-print immediately when the station wakes up.
             </p>
           </div>
         </div>
@@ -529,7 +600,7 @@ export function CostSummary({
             <>
               <Printer className="w-5 h-5 text-zinc-950 stroke-[2.2]" />
               <span className="tracking-wide font-black">
-                {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} & Queue`}
+                {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} · Queue for Auto-Print`}
               </span>
               <ArrowRight className="w-4 h-4 text-zinc-950 stroke-[2.5] opacity-85 group-hover:translate-x-1 transition-transform" />
             </>

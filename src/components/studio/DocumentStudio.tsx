@@ -12,14 +12,22 @@ import {
   HelpCircle,
   ArrowRight,
   ArrowLeft,
+  ArrowDown,
   FileText,
   Layers,
   Minimize2,
   X,
+  Building2,
+  MapPin,
+  ChevronDown,
+  Sparkles,
+  Lock,
 } from 'lucide-react';
 import { PhotoLayoutSettings } from './PhotoLayoutSelector';
 import { AdobePageHandling, AdobePagesToPrint } from './AdobePageSizing';
 import { EnhanceMode } from '@/lib/image-enhancer';
+import { HostelSelectorModal } from '@/components/HostelSelectorModal';
+import { getStationConfig } from '@/lib/stations';
 
 interface DocumentStudioProps {
   uploadedBatch: UploadedBatchData | null;
@@ -41,6 +49,7 @@ interface DocumentStudioProps {
   colorCount: number;
   onRangeChange: (type: 'all' | 'custom', rangeStr: string) => void;
   stationId?: string;
+  onStationSelect?: (stationId: string) => void;
 }
 
 export function DocumentStudio({
@@ -63,10 +72,14 @@ export function DocumentStudio({
   colorCount,
   onRangeChange,
   stationId,
+  onStationSelect,
 }: DocumentStudioProps) {
   const [currentStep, setCurrentStep] = useState<StudioStep>(1);
   const [showRatesModal, setShowRatesModal] = useState(false);
+  const [showStationModal, setShowStationModal] = useState(false);
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
+
+  const currentStation = getStationConfig(stationId || 'block_b');
 
   // Close Rate Card modal on Escape key press
   useEffect(() => {
@@ -79,6 +92,19 @@ export function DocumentStudio({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showRatesModal]);
+
+  // Preload Razorpay checkout gateway in background so payment opens with 0 latency
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !window.Razorpay) {
+      const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+      if (!existing) {
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.async = true;
+        document.body.appendChild(script);
+      }
+    }
+  }, []);
 
   const maxAccessibleStep: StudioStep = uploadedBatch ? 3 : 1;
 
@@ -109,7 +135,7 @@ export function DocumentStudio({
                 Upload Document
               </h2>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                PDF, Word (.docx), or Images. Automatic A4 layout.
+                PDF or Images (PNG, JPG, WEBP). Automatic A4 layout.
               </p>
             </div>
 
@@ -124,43 +150,90 @@ export function DocumentStudio({
             </button>
           </div>
 
+          {/* Target Hostel Print Station Card */}
+          <div className="p-3 sm:p-3.5 rounded-2xl border border-blue-500/25 bg-gradient-to-r from-blue-50/80 via-indigo-50/40 to-transparent dark:from-blue-950/25 dark:via-[#13141c]/60 dark:to-transparent backdrop-blur-md flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Building2 className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                    Hostel Station:
+                  </span>
+                  <span className="font-bold text-xs sm:text-sm text-zinc-900 dark:text-zinc-100 truncate">
+                    {currentStation.name}
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/25">
+                    🟢 Ready
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
+                  <span>{currentStation.address}</span>
+                  <span className="text-zinc-300 dark:text-zinc-600">•</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹3 B&W / ₹5 Color</span>
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowStationModal(true)}
+              className="h-8 px-2.5 sm:px-3 rounded-xl border border-zinc-200 dark:border-white/10 bg-white hover:bg-zinc-100 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] text-zinc-900 dark:text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-colors shadow-2xs cursor-pointer"
+              title="Station switching in setup · Feature to be updated soon"
+            >
+              <Lock className="w-3 h-3 text-zinc-400" />
+              <span>Change</span>
+            </button>
+          </div>
+
           {/* File Upload Zone */}
           <FileUpload
             uploadedBatch={uploadedBatch}
             onBatchUploaded={(data) => {
               onBatchUploaded(data);
             }}
+            onProceed={() => goToStep(2)}
           />
 
-          {/* If file is staged, show sleek Continue button */}
-          {/* If file is staged, show sleek Continue button with Glassmorphism */}
+          {/* Primary Next Action Banner - Instinctive, Pulsing, Impossible to Miss */}
           {uploadedBatch && (
-            <div className="relative p-3.5 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl flex items-center justify-between gap-3 animate-scale-in shadow-xs overflow-hidden">
-              {/* Specular Shining Flare on middle bottom */}
-              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-36 sm:w-56 h-[1.5px] bg-gradient-to-r from-transparent via-white/85 to-transparent shadow-[0_0_12px_rgba(255,255,255,0.8)] pointer-events-none z-10" />
-              <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 w-48 sm:w-64 h-10 bg-[radial-gradient(ellipse_at_bottom,rgba(255,255,255,0.18),transparent_70%)] pointer-events-none z-0" />
+            <div className="relative p-4 sm:p-5 rounded-2xl border-2 border-blue-500/50 bg-gradient-to-br from-blue-950/40 via-[#16161c] to-indigo-950/40 backdrop-blur-xl shadow-[0_4px_30px_rgba(37,99,235,0.25)] space-y-3.5 animate-scale-in overflow-hidden">
+              {/* Luminous perimeter flare */}
+              <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 via-indigo-400 to-emerald-400 animate-pulse" />
 
-              <div className="flex items-center gap-2.5 min-w-0 relative z-10">
-                <div className="w-8 h-8 rounded-xl bg-blue-500/10 dark:bg-white/10 border border-blue-500/20 dark:border-white/15 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div className="truncate min-w-0">
-                  <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate max-w-[200px] sm:max-w-[360px] md:max-w-[500px] lg:max-w-[650px]" title={uploadedBatch.fileName}>
-                    {uploadedBatch.fileName}
-                  </p>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
-                    {uploadedBatch.totalPages} pages ready
-                  </p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
+                    <FileText className="w-4.5 h-4.5" />
+                  </div>
+                  <div className="truncate min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate" title={uploadedBatch.fileName}>
+                        {uploadedBatch.fileName}
+                      </p>
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shrink-0">
+                        {uploadedBatch.totalPages} Pages Ready
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Ready to print · Tap below to review page layout, color modes &amp; print
+                    </p>
+                  </div>
                 </div>
               </div>
 
+              {/* Big, Pulsing Primary Button */}
               <button
                 type="button"
                 onClick={() => goToStep(2)}
-                className="relative overflow-hidden group h-9 px-4 rounded-xl bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs flex items-center gap-1.5 shrink-0 shadow-[0_2px_12px_rgba(255,255,255,0.18)] transition-all active:scale-[0.98] cursor-pointer z-10"
+                className="relative overflow-hidden group w-full h-12 sm:h-13 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_4px_24px_rgba(37,99,235,0.45)] hover:shadow-[0_4px_32px_rgba(37,99,235,0.65)] border border-blue-400/50 transition-all duration-300 active:scale-[0.99] cursor-pointer ring-2 ring-blue-400/40"
               >
-                <span>Customize Pages</span>
-                <ArrowRight className="w-3.5 h-3.5 text-zinc-950 stroke-[2.2] group-hover:translate-x-0.5 transition-transform" />
+                <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer-sheen pointer-events-none" />
+                <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                <span>Customize Pages &amp; Proceed ({uploadedBatch.totalPages} Pgs)</span>
+                <ArrowRight className="w-4.5 h-4.5 text-white stroke-[2.5] group-hover:translate-x-1.5 transition-transform" />
               </button>
             </div>
           )}
@@ -202,28 +275,37 @@ export function DocumentStudio({
             {/* Stage 2 Status & Direct Checkout Button */}
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 text-xs">
-                <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-white/[0.04] text-zinc-800 dark:text-zinc-200 font-mono text-[11px] font-medium border border-zinc-200 dark:border-white/10">
+                <span className="px-2 sm:px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-white/[0.04] text-zinc-800 dark:text-zinc-200 font-mono text-[11px] font-medium border border-zinc-200 dark:border-white/10">
                   {bwCount} B&amp;W
                 </span>
                 {colorCount > 0 ? (
-                  <span className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-300 font-mono text-[11px] font-semibold border border-blue-500/30">
+                  <span className="px-2 sm:px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-300 font-mono text-[11px] font-semibold border border-blue-500/30">
                     {colorCount} Color
                   </span>
                 ) : (
-                  <span className="px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-white/[0.04] text-zinc-500 dark:text-zinc-400 font-mono text-[11px] border border-zinc-200 dark:border-white/10">
+                  <span className="px-2 sm:px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-white/[0.04] text-zinc-500 dark:text-zinc-400 font-mono text-[11px] border border-zinc-200 dark:border-white/10">
                     0 Color
                   </span>
                 )}
               </div>
 
-              {/* Direct Top Checkout CTA Button - Desktop only (Mobile uses bottom checkout button) */}
+              {/* Top Jump/Scroll Down Button - Directly scrolls down to Checkout at the bottom */}
               <button
                 type="button"
-                onClick={() => goToStep(3)}
-                className="hidden lg:flex h-8 px-3.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs items-center gap-1.5 shadow-md shadow-blue-500/20 hover:shadow-blue-500/35 transition-all cursor-pointer shrink-0"
+                onClick={() => {
+                  const target = document.getElementById('stage2-bottom-checkout');
+                  if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                  } else {
+                    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+                  }
+                }}
+                className="flex h-8 sm:h-8.5 px-3 sm:px-3.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/25 font-bold text-xs items-center gap-1.5 shadow-2xs hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shrink-0"
+                title="Scroll down directly to checkout"
               >
-                <span>Continue to Checkout</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">To </span>
+                <span>Checkout</span>
+                <ArrowDown className="w-3.5 h-3.5 animate-bounce" />
               </button>
             </div>
           </div>
@@ -319,23 +401,27 @@ export function DocumentStudio({
             </div>
           </div>
 
-          {/* Bottom Actions - Preserved for Mobile thumbs, hidden on Desktop since controls moved above */}
-          <div className="flex lg:hidden items-center justify-between gap-3 pt-2">
+          {/* Bottom Actions - Sticky docked bar so it's always seeable & reachable without scrolling */}
+          <div
+            id="stage2-bottom-checkout"
+            className="sticky bottom-0 z-40 bg-white/95 dark:bg-[#121316]/95 backdrop-blur-md border-t border-zinc-200/80 dark:border-white/10 p-2.5 sm:p-3 shadow-2xl rounded-t-2xl sm:rounded-xl -mx-3 -mb-3 sm:mx-0 sm:mb-0 flex items-center justify-between gap-3 mt-4"
+          >
             <button
               type="button"
               onClick={() => goToStep(1)}
-              className="h-9 px-3 rounded-lg border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/[0.04] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/[0.08] text-xs font-medium flex items-center gap-1.5 transition-colors"
+              className="h-9 sm:h-10 px-3.5 sm:px-4 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/[0.04] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/[0.08] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
             >
-              <ArrowLeft className="w-3.5 h-3.5" /> Back
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back</span>
             </button>
 
             <button
               type="button"
               onClick={() => goToStep(3)}
-              className="h-9 px-5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-blue-500/25 transition-all"
+              className="h-9 sm:h-10 px-5 sm:px-6 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-blue-500/35 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
-              Continue to Checkout
-              <ArrowRight className="w-3.5 h-3.5" />
+              <span>Continue to Checkout</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -368,7 +454,7 @@ export function DocumentStudio({
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-3.5 items-start">
             {/* Left Column (Cols 1-6): Print Preferences & Advanced Settings */}
             <div className="lg:col-span-6 space-y-2.5">
-              {/* Print Preferences (Sides & Copies) */}
+              {/* Print Preferences with Destination Printer Station */}
               <PrintSettings
                 totalPages={uploadedBatch.totalPages}
                 settings={settings}
@@ -377,6 +463,8 @@ export function DocumentStudio({
                 colorCount={colorCount}
                 pageConfigs={pageConfigs}
                 onPageConfigsChange={onPageConfigsChange}
+                stationId={stationId}
+                onOpenStationModal={() => setShowStationModal(true)}
               />
 
               {/* Advanced Settings (Collapsible) */}
@@ -407,6 +495,7 @@ export function DocumentStudio({
                 customScale={layoutSettings.customScale || advancedOptions.customScale || 100}
                 fitMode={layoutSettings.fitMode || advancedOptions.scaling || 'fit'}
                 drawBorder={layoutSettings.drawBorder}
+                onOpenStationModal={() => setShowStationModal(true)}
               />
             </div>
           </div>
@@ -450,21 +539,21 @@ export function DocumentStudio({
                     <span className="font-bold text-zinc-900 dark:text-zinc-100 text-xs">
                       Standard (1 – 9 sheets)
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-semibold">
-                      Base Rate
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold">
+                      Save 40% vs Offline
                     </span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 space-y-0.5">
-                    <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
-                    <p className="text-zinc-500">Single: <span className="font-bold text-zinc-900 dark:text-zinc-100 font-mono">₹{TIER_RATES.standard.bw.single}</span>/sheet</p>
-                    <p className="text-zinc-500">Double: <span className="font-bold text-zinc-900 dark:text-zinc-100 font-mono">₹{TIER_RATES.standard.bw.duplex}</span>/sheet</p>
+                    <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W (Single)</p>
+                    <p className="text-zinc-500">Web App: <span className="font-bold text-zinc-900 dark:text-zinc-100 font-mono">₹{TIER_RATES.standard.bw.single}</span>/sheet</p>
+                    <p className="text-[10px] text-zinc-400 font-mono">(Offline shop: ₹5)</p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
-                    <p className="text-zinc-500">Single: <span className="font-bold text-zinc-900 dark:text-zinc-100 font-mono">₹{TIER_RATES.standard.color.single}</span>/sheet</p>
-                    <p className="text-zinc-500">Double: <span className="font-bold text-zinc-900 dark:text-zinc-100 font-mono">₹{TIER_RATES.standard.color.duplex}</span>/sheet</p>
+                    <p className="text-zinc-500">Web App: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.standard.color.single}</span>/sheet</p>
+                    <p className="text-[10px] text-zinc-400 font-mono">(Offline shop: ₹10)</p>
                   </div>
                 </div>
               </div>
@@ -477,20 +566,20 @@ export function DocumentStudio({
                       Assignment Saver (10 – 29 sheets)
                     </span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-600 text-white font-bold">
-                      Save 25%
+                      ₹2.50 / pg
                     </span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
                     <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
-                    <p className="text-zinc-500">Single: <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">₹{TIER_RATES.assignment.bw.single}</span>/sheet</p>
-                    <p className="text-zinc-500">Double: <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">₹{TIER_RATES.assignment.bw.duplex}</span>/sheet</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">₹{TIER_RATES.assignment.bw.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save 50% vs shop</p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
-                    <p className="text-zinc-500">Single: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.assignment.color.single}</span>/sheet</p>
-                    <p className="text-zinc-500">Double: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.assignment.color.duplex}</span>/sheet</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.assignment.color.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹5.50/sheet</p>
                   </div>
                 </div>
               </div>
@@ -503,20 +592,20 @@ export function DocumentStudio({
                       Mega Bulk Saver (30+ sheets)
                     </span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold">
-                      Save 37.5% · ₹2/pg
+                      ₹2.00 / pg!
                     </span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
                     <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
-                    <p className="text-zinc-500">Single: <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">₹{TIER_RATES.mega.bw.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-zinc-500">Double: <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">₹{TIER_RATES.mega.bw.duplex}</span>/sheet</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">₹{TIER_RATES.mega.bw.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save 60% vs shop</p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
-                    <p className="text-zinc-500">Single: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.mega.color.single}</span>/sheet</p>
-                    <p className="text-zinc-500">Double: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.mega.color.duplex}</span>/sheet</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.mega.color.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹6.00/sheet</p>
                   </div>
                 </div>
               </div>
@@ -556,10 +645,10 @@ export function DocumentStudio({
                   </span>
                 </div>
                 <h3 className="text-xl sm:text-2xl font-black tracking-tight text-zinc-900 dark:text-white">
-                  Kiosk Rate Schedule &amp; Volume Discounts
+                  NERIST Campus Rate Schedule &amp; Volume Discounts
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl leading-relaxed">
-                  Discounts calculate automatically at checkout as your document sheet count climbs. Duplex (2-sided) printing drops your effective rate to as low as <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">₹2.00 per page side</strong>.
+                  Web-exclusive student pricing: <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">₹3.00 B&amp;W</strong> and <strong className="text-pink-600 dark:text-pink-400 font-semibold">₹5.00 Color</strong> (save up to 40%–50% vs offline shop rates). Online jobs print single-sided for 100% paper-feed reliability.
                 </p>
               </div>
 
@@ -583,10 +672,10 @@ export function DocumentStudio({
                 <thead>
                   <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/80 dark:bg-zinc-950/90 text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">
                     <th className="py-3 px-4 sm:px-5 w-[28%]">Tier &amp; Volume</th>
-                    <th className="py-3 px-3 sm:px-4 w-[18%]">B&amp;W (1-Sided)</th>
-                    <th className="py-3 px-3 sm:px-4 w-[18%]">B&amp;W (Duplex)</th>
-                    <th className="py-3 px-3 sm:px-4 w-[18%]">Color (1-Sided)</th>
-                    <th className="py-3 px-3 sm:px-4 w-[18%]">Color (Duplex)</th>
+                    <th className="py-3 px-3 sm:px-4 w-[20%]">B&amp;W (Web App)</th>
+                    <th className="py-3 px-3 sm:px-4 w-[20%]">Color (Web App)</th>
+                    <th className="py-3 px-3 sm:px-4 w-[18%]">Offline Market Rate</th>
+                    <th className="py-3 px-3 sm:px-4 w-[14%]">Savings</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800/70 text-xs sm:text-sm">
@@ -595,8 +684,8 @@ export function DocumentStudio({
                     <td className="py-3 px-4 sm:px-5">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-sm text-zinc-900 dark:text-white">Standard</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-semibold">
-                          Base Rate
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold">
+                          Web Special
                         </span>
                       </div>
                       <div className="text-xs text-zinc-500 dark:text-zinc-400 font-mono mt-0.5">1 – 9 sheets</div>
@@ -606,16 +695,17 @@ export function DocumentStudio({
                       <div className="text-[10px] text-zinc-500">per sheet</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-zinc-900 dark:text-white">₹{TIER_RATES.standard.bw.duplex}</div>
-                      <div className="text-[10px] text-zinc-500 font-mono">(₹3.00 / side)</div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
                       <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.standard.color.single}</div>
                       <div className="text-[10px] text-zinc-500">per sheet</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.standard.color.duplex}</div>
-                      <div className="text-[10px] text-pink-600/90 dark:text-pink-400/90 font-mono">(₹5.00 / side)</div>
+                      <div className="text-xs font-mono text-zinc-500">₹5 (B&amp;W) / ₹10 (Color)</div>
+                      <div className="text-[10px] text-zinc-400">Campus shops</div>
+                    </td>
+                    <td className="py-3 px-3 sm:px-4">
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                        Save 40–50%
+                      </span>
                     </td>
                   </tr>
 
@@ -625,26 +715,27 @@ export function DocumentStudio({
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-sm text-sky-950 dark:text-sky-200">Assignment Saver</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-700 dark:text-sky-300 font-mono font-bold text-[10px] border border-sky-500/40">
-                          Save 25%
+                          Bulk Discount
                         </span>
                       </div>
                       <div className="text-xs text-sky-700 dark:text-sky-300/90 font-mono font-semibold mt-0.5">10 – 29 sheets</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-sky-700 dark:text-sky-300">₹{TIER_RATES.assignment.bw.single}</div>
-                      <div className="text-[10px] text-sky-600 dark:text-sky-400 font-mono">25% Off Base</div>
+                      <div className="font-bold text-lg font-mono text-sky-700 dark:text-sky-300">₹{TIER_RATES.assignment.bw.single.toFixed(2)}</div>
+                      <div className="text-[10px] text-sky-600 dark:text-sky-400 font-mono">₹2.50 / pg</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-sky-700 dark:text-sky-300">₹{TIER_RATES.assignment.bw.duplex}</div>
-                      <div className="text-[10px] text-sky-700 dark:text-sky-200 font-mono font-bold">(₹2.50 / side)</div>
+                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.assignment.color.single.toFixed(2)}</div>
+                      <div className="text-[10px] text-zinc-500">₹4.50 / pg</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.assignment.color.single}</div>
-                      <div className="text-[10px] text-zinc-500">Save ₹1 / sheet</div>
+                      <div className="text-xs font-mono text-zinc-500">₹50 – ₹145</div>
+                      <div className="text-[10px] text-zinc-400">Standard offline</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.assignment.color.duplex}</div>
-                      <div className="text-[10px] text-pink-600/90 dark:text-pink-400/90 font-mono font-medium">(₹4.00 / side)</div>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                        Save 50%+
+                      </span>
                     </td>
                   </tr>
 
@@ -654,26 +745,27 @@ export function DocumentStudio({
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-sm text-emerald-950 dark:text-emerald-200">Mega Bulk Saver</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-mono font-bold text-[10px] border border-emerald-500/40">
-                          Save 37.5%
+                          Semester Notes
                         </span>
                       </div>
                       <div className="text-xs text-emerald-700 dark:text-emerald-300/90 font-mono font-semibold mt-0.5">30+ sheets</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
                       <div className="font-bold text-lg font-mono text-emerald-700 dark:text-emerald-300">₹{TIER_RATES.mega.bw.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">37.5% Off Base</div>
+                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">₹2.00 / pg!</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-emerald-700 dark:text-emerald-300">₹{TIER_RATES.mega.bw.duplex}</div>
-                      <div className="text-[10px] text-emerald-700 dark:text-emerald-200 font-mono font-bold">(₹2.00 / side!)</div>
+                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.mega.color.single.toFixed(2)}</div>
+                      <div className="text-[10px] text-zinc-500">₹4.00 / pg</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.mega.color.single}</div>
-                      <div className="text-[10px] text-zinc-500">Save ₹2 / sheet</div>
+                      <div className="text-xs font-mono text-zinc-500">₹150+</div>
+                      <div className="text-[10px] text-zinc-400">Standard offline</div>
                     </td>
                     <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{TIER_RATES.mega.color.duplex}</div>
-                      <div className="text-[10px] text-pink-600/90 dark:text-pink-400/90 font-mono font-medium">(₹3.50 / side)</div>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                        Save 60%
+                      </span>
                     </td>
                   </tr>
                 </tbody>
@@ -726,6 +818,19 @@ export function DocumentStudio({
           </div>
         </div>
       )}
+
+      {/* Central Hostel Selector Modal accessible across all studio stages */}
+      <HostelSelectorModal
+        isOpen={showStationModal}
+        onClose={() => setShowStationModal(false)}
+        currentStationId={stationId}
+        onStationSelect={(id) => {
+          if (onStationSelect) {
+            onStationSelect(id);
+          }
+          setShowStationModal(false);
+        }}
+      />
     </div>
   );
 }

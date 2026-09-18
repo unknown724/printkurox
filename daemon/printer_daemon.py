@@ -21,8 +21,6 @@ from datetime import datetime, timezone
 import threading
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-import boto3
-from botocore.client import Config
 from dotenv import load_dotenv
 
 # Determine actual base directory whether running as raw Python or PyInstaller frozen .exe
@@ -48,36 +46,55 @@ if os.path.exists(CONFIG_PATH):
 # =============================================================================
 # CONFIGURATION WITH HARDENED PRODUCTION FALLBACKS
 # =============================================================================
-STATION_ID = os.getenv('STATION_ID', station_data.get('station_id', 'main'))
-STATION_NAME = os.getenv('STATION_NAME', station_data.get('station_name', 'PrintKurox Main Kiosk'))
+STATION_ID = os.getenv('STATION_ID', station_data.get('station_id', 'block_b'))
+STATION_NAME = os.getenv('STATION_NAME', station_data.get('station_name', 'NERIST Block B (Pare Hostel)'))
+
+STATION_SLOTS = {
+    'main': 1,
+    'block_b': 1,
+    'block_c': 2,
+    'block_a': 3,
+    'block_d': 4,
+    'block_e': 5,
+    'block_f': 6,
+    'block_g': 7,
+    'block_h': 8,
+    'girls_hostel': 9,
+    'romen': 154,
+    'romen_xerox': 154,
+}
+STATION_SLOT = STATION_SLOTS.get(STATION_ID, 154 if 'romen' in STATION_ID else 1)
 
 # Ensure only one instance of the daemon can ever run on this machine per station
-lock_port = 49152 if STATION_ID == 'main' else 49153
+lock_port = 49150 + (STATION_SLOT % 100)
 _lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     _lock_socket.bind(('127.0.0.1', lock_port))
 except OSError:
-    print(f"[ERROR] Another instance of PrintKurox daemon for [{STATION_ID}] is already active on this system. Exiting immediately to prevent duplicate prints.")
+    print(f"[ERROR] Another instance of PrintKurox daemon for [{STATION_ID}] (port {lock_port}) is already active on this system. Exiting immediately to prevent duplicate prints.")
     sys.exit(0)
 
-import base64
+# =============================================================================
+# ZERO-CLOUD-SECRET PROXY CONFIGURATION
+# =============================================================================
+# The daemon connects ONLY to the authenticated Next.js proxy server.
+# Master Cloudflare D1 and R2 cloud credentials NEVER touch this laptop!
+SERVER_URL = os.getenv('SERVER_URL', station_data.get('server_url', 'http://localhost:3000' if os.path.exists(os.path.join(BASE_DIR, '.dev_local')) or os.path.exists(os.path.join(BASE_DIR, '..', '.env.local')) else 'https://printnerist.shop')).rstrip('/')
+STATION_TOKEN = os.getenv('STATION_TOKEN', station_data.get('station_token', ''))
 
-CLOUDFLARE_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID') or '948fd75d8b84a5cf20559d6aa789d4dd'
-_DEFAULT_TOKEN = base64.b64decode('Y2Z1dF9wZTVnWEhjVFBMVWVERkVLZXc5bUVyN1BaRFVycU9VUzdzeEk1amhEOGM2MzhjYzQ=').decode('utf-8')
-CLOUDFLARE_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN') or _DEFAULT_TOKEN
-CLOUDFLARE_D1_DATABASE_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID') or '3f4d4547-e86b-4cdd-a867-9ebba19c12c9'
-
-R2_ACCESS_KEY_ID = os.getenv('R2_ACCESS_KEY_ID') or '4a952eb1b22509358c27e7f8dbfc3d83'
-_DEFAULT_SECRET = base64.b64decode('NTViMGZiYmNiZjhjZTViZWRkNGEzZTEzNWM2NTI0MDRiZjMyNzdjNjE5ZWZhNzg0ZGE4OTgyYmQxZDc3OTJlZg==').decode('utf-8')
-R2_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY') or _DEFAULT_SECRET
-R2_ENDPOINT = os.getenv('R2_ENDPOINT') or f'https://{CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com'
-R2_BUCKET_NAME = os.getenv('R2_BUCKET_NAME') or 'kiosk-uploads'
+# Fallback in local development if token is not configured in station_config.json
+if not STATION_TOKEN and (os.path.exists(os.path.join(BASE_DIR, '.dev_local')) or os.path.exists(os.path.join(BASE_DIR, '..', '.env.local'))):
+    import hmac, hashlib
+    master_key = os.getenv('ADMIN_SECRET_KEY') or 'Kurox725#29'
+    token_hash = hmac.new(master_key.encode(), f'station_daemon:{STATION_ID}'.encode(), hashlib.sha256).hexdigest()
+    STATION_TOKEN = f"kurox_st_{STATION_ID}_{token_hash}"
 
 # Printer & SumatraPDF Configuration
 PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  # Leave blank for default Windows printer
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '30'))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '90')) # Retains local print archive for 90 days on laptop
@@ -86,15 +103,6 @@ RETENTION_MINUTES = RETENTION_DAYS * 24 * 60
 # Ensure local directories exist
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
-
-# Initialize S3 Client for Cloudflare R2
-s3_client = boto3.client(
-    's3',
-    endpoint_url=R2_ENDPOINT,
-    aws_access_key_id=R2_ACCESS_KEY_ID,
-    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-    config=Config(signature_version='s3v4')
-)
 
 # =============================================================================
 # HELPER LOGGING & AUDIO
@@ -122,59 +130,80 @@ def play_chime():
         pass
 
 # =============================================================================
-# CLOUDFLARE D1 DATABASE HELPERS
+# ZERO-CLOUD-SECRET PROXY SESSIONS (Thread-Isolated)
 # =============================================================================
-def query_d1(sql, params=None):
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/d1/database/{CLOUDFLARE_D1_DATABASE_ID}/query"
-    headers = {
-        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    body = {"sql": sql, "params": params or []}
-    resp = requests.post(url, headers=headers, json=body, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    if not data.get("success"):
-        raise Exception(f"D1 error: {data.get('errors')}")
-    result_array = data.get("result", [])
-    if result_array and len(result_array) > 0:
-        return result_array[0].get("results", [])
-    return []
+_job_session = requests.Session()
+_job_adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=2)
+_job_session.mount('https://', _job_adapter)
+_job_session.mount('http://', _job_adapter)
+_job_session.headers.update({
+    "X-Station-Token": STATION_TOKEN,
+    "Content-Type": "application/json",
+    "User-Agent": f"PrintNERISTDaemon/2.0 ({STATION_ID})"
+})
 
-def update_job_status(job_id, status):
-    sql = "UPDATE print_jobs SET status = ? WHERE id = ?"
-    query_d1(sql, [status, job_id])
-    log(f"Job {job_id[:8]} status updated -> {status}", "SUCCESS")
+_hb_session = requests.Session()
+_hb_adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=10, max_retries=1)
+_hb_session.mount('https://', _hb_adapter)
+_hb_session.mount('http://', _hb_adapter)
+_hb_session.headers.update({
+    "X-Station-Token": STATION_TOKEN,
+    "Content-Type": "application/json",
+    "User-Agent": f"PrintNERISTDaemon/2.0 ({STATION_ID})"
+})
+
+_wake_event = threading.Event()
+
+def update_job_status(job_id, status, pages_printed=None, sheets_used=None):
+    """Updates job status and supplies depletion via server proxy."""
+    url = f"{SERVER_URL}/api/daemon/status"
+    body = {
+        "jobId": job_id,
+        "status": status,
+        "pagesPrinted": pages_printed,
+        "sheetsUsed": sheets_used
+    }
+    try:
+        resp = _job_session.post(url, json=body, timeout=(3.0, 10.0))
+        if resp.status_code == 200:
+            log(f"Job {job_id[:8]} status updated -> {status}", "SUCCESS")
+        else:
+            log(f"Failed to update status for {job_id[:8]} (HTTP {resp.status_code}): {resp.text}", "WARN")
+    except Exception as e:
+        log(f"Notice: Status update network glitch for {job_id[:8]}: {e}", "WARN")
 
 def claim_paid_job(job_id):
     """
-    Atomically claims a PAID job by setting status to PRINTING_ODD.
-    Uses compare-and-swap (CAS) check: status MUST be 'PAID'.
-    Returns True if successfully claimed, False if already claimed or modified.
+    Atomically claims a PAID job via Compare-And-Swap (CAS) on server proxy.
+    Returns True if claimed, False if already claimed.
     """
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/d1/database/{CLOUDFLARE_D1_DATABASE_ID}/query"
-    headers = {
-        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    sql = "UPDATE print_jobs SET status = 'PRINTING_ODD' WHERE id = ? AND status = 'PAID'"
-    body = {"sql": sql, "params": [job_id]}
+    url = f"{SERVER_URL}/api/daemon/claim"
+    body = {"jobId": job_id}
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if not data.get("success"):
-            return False
-        result_array = data.get("result", [])
-        if result_array and len(result_array) > 0:
-            meta = result_array[0].get("meta", {})
-            if meta.get("changes", 0) > 0:
+        resp = _job_session.post(url, json=body, timeout=(3.0, 10.0))
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("claimed"):
                 log(f"Atomically claimed job {job_id[:8]} -> PRINTING_ODD", "SUCCESS")
                 return True
         return False
     except Exception as e:
         log(f"Failed to claim job {job_id[:8]}: {e}", "WARN")
         return False
+
+def download_cloud_file(job_id, dest_path):
+    """
+    Downloads print document securely via the server proxy.
+    The laptop never accesses Cloudflare R2 directly!
+    """
+    url = f"{SERVER_URL}/api/daemon/job-file?jobId={job_id}"
+    resp = _job_session.get(url, stream=True, timeout=(5.0, 60.0))
+    resp.raise_for_status()
+    with open(dest_path, 'wb') as f:
+        for chunk in resp.iter_content(chunk_size=65536):
+            if chunk:
+                f.write(chunk)
+    return True
 
 # =============================================================================
 # SUMATRAPDF PRINT ENGINE
@@ -692,12 +721,23 @@ class LocalArchiveHTTPHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
+    def do_POST(self):
+        self.do_GET()
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         pickup = params.get('pickup', [None])[0]
         job_id = params.get('job_id', [None])[0]
         name = params.get('name', [None])[0]
+
+        if parsed.path in ('/poll-now', '/notify-job', '/wake'):
+            _wake_event.set()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"success": true, "message": "Daemon awakened immediately"}')
+            return
 
         if parsed.path in ('/check', '/health'):
             self.send_response(200)
@@ -807,51 +847,10 @@ def purge_old_local_files():
 # =============================================================================
 def record_supplies_depletion(job):
     """
-    Atomically deducts printed pages and sheets from printer_supplies in D1 for main kiosk.
-    Partner stations manage their own paper and ink physically.
+    Supplies depletion is automatically computed and deducted server-side
+    when update_job_status reports COMPLETED via /api/daemon/status.
     """
-    if STATION_ID != 'main':
-        log(f"Partner station [{STATION_ID}]: local supplies managed independently, skipping central kiosk deduction", "INFO")
-        return
-
-    try:
-        pages = max(1, int(job.get("total_pages") or 1)) * max(1, int(job.get("copies") or 1))
-        duplex_sheets = int(job.get("duplex_sheets") or 0) * max(1, int(job.get("copies") or 1))
-        single_sheets = int(job.get("single_sheets") or 0) * max(1, int(job.get("copies") or 1))
-        total_sheets = duplex_sheets + single_sheets
-        if total_sheets <= 0:
-            total_sheets = pages
-
-        color_mode = str(job.get("color_mode") or "bw").lower()
-        if color_mode == "color":
-            sql = """
-                UPDATE printer_supplies 
-                SET color_pages_remaining = MAX(0, color_pages_remaining - ?),
-                    c_pages_remaining = MAX(0, COALESCE(c_pages_remaining, color_pages_remaining) - ?),
-                    m_pages_remaining = MAX(0, COALESCE(m_pages_remaining, color_pages_remaining) - ?),
-                    y_pages_remaining = MAX(0, COALESCE(y_pages_remaining, color_pages_remaining) - ?),
-                    c_pct = ROUND(MAX(0.0, (COALESCE(c_pages_remaining, color_pages_remaining) - ?) * 100.0 / 7500.0), 1),
-                    m_pct = ROUND(MAX(0.0, (COALESCE(m_pages_remaining, color_pages_remaining) - ?) * 100.0 / 7500.0), 1),
-                    y_pct = ROUND(MAX(0.0, (COALESCE(y_pages_remaining, color_pages_remaining) - ?) * 100.0 / 7500.0), 1),
-                    paper_sheets_remaining = MAX(0, paper_sheets_remaining - ?),
-                    updated_at = datetime('now')
-                WHERE id = 1
-            """
-            query_d1(sql, [pages, pages, pages, pages, pages, pages, pages, total_sheets])
-        else:
-            sql = """
-                UPDATE printer_supplies 
-                SET black_pages_remaining = MAX(0, black_pages_remaining - ?),
-                    bk_pages_remaining = MAX(0, COALESCE(bk_pages_remaining, black_pages_remaining) - ?),
-                    bk_pct = ROUND(MAX(0.0, (COALESCE(bk_pages_remaining, black_pages_remaining) - ?) * 100.0 / 4500.0), 1),
-                    paper_sheets_remaining = MAX(0, paper_sheets_remaining - ?),
-                    updated_at = datetime('now')
-                WHERE id = 1
-            """
-            query_d1(sql, [pages, pages, pages, total_sheets])
-        log(f"Supplies updated: -{pages} {color_mode.upper()} pages, -{total_sheets} paper sheets", "INFO")
-    except Exception as e:
-        log(f"Supplies depletion update warning: {e}", "WARN")
+    pass
 
 def get_windows_printer_telemetry():
     """Queries Windows Spooler via PowerShell for live status and queue count."""
@@ -913,30 +912,18 @@ def get_windows_printer_telemetry():
 # HEARTBEAT & TELEMETRY SYNC
 # =============================================================================
 def write_heartbeat():
-    """Upsert daemon heartbeat and printer telemetry with live hardware metrics."""
+    """Upsert daemon heartbeat and printer telemetry with live hardware metrics via server proxy."""
     try:
-        station_slot = 154 if STATION_ID in ['romen', 'romen_xerox'] else 1
-
-        # Record station heartbeat
-        query_d1("""
-            INSERT INTO daemon_heartbeat (id, updated_at, station_id)
-            VALUES (?, datetime('now'), ?)
-            ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now'), station_id = excluded.station_id
-        """, [station_slot, STATION_ID])
-
-        # Sync hardware telemetry for main central kiosk only (partner stations have separate hardware)
-        if STATION_ID == 'main':
-            telem = get_windows_printer_telemetry()
-            query_d1("""
-                UPDATE printer_telemetry
-                SET printer_name = ?, is_online = ?, status_text = ?, spooler_jobs = ?, updated_at = datetime('now')
-                WHERE id = 1
-            """, [telem["name"], telem["is_online"], telem["status_text"], telem["spooler_jobs"]])
+        telem = get_windows_printer_telemetry()
+        url = f"{SERVER_URL}/api/daemon/heartbeat"
+        body = {"telemetry": telem}
+        resp = _hb_session.post(url, json=body, timeout=(3.0, 8.0))
+        if resp.status_code == 200:
             log(f"Heartbeat & Telemetry synced [{STATION_ID}] ({telem['name']}: {telem['status_text']})", "INFO")
-        else:
-            log(f"Heartbeat synced [{STATION_ID}] (Slot {station_slot})", "INFO")
+        elif resp.status_code == 401:
+            log(f"Heartbeat warning: Station token unauthorized for [{STATION_ID}]", "WARN")
     except Exception as hb_err:
-        log(f"Heartbeat write failed: {hb_err}", "WARN")
+        log(f"Heartbeat notice: {hb_err}", "WARN")
 
 # =============================================================================
 # MAIN DAEMON LOOP
@@ -965,9 +952,22 @@ def main():
     daemon_file = os.path.abspath(__file__)
     start_mtime = os.path.getmtime(daemon_file)
 
-    # Write initial heartbeat so the frontend sees us immediately
-    write_heartbeat()
-    last_heartbeat = time.time()
+    # Start background heartbeat & hardware telemetry worker thread
+    def heartbeat_worker():
+        time.sleep(0.5)
+        try:
+            write_heartbeat()
+        except Exception:
+            pass
+        while True:
+            time.sleep(HEARTBEAT_INTERVAL_SECONDS)
+            try:
+                write_heartbeat()
+            except Exception as hb_err:
+                log(f"Heartbeat background notice: {hb_err}", "WARN")
+
+    hb_thread = threading.Thread(target=heartbeat_worker, daemon=True)
+    hb_thread.start()
 
     while True:
         try:
@@ -979,13 +979,22 @@ def main():
             except Exception:
                 pass
 
-            # Query for PAID jobs filtered strictly by station
-            if STATION_ID == 'main':
-                sql = "SELECT * FROM print_jobs WHERE status = 'PAID' AND (station_id = 'main' OR station_id IS NULL) ORDER BY created_at ASC LIMIT 5"
-                jobs = query_d1(sql)
-            else:
-                sql = "SELECT * FROM print_jobs WHERE status = 'PAID' AND station_id = ? ORDER BY created_at ASC LIMIT 5"
-                jobs = query_d1(sql, [STATION_ID])
+            # Poll for PAID jobs strictly via the Zero-Trust server proxy
+            try:
+                poll_resp = _job_session.post(f"{SERVER_URL}/api/daemon/poll", timeout=(3.0, 10.0))
+                if poll_resp.status_code == 200:
+                    poll_data = poll_resp.json()
+                    jobs = poll_data.get("jobs", [])
+                elif poll_resp.status_code == 401:
+                    log(f"Access Denied: Station token is invalid or revoked for [{STATION_ID}]. Polling paused.", "ERROR")
+                    time.sleep(5)
+                    continue
+                else:
+                    jobs = []
+            except requests.exceptions.RequestException as poll_err:
+                log(f"Server proxy connection warning: {poll_err}. Retrying in 2s...", "WARN")
+                time.sleep(2)
+                continue
 
             if jobs:
                 log(f"Found {len(jobs)} pending paid job(s) in queue!", "ALERT")
@@ -993,10 +1002,10 @@ def main():
                 for job in jobs:
                     job_id = job["id"]
                     pickup_code = job["pickup_code"]
-                    file_key = job["file_key"]
-                    file_name = job["file_name"]
-                    is_duplex = bool(job["is_duplex"])
-                    total_pages = job["total_pages"]
+                    file_key = job.get("file_key")
+                    file_name = job.get("file_name") or "document.pdf"
+                    is_duplex = bool(job.get("is_duplex"))
+                    total_pages = job.get("total_pages") or 1
 
                     log(f"Processing Job {pickup_code} ({file_name}) — {total_pages} pages, Duplex: {is_duplex}")
 
@@ -1005,7 +1014,7 @@ def main():
                         log(f"Job {job_id[:8]} was already claimed by another worker. Skipping.", "WARN")
                         continue
 
-                    # 1. Resolve document file: Check local PC archive first, then Cloudflare R2
+                    # 1. Resolve document file: Check local PC archive first, then Server Proxy
                     raw_name = os.path.basename(file_name.replace('\\', '/'))
                     base_name = re.sub(r'[^a-zA-Z0-9._-]', '_', raw_name) or "document"
                     clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code)
@@ -1019,18 +1028,15 @@ def main():
                     if local_archived and os.path.exists(local_archived):
                         log(f"Found document in local PC archive: {os.path.basename(local_archived)}! Printing directly from local disk.", "SUCCESS")
                         local_path = local_archived
-                    elif file_key and file_key.startswith('uploads/'):
+                    else:
                         try:
-                            log(f"Downloading from R2 ({file_key})...")
-                            s3_client.download_file(R2_BUCKET_NAME, file_key, local_path)
-                        except Exception as s3_err:
-                            log(f"Failed to download {file_key} from R2: {s3_err}", "ERROR")
+                            log(f"Downloading document securely via server proxy...")
+                            download_cloud_file(job_id, local_path)
+                            log(f"Downloaded {os.path.basename(local_path)} successfully", "SUCCESS")
+                        except Exception as dl_err:
+                            log(f"Failed to download job {pickup_code} via server proxy: {dl_err}", "ERROR")
                             update_job_status(job_id, "FAILED")
                             continue
-                    else:
-                        log(f"Document for Job {pickup_code} not found in local PC archive and cloud copy was purged.", "ERROR")
-                        update_job_status(job_id, "FAILED")
-                        continue
 
                     # Ensure images are converted to PDF for clean printing respecting orientation
                     orientation = job.get("orientation") or "portrait"
@@ -1048,20 +1054,16 @@ def main():
             # Purge local cache periodically
             purge_old_local_files()
 
-            # Write heartbeat every HEARTBEAT_INTERVAL_SECONDS
-            now = time.time()
-            if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
-                write_heartbeat()
-                last_heartbeat = now
-
         except requests.exceptions.RequestException as net_err:
-            log(f"Network error communicating with Cloudflare: {net_err}. Retrying in 5s...", "WARN")
-            time.sleep(5)
+            log(f"Network error communicating with Cloudflare: {net_err}. Retrying in 2s...", "WARN")
+            time.sleep(2)
         except Exception as e:
             log(f"Unexpected error in daemon loop: {e}", "ERROR")
-            time.sleep(POLL_INTERVAL_SECONDS)
+            time.sleep(1)
 
-        time.sleep(POLL_INTERVAL_SECONDS)
+        # Sleep or wake up immediately if a print job trigger is received via local HTTP
+        _wake_event.wait(timeout=POLL_INTERVAL_SECONDS)
+        _wake_event.clear()
 
 if __name__ == '__main__':
     try:

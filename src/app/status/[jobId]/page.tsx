@@ -18,6 +18,8 @@ import {
   Building2,
   MessageCircle,
   PackageCheck,
+  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BorderBeam } from '@/components/ui/BorderBeam';
@@ -58,6 +60,7 @@ export default function JobStatusPage({
   // Poll status every 2 seconds
   useEffect(() => {
     let active = true;
+    let intervalId: NodeJS.Timeout | null = null;
 
     const fetchStatus = async () => {
       try {
@@ -71,7 +74,7 @@ export default function JobStatusPage({
 
         // Stop polling when job reaches terminal state
         if (data.status === 'COMPLETED' || data.status === 'FAILED') {
-          clearInterval(intervalId);
+          if (intervalId) clearInterval(intervalId);
         }
 
         // Trigger celebratory confetti once on completion or initial paid
@@ -93,11 +96,11 @@ export default function JobStatusPage({
     };
 
     fetchStatus();
-    const intervalId = setInterval(fetchStatus, 2000);
+    intervalId = setInterval(fetchStatus, 2000);
 
     return () => {
       active = false;
-      clearInterval(intervalId);
+      if (intervalId) clearInterval(intervalId);
     };
   }, [jobId]);
 
@@ -298,6 +301,18 @@ export default function JobStatusPage({
         </div>
       </div>
 
+      {/* Primary Hero Action: Print Another Document (New Print) */}
+      <div className="print:hidden">
+        <Link
+          href="/"
+          className="w-full py-3.5 sm:py-4 px-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-xl shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer group"
+        >
+          <Sparkles className="w-4 h-4 text-blue-200 group-hover:rotate-12 transition-transform" />
+          <span>Print Another Document (New Print)</span>
+          <ArrowRight className="w-4 h-4 text-white/80 group-hover:translate-x-1 transition-transform" />
+        </Link>
+      </div>
+
       {/* Prominent Collection Point Banner */}
       <div className="rounded-2xl p-4 sm:p-5 border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl relative overflow-hidden shadow-xs print:border-black print:bg-slate-50 print:text-black">
         <div className="flex items-start gap-3.5">
@@ -409,14 +424,15 @@ export default function JobStatusPage({
           </div>
         </div>
 
-        {/* Quick Reprint Action */}
+        {/* Quick Reprint Action - Highlighted */}
         {!job.isExpired && (
           <Link
             href="/"
-            className="text-xs text-zinc-800 dark:text-zinc-200 hover:text-white bg-zinc-100 hover:bg-zinc-200 dark:bg-white/5 dark:hover:bg-white/10 border border-zinc-300 dark:border-white/10 px-3 py-2 rounded-xl transition-all flex items-center space-x-1.5"
+            className="relative overflow-hidden group px-4 py-2 rounded-xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-xs flex items-center space-x-1.5 shadow-[0_0_18px_rgba(245,158,11,0.45)] hover:shadow-[0_0_24px_rgba(245,158,11,0.65)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-95 cursor-pointer shrink-0"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Print Another</span>
+            <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent animate-shimmer-sheen pointer-events-none" />
+            <RotateCcw className="w-3.5 h-3.5 text-zinc-950 stroke-[2.5] group-hover:-rotate-90 transition-transform duration-300" />
+            <span className="tracking-wide">Print Another</span>
           </Link>
         )}
       </div>
@@ -505,6 +521,19 @@ export default function JobStatusPage({
             <span className="truncate">{copied ? 'Copied!' : 'Copy Link'}</span>
           </button>
         </div>
+      </div>
+
+      {/* Prominent Bottom Action: Print Another Document */}
+      <div className="pt-2 pb-6 print:hidden">
+        <Link
+          href="/"
+          className="relative overflow-hidden group w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-zinc-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-[0_0_24px_rgba(245,158,11,0.4)] hover:shadow-[0_0_36px_rgba(245,158,11,0.6)] border border-amber-200/90 dark:border-amber-300/80 transition-all duration-300 active:scale-[0.98] cursor-pointer"
+        >
+          <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/35 to-transparent animate-shimmer-sheen pointer-events-none" />
+          <RotateCcw className="w-5 h-5 text-zinc-950 stroke-[2.5] group-hover:-rotate-90 transition-transform duration-300" />
+          <span className="tracking-wide font-black">Print Another Document (New Print)</span>
+          <ArrowRight className="w-4 h-4 text-zinc-950 stroke-[2.5] opacity-85 group-hover:translate-x-1 transition-transform" />
+        </Link>
       </div>
     </div>
   );

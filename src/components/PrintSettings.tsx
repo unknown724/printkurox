@@ -1,9 +1,11 @@
 'use client';
 
 import React from 'react';
-import { Minus, Plus, Layers, Palette, Copy } from 'lucide-react';
+import { Minus, Plus, Palette, Copy, CheckCircle2, Info, Building2, MapPin, ChevronRight } from 'lucide-react';
 import { PageConfig } from '@/lib/pricing';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { getStationConfig } from '@/lib/stations';
+import { usePrinterStatus } from '@/lib/usePrinterStatus';
 
 export interface PrintSettingsState {
   colorMode: 'bw' | 'color' | 'custom';
@@ -21,6 +23,8 @@ interface PrintSettingsProps {
   colorCount?: number;
   pageConfigs?: PageConfig[];
   onPageConfigsChange?: (configs: PageConfig[]) => void;
+  stationId?: string;
+  onOpenStationModal?: () => void;
 }
 
 export function PrintSettings({
@@ -28,14 +32,53 @@ export function PrintSettings({
   onChange,
   bwCount,
   colorCount,
+  stationId,
+  onOpenStationModal,
 }: PrintSettingsProps) {
+  const currentStation = getStationConfig(stationId || 'block_b');
+  const { online: printerOnline } = usePrinterStatus(30_000, currentStation.id);
+
   const update = (partial: Partial<PrintSettingsState>) => {
     onChange({ ...settings, ...partial });
   };
 
   return (
     <div className="space-y-3">
-      {/* 1. Color Mode - Glassmorphic Card */}
+      {/* 0. Target Printer Station & Hostel Pickup Destination (Compact & Professional) */}
+      <div className="rounded-2xl border border-blue-500/20 dark:border-blue-500/15 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-2.5 sm:p-3 shadow-xs flex items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 border border-blue-500/20 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+            <Building2 className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-bold text-xs sm:text-sm text-zinc-900 dark:text-zinc-100 truncate">
+                {currentStation.name}
+              </span>
+              <span className="inline-flex items-center gap-1 text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0">
+                <span className={`w-1 h-1 rounded-full ${printerOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                {printerOnline ? 'Online' : 'Standby'}
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
+              <span className="truncate">{currentStation.address}</span>
+            </p>
+          </div>
+        </div>
+
+        {onOpenStationModal && (
+          <button
+            type="button"
+            onClick={onOpenStationModal}
+            className="h-7.5 sm:h-8 px-2.5 sm:px-3 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 hover:bg-zinc-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-zinc-800 dark:text-zinc-200 font-semibold text-xs flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+          >
+            <span>Change</span>
+            <ChevronRight className="w-3 h-3 opacity-60" />
+          </button>
+        )}
+      </div>
+      {/* 1. Color Mode - Glassmorphic Card with Campus Discount Rates */}
       <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-4 shadow-xs space-y-3 overflow-hidden">
         {/* Luminous top edge sheen */}
         <span
@@ -49,24 +92,27 @@ export function PrintSettings({
               <Palette className="w-3.5 h-3.5" />
             </div>
             <span>Color Mode</span>
+            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
+              Web Discount
+            </span>
           </div>
 
           <span
             className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-full border ${
               settings.colorMode === 'color'
-                ? 'bg-white/10 text-white border-white/20'
+                ? 'bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/25'
                 : 'bg-zinc-100 dark:bg-white/[0.04] text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-white/10'
             }`}
           >
             {settings.colorMode === 'custom'
               ? `${bwCount ?? 0} B&W + ${colorCount ?? 0} Color`
               : settings.colorMode === 'bw'
-              ? '₹4 / sheet'
-              : '₹7 / sheet'}
+              ? '₹3 / sheet'
+              : '₹5 / sheet'}
           </span>
         </div>
 
-        {/* Highlighted Color Mode Options */}
+        {/* Highlighted Color Mode Options (₹3 B&W / ₹5 Color) */}
         <SegmentedControl
           value={settings.colorMode === 'custom' ? 'bw' : settings.colorMode}
           onChange={(val) => update({ colorMode: val as 'bw' | 'color' })}
@@ -74,24 +120,26 @@ export function PrintSettings({
             {
               value: 'bw',
               label: 'Black & White',
-              badge: '₹4/pg',
+              badge: '₹3/pg',
+              sublabel: 'Standard Notes & Labs',
               icon: <span className="w-2.5 h-2.5 rounded-full bg-zinc-300 dark:bg-zinc-400 shrink-0 shadow-2xs" />,
               activeClassName:
-                'bg-white text-zinc-950 dark:bg-white/[0.08] dark:text-white border border-zinc-300/80 dark:border-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
+                'bg-white text-zinc-950 dark:bg-white/[0.12] dark:text-white border border-zinc-300/80 dark:border-white/25 shadow-xs font-bold',
               badgeClassName:
                 'bg-zinc-100 dark:bg-white/10 text-zinc-800 dark:text-zinc-100 border border-zinc-300 dark:border-white/15',
             },
             {
               value: 'color',
               label: 'Full Color',
-              badge: '₹7/pg',
+              badge: '₹5/pg',
+              sublabel: 'Diagrams & Certificates',
               icon: (
                 <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-blue-400 via-purple-400 to-pink-400 shrink-0 shadow-xs" />
               ),
               activeClassName:
-                'bg-white text-zinc-950 dark:bg-white/[0.08] dark:text-white border border-zinc-300/80 dark:border-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
+                'bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-blue-500/20 text-pink-600 dark:text-pink-300 border-2 border-pink-500 shadow-[0_0_18px_rgba(236,72,153,0.35)] font-bold ring-1 ring-pink-500/40',
               badgeClassName:
-                'bg-zinc-900 dark:bg-white text-white dark:text-black border-transparent shadow-2xs',
+                'bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 text-white font-bold border-transparent shadow-xs',
             },
           ]}
         />
@@ -104,57 +152,6 @@ export function PrintSettings({
             </span>
           </div>
         )}
-      </div>
-
-      {/* 2. Sides - Highlighted Single vs Double Sided Eco */}
-      <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-3 sm:p-3.5 shadow-xs space-y-2.5 overflow-hidden">
-        {/* Luminous top edge sheen */}
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute left-4 top-0 h-px w-[calc(100%-2rem)] bg-gradient-to-r from-emerald-500/0 via-emerald-400/30 to-emerald-500/0"
-        />
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-            <div className="w-6 h-6 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-600 dark:text-zinc-300 shadow-2xs">
-              <Layers className="w-3.5 h-3.5" />
-            </div>
-            <span>Print Sides</span>
-          </div>
-
-          <span
-            className={`text-[11px] px-2.5 py-0.5 rounded-full border font-medium ${
-              settings.isDuplex
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                : 'bg-zinc-100/80 dark:bg-white/[0.04] text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-white/10'
-            }`}
-          >
-            {settings.isDuplex ? 'Front & Back (Eco)' : 'Single Side'}
-          </span>
-        </div>
-
-        <SegmentedControl
-          value={settings.isDuplex ? 'duplex' : 'single'}
-          onChange={(val) => update({ isDuplex: val === 'duplex' })}
-          options={[
-            {
-              value: 'single',
-              label: 'Single-Sided',
-              sublabel: '1 pg/sheet',
-              activeClassName:
-                'bg-white text-zinc-950 dark:bg-white/[0.08] dark:text-white border border-zinc-300/80 dark:border-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)] font-bold',
-            },
-            {
-              value: 'duplex',
-              label: 'Double-Sided',
-              badge: 'Eco Saver',
-              sublabel: '2 pgs/sheet',
-              activeClassName:
-                'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40 dark:border-emerald-400/50 shadow-[0_0_16px_rgba(16,185,129,0.25)] font-bold',
-              badgeClassName: 'bg-emerald-500 text-white border-none shadow-2xs',
-            },
-          ]}
-        />
       </div>
 
       {/* 3. Copies */}
