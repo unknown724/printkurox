@@ -711,8 +711,8 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
             <div className="w-14 h-14 rounded-2xl bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-800 dark:text-zinc-200 mb-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_12px_rgba(0,0,0,0.3)] group-hover:scale-105 group-hover:border-zinc-400 dark:group-hover:border-white/25 transition-all">
               <UploadCloud className="w-7 h-7" />
             </div>
-            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Choose files or drag &amp; drop
+            <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+              Tap to select document or drag &amp; drop
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               Select PDF or image documents for 100% vector print accuracy
@@ -728,7 +728,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] text-zinc-500 dark:text-zinc-400 pt-0.5 font-medium">
+      <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3 text-[11px] text-zinc-500 dark:text-zinc-400 pt-0.5 font-medium">
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
           <span>Automatic A4 sizing</span>
@@ -737,6 +737,10 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
           <span className="text-blue-600 dark:text-blue-400 font-semibold">Word files:</span>
           <span>Save as PDF in Word/Docs for 100% exact layout</span>
+        </span>
+        <span className="text-zinc-300 dark:text-zinc-700 select-none hidden sm:inline">•</span>
+        <span className="w-full sm:w-auto text-center text-[10px] text-zinc-500 dark:text-zinc-400 mt-1 sm:mt-0">
+          🔒 Zero-Trust Encrypted · 100% Private · Automatically purged after printing
         </span>
       </div>
 

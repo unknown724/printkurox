@@ -427,13 +427,13 @@ export function AdobePageHandling({
             {/* 4. Custom Scale */}
             <div
               onClick={() => handleScalingChange('custom', customScale || 100)}
-              className={`min-h-[38px] px-2 py-1.5 rounded-lg border flex items-center justify-between gap-1 cursor-pointer transition-all ${
+              className={`col-span-2 sm:col-span-1 min-h-[38px] px-2.5 py-1.5 rounded-lg border flex items-center justify-between gap-2 cursor-pointer transition-all ${
                 scaling === 'custom'
                   ? 'border-blue-500 bg-blue-500/10 dark:bg-blue-950/35 text-blue-950 dark:text-blue-100 ring-1 ring-blue-500/40 shadow-2xs'
                   : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-700'
               }`}
             >
-              <div className="flex items-center gap-1.5 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 shrink-0">
                 <input
                   type="radio"
                   name="adobeScaling"
@@ -441,7 +441,7 @@ export function AdobePageHandling({
                   onChange={() => handleScalingChange('custom', customScale || 100)}
                   className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer shrink-0"
                 />
-                <span className="font-semibold text-[11px] truncate">Custom</span>
+                <span className="font-semibold text-[11px] whitespace-nowrap">Custom Scale</span>
               </div>
 
               {/* Compact Touch Stepper with Editable Input */}

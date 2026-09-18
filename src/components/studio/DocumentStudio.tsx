@@ -150,6 +150,27 @@ export function DocumentStudio({
             </button>
           </div>
 
+          {/* High-Impact Upfront Campus Pricing Banner */}
+          <div className="p-2.5 sm:p-3 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-blue-500/10 to-indigo-500/10 dark:from-emerald-950/30 dark:via-blue-950/20 dark:to-transparent flex items-center justify-between gap-2 shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap text-xs">
+                <span className="font-bold text-zinc-900 dark:text-white">
+                  Campus Offer:
+                </span>
+                <span className="font-semibold text-sky-600 dark:text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/20">
+                  ₹3 B&amp;W
+                </span>
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                  ₹5 Color
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono font-bold text-blue-600 dark:text-blue-400 shrink-0">
+              ⚡ 10s Print
+            </span>
+          </div>
+
           {/* Target Hostel Print Station Card */}
           <div className="p-3 sm:p-3.5 rounded-2xl border border-blue-500/25 bg-gradient-to-r from-blue-50/80 via-indigo-50/40 to-transparent dark:from-blue-950/25 dark:via-[#13141c]/60 dark:to-transparent backdrop-blur-md flex items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -170,9 +191,9 @@ export function DocumentStudio({
                 </div>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-                  <span>{currentStation.address}</span>
+                  <span className="truncate">Room 29 (1st Floor) · Pare Hostel</span>
                   <span className="text-zinc-300 dark:text-zinc-600">•</span>
-                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold">₹3 B&W / ₹5 Color</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">₹3 B&amp;W / ₹5 Color</span>
                 </p>
               </div>
             </div>
@@ -289,23 +310,15 @@ export function DocumentStudio({
                 )}
               </div>
 
-              {/* Top Jump/Scroll Down Button - Directly scrolls down to Checkout at the bottom */}
+              {/* Top Direct Proceed Button */}
               <button
                 type="button"
-                onClick={() => {
-                  const target = document.getElementById('stage2-bottom-checkout');
-                  if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'end' });
-                  } else {
-                    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-                  }
-                }}
-                className="flex h-8 sm:h-8.5 px-3 sm:px-3.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/25 font-bold text-xs items-center gap-1.5 shadow-2xs hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shrink-0"
-                title="Scroll down directly to checkout"
+                onClick={() => goToStep(3)}
+                className="flex h-8 sm:h-8.5 px-3 sm:px-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs items-center gap-1.5 shadow-md shadow-blue-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shrink-0"
+                title="Proceed directly to Order Review & Payment"
               >
-                <span className="hidden sm:inline">To </span>
                 <span>Checkout</span>
-                <ArrowDown className="w-3.5 h-3.5 animate-bounce" />
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -401,26 +414,37 @@ export function DocumentStudio({
             </div>
           </div>
 
-          {/* Bottom Actions - Sticky docked bar so it's always seeable & reachable without scrolling */}
+          {/* Bottom Actions - Sticky docked bar so it's always visible & reachable without scrolling */}
           <div
             id="stage2-bottom-checkout"
-            className="sticky bottom-0 z-40 bg-white/95 dark:bg-[#121316]/95 backdrop-blur-md border-t border-zinc-200/80 dark:border-white/10 p-2.5 sm:p-3 shadow-2xl rounded-t-2xl sm:rounded-xl -mx-3 -mb-3 sm:mx-0 sm:mb-0 flex items-center justify-between gap-3 mt-4"
+            className="sticky bottom-0 sm:bottom-2 z-40 bg-white/95 dark:bg-[#121316]/95 backdrop-blur-md border border-zinc-200/90 dark:border-white/10 p-2.5 sm:p-3 shadow-2xl rounded-t-2xl sm:rounded-2xl -mx-3 -mb-3 sm:mx-0 sm:mb-0 flex items-center justify-between gap-2.5 sm:gap-3 mt-4"
           >
             <button
               type="button"
               onClick={() => goToStep(1)}
-              className="h-9 sm:h-10 px-3.5 sm:px-4 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/[0.04] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/[0.08] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="h-10 px-3.5 sm:px-4 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/[0.04] text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/[0.08] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back</span>
             </button>
 
+            {/* Quick Price Indicator */}
+            <div className="flex items-center gap-1.5 sm:gap-2 text-xs truncate">
+              <span className="font-bold text-zinc-900 dark:text-white truncate">
+                {uploadedBatch.totalPages} {uploadedBatch.totalPages === 1 ? 'Page' : 'Pages'}
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-600">•</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold shrink-0">
+                ₹{pricing?.totalPrice || (bwCount * 3 + colorCount * 5) || 3}
+              </span>
+            </div>
+
             <button
               type="button"
               onClick={() => goToStep(3)}
-              className="h-9 sm:h-10 px-5 sm:px-6 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-blue-500/35 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+              className="h-10 px-4 sm:px-6 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shadow-lg shadow-blue-500/35 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shrink-0 ml-auto"
             >
-              <span>Continue to Checkout</span>
+              <span>Proceed to Checkout</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
