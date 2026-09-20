@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'jobId and status are required' }, { status: 400 });
     }
 
-    const validStatuses = ['PAID', 'PRINTING_ODD', 'AWAITING_FLIP', 'PRINTING_EVEN', 'COMPLETED', 'FAILED'];
+    const validStatuses = ['PAID', 'PRINTING', 'PRINTING_ODD', 'AWAITING_FLIP', 'PRINTING_EVEN', 'COMPLETED', 'FAILED'];
     if (!validStatuses.includes(status)) {
       return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
     }

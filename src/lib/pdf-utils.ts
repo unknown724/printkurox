@@ -64,6 +64,35 @@ export function formatPageRange(pages: number[]): string {
 export const pagesToRangeString = formatPageRange;
 
 /**
+ * Calculates odd or even pages relative to an ordered sequence of pages.
+ * If the active sequence is [4, 5, 6, 7, 8, 9, 10, 11]:
+ * - 'odd' (1st, 3rd, 5th, 7th... position) returns [4, 6, 8, 10]
+ * - 'even' (2nd, 4th, 6th, 8th... position) returns [5, 7, 9, 11]
+ */
+export function getRelativeOddEvenPages(
+  pages: number[],
+  mode: 'odd' | 'even'
+): number[] {
+  if (!pages || pages.length === 0) return [];
+  const sorted = Array.from(new Set(pages)).sort((a, b) => a - b);
+  return sorted.filter((_, idx) => {
+    const position = idx + 1; // 1-based sequence position
+    return mode === 'odd' ? position % 2 !== 0 : position % 2 === 0;
+  });
+}
+
+/**
+ * Excludes a specified set of pages from an existing list of pages.
+ */
+export function excludePagesFromList(
+  currentPages: number[],
+  pagesToExclude: number[]
+): number[] {
+  const excludeSet = new Set(pagesToExclude);
+  return currentPages.filter((p) => !excludeSet.has(p));
+}
+
+/**
  * Validates and parses user-entered page range with clear error messages
  */
 export function validatePageRangeInput(input: string, maxPages: number): {

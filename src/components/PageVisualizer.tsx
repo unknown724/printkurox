@@ -4,6 +4,8 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { PageConfig, TIER_RATES } from '@/lib/pricing';
 import {
   RotateCw,
+  RotateCcw,
+  Trash2,
   Loader2,
   FileText,
   X,
@@ -12,10 +14,15 @@ import {
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
+  Eye,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
 } from 'lucide-react';
 
 import { EnhanceMode } from '@/lib/image-enhancer';
 import { LayoutMode, FitMode, TextOverlayConfig, getTextOverlayItems } from '@/components/studio/PhotoLayoutSelector';
+import { getRelativeOddEvenPages, parsePageRange } from '@/lib/pdf-utils';
 
 export interface SheetGridConfig {
   cols: number;
@@ -210,10 +217,24 @@ export function PageVisualizer({
   const [naturalOrientations, setNaturalOrientations] = useState<Record<number, 'portrait' | 'landscape'>>({});
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [zoomPage, setZoomPage] = useState<number | null>(null);
+  const [enlargedPage, setEnlargedPage] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'pager' | 'grid'>('pager');
   const [internalSheetIdx, setInternalSheetIdx] = useState(0);
   const [selectedPageNum, setSelectedPageNum] = useState<number>(1);
   const lastSourceSigRef = useRef<string>('');
+
+  // Scroll to active page when continuous preview modal opens
+  useEffect(() => {
+    if (zoomPage !== null) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`preview-page-${zoomPage}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 70);
+      return () => clearTimeout(timer);
+    }
+  }, [zoomPage]);
 
   const recordNaturalOrientation = (pageNumber: number, orient: 'portrait' | 'landscape') => {
     setNaturalOrientations((prev) => {
@@ -569,6 +590,49 @@ export function PageVisualizer({
     onChange(updated);
   };
 
+  // Toggle page inclusion (Delete / Restore page from printing)
+  const togglePageIncluded = (pageNumber: number) => {
+    const updated = pageConfigs.map((p) => {
+      if (p.pageNumber === pageNumber) {
+        return { ...p, included: !p.included };
+      }
+      return p;
+    });
+    onChange(updated);
+  };
+
+  // Restore all excluded/deleted pages
+  const restoreAllPages = () => {
+    const updated = pageConfigs.map((p) => ({ ...p, included: true }));
+    onChange(updated);
+  };
+
+  // Select Odd pages relative to current active sequence (e.g. 4-11 -> 4, 6, 8, 10)
+  const selectOddPages = () => {
+    const active = pageConfigs.filter((p) => p.included).map((p) => p.pageNumber);
+    const base = active.length > 0 ? active : Array.from({ length: totalPages }, (_, i) => i + 1);
+    const oddPages = getRelativeOddEvenPages(base, 'odd');
+    onChange(pageConfigs.map((p) => ({ ...p, included: oddPages.includes(p.pageNumber) })));
+  };
+
+  // Select Even pages relative to current active sequence (e.g. 4-11 -> 5, 7, 9, 11)
+  const selectEvenPages = () => {
+    const active = pageConfigs.filter((p) => p.included).map((p) => p.pageNumber);
+    const base = active.length > 0 ? active : Array.from({ length: totalPages }, (_, i) => i + 1);
+    const evenPages = getRelativeOddEvenPages(base, 'even');
+    onChange(pageConfigs.map((p) => ({ ...p, included: evenPages.includes(p.pageNumber) })));
+  };
+
+  // Prompt to delete / exclude range of pages (e.g. 1-3, 12-14)
+  const deletePageRangePrompt = () => {
+    const val = prompt('Enter page numbers or range to delete/exclude (e.g. 1-3, 12-14):');
+    if (!val) return;
+    const toExclude = parsePageRange(val, totalPages);
+    if (toExclude.length > 0) {
+      onChange(pageConfigs.map((p) => (toExclude.includes(p.pageNumber) ? { ...p, included: false } : p)));
+    }
+  };
+
   // Change orientation for an individual page (without artificial 90° rotation)
   const setPageOrientation = (pageNumber: number, orient: 'portrait' | 'landscape') => {
     const updated = pageConfigs.map((p) => {
@@ -777,17 +841,45 @@ export function PageVisualizer({
     <div className="rounded-2xl p-2.5 sm:p-3 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-2 sm:space-y-2.5 shadow-2xs">
       {/* Top Toolbar: Bulk Actions & Document Stats */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-zinc-200/80 dark:border-[#282a2c]">
-        {/* Total Impressions Stats Tag */}
-        <div className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-zinc-600 dark:text-zinc-400">
-          <span className="font-semibold text-zinc-900 dark:text-zinc-100">{includedPagesCount}</span> pgs •{' '}
-          <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-            {isMerged ? effectiveSheetCount : totalCopiesCount}
-          </span>{' '}
-          total sheet{(isMerged ? effectiveSheetCount : totalCopiesCount) !== 1 ? 's' : ''}
+        {/* Total Impressions Stats Tag & Quick Restore All */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-zinc-600 dark:text-zinc-400">
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100">{includedPagesCount}</span>
+            {pageConfigs.length > 0 && includedPagesCount !== pageConfigs.length ? ` of ${pageConfigs.length}` : ''} pgs •{' '}
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+              {isMerged ? effectiveSheetCount : totalCopiesCount}
+            </span>{' '}
+            total sheet{(isMerged ? effectiveSheetCount : totalCopiesCount) !== 1 ? 's' : ''}
+          </div>
+
+          {pageConfigs.length > 0 && includedPagesCount < pageConfigs.length && (
+            <button
+              type="button"
+              onClick={restoreAllPages}
+              className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+              title="Click to restore all deleted pages"
+            >
+              <RotateCcw className="w-2.5 h-2.5 text-rose-500" />
+              <span>{pageConfigs.length - includedPagesCount} deleted · Restore All</span>
+            </button>
+          )}
         </div>
 
         {/* View Mode Toggle & Quick Bulk Buttons */}
         <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+          {/* Full Page High-Res Preview Eye Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setZoomPage(selectedPageNum || 1);
+            }}
+            className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold border border-blue-200 dark:border-blue-900/50 bg-blue-50/80 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+            title="Inspect current page in Full Screen High Resolution"
+          >
+            <Eye className="w-3 h-3 text-blue-500" />
+            <span>Full View</span>
+          </button>
+
           {/* View Mode Switcher */}
           <button
             type="button"
@@ -808,31 +900,59 @@ export function PageVisualizer({
             )}
           </button>
 
-          <button
-            type="button"
-            onClick={() => setAllColor('bw')}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors flex items-center gap-1.5 ${
-              colorPagesCount === 0 && bwPagesCount > 0
-                ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100 font-semibold shadow-2xs'
-                : 'bg-zinc-50 dark:bg-[#131314] text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-100 dark:hover:bg-zinc-800'
-            }`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${colorPagesCount === 0 && bwPagesCount > 0 ? 'bg-white dark:bg-zinc-900' : 'bg-zinc-400'}`} />
-            <span>All B&amp;W</span>
-          </button>
+          {/* All B&W with Live Pulsing / Flickering Green Dot */}
+          {(() => {
+            const isAllBwActive = colorPagesCount === 0 && (bwPagesCount > 0 || includedPagesCount > 0);
+            return (
+              <button
+                type="button"
+                onClick={() => setAllColor('bw')}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 cursor-pointer ${
+                  isAllBwActive
+                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-950 border-zinc-900 dark:border-white shadow-xs ring-1 ring-emerald-500/40'
+                    : 'bg-zinc-100/80 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700/80 hover:text-zinc-800 dark:hover:text-zinc-200 hover:border-zinc-400'
+                }`}
+                title="Set all pages to Black & White"
+              >
+                {isAllBwActive ? (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-80"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)] animate-pulse"></span>
+                  </span>
+                ) : (
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 opacity-60" />
+                )}
+                <span>All B&amp;W</span>
+              </button>
+            );
+          })()}
 
-          <button
-            type="button"
-            onClick={() => setAllColor('color')}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors flex items-center gap-1.5 ${
-              colorPagesCount === includedPagesCount && includedPagesCount > 0
-                ? 'bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 text-white border-transparent font-semibold shadow-2xs'
-                : 'bg-zinc-50 dark:bg-[#131314] text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-100 dark:hover:bg-zinc-800'
-            }`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${colorPagesCount === includedPagesCount && includedPagesCount > 0 ? 'bg-white' : 'bg-zinc-400'}`} />
-            <span>All Color</span>
-          </button>
+          {/* All Color with Live Pulsing / Flickering Green Dot */}
+          {(() => {
+            const isAllColorActive = colorPagesCount > 0 && colorPagesCount === includedPagesCount;
+            return (
+              <button
+                type="button"
+                onClick={() => setAllColor('color')}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 cursor-pointer ${
+                  isAllColorActive
+                    ? 'bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 text-white border-transparent shadow-xs ring-2 ring-emerald-400/50'
+                    : 'bg-zinc-100/80 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700/80 hover:text-zinc-800 dark:hover:text-zinc-200 hover:border-zinc-400'
+                }`}
+                title="Set all pages to Full Color"
+              >
+                {isAllColorActive ? (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-80"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)] animate-pulse"></span>
+                  </span>
+                ) : (
+                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 opacity-70" />
+                )}
+                <span>All Color</span>
+              </button>
+            );
+          })()}
 
           {pageConfigs.some((p) => p.customScale !== undefined && p.customScale !== 100) && (
             <button
@@ -1133,9 +1253,15 @@ export function PageVisualizer({
                         activePageCfg?.pageNumber === activeSheetItems[0].pageNumber
                           ? 'border-blue-600 ring-2 ring-blue-600/30'
                           : drawBorder ? 'border-dashed border-amber-500/80' : 'border-zinc-200'
-                      }`}
+                      } ${!activeSheetItems[0].included ? 'opacity-40 grayscale' : ''}`}
                     >
-                      <span className="absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded bg-zinc-900/85 text-white">
+                      <span
+                        className={`absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded ${
+                          !activeSheetItems[0].included
+                            ? 'bg-rose-600 text-white line-through'
+                            : 'bg-zinc-900/85 text-white'
+                        }`}
+                      >
                         #{activeSheetItems[0].pageNumber} FRONT
                       </span>
                       <button
@@ -1150,6 +1276,24 @@ export function PageVisualizer({
                       >
                         {activeSheetItems[0].colorMode === 'bw' ? 'B&W' : 'Color'}
                       </button>
+
+                      {/* Quick Delete Button */}
+                      {activeSheetItems[0].included && (
+                        <div className="absolute bottom-1 left-1 z-20 flex items-center gap-1 opacity-75 hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePageIncluded(activeSheetItems[0].pageNumber);
+                            }}
+                            className="p-1 rounded-md bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white shadow-2xs transition-all cursor-pointer"
+                            title={`Delete Page #${activeSheetItems[0].pageNumber}`}
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      )}
+
                       {thumbnails[activeSheetItems[0].pageNumber] && (
                         <img
                           src={thumbnails[activeSheetItems[0].pageNumber]}
@@ -1170,6 +1314,33 @@ export function PageVisualizer({
                           }}
                           className="max-w-full max-h-full object-contain p-1 transition-all duration-150"
                         />
+                      )}
+
+                      {/* Excluded / Deleted Mask */}
+                      {!activeSheetItems[0].included && (
+                        <div
+                          className="absolute inset-0 bg-black/65 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1 z-30 p-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPageNum(activeSheetItems[0].pageNumber);
+                          }}
+                        >
+                          <span className="text-[8px] font-semibold text-rose-300 px-1.5 py-0.5 rounded bg-zinc-900/90 border border-rose-500/30 flex items-center gap-1">
+                            <Trash2 className="w-2 h-2 text-rose-400" />
+                            Deleted
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePageIncluded(activeSheetItems[0].pageNumber);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-900 text-[8px] font-bold shadow-xs cursor-pointer"
+                          >
+                            <RotateCcw className="w-2 h-2 text-emerald-600" />
+                            <span>Restore</span>
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}
@@ -1192,9 +1363,15 @@ export function PageVisualizer({
                         activePageCfg?.pageNumber === activeSheetItems[1].pageNumber
                           ? 'border-blue-600 ring-2 ring-blue-600/30'
                           : drawBorder ? 'border-dashed border-amber-500/80' : 'border-zinc-200'
-                      }`}
+                      } ${!activeSheetItems[1].included ? 'opacity-40 grayscale' : ''}`}
                     >
-                      <span className="absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded bg-zinc-900/85 text-white">
+                      <span
+                        className={`absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded ${
+                          !activeSheetItems[1].included
+                            ? 'bg-rose-600 text-white line-through'
+                            : 'bg-zinc-900/85 text-white'
+                        }`}
+                      >
                         #{activeSheetItems[1].pageNumber} BACK
                       </span>
                       <button
@@ -1209,6 +1386,24 @@ export function PageVisualizer({
                       >
                         {activeSheetItems[1].colorMode === 'bw' ? 'B&W' : 'Color'}
                       </button>
+
+                      {/* Quick Delete Button */}
+                      {activeSheetItems[1].included && (
+                        <div className="absolute bottom-1 left-1 z-20 flex items-center gap-1 opacity-75 hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePageIncluded(activeSheetItems[1].pageNumber);
+                            }}
+                            className="p-1 rounded-md bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white shadow-2xs transition-all cursor-pointer"
+                            title={`Delete Page #${activeSheetItems[1].pageNumber}`}
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      )}
+
                       {thumbnails[activeSheetItems[1].pageNumber] && (
                         <img
                           src={thumbnails[activeSheetItems[1].pageNumber]}
@@ -1230,6 +1425,33 @@ export function PageVisualizer({
                           className="max-w-full max-h-full object-contain p-1 transition-all duration-150"
                         />
                       )}
+
+                      {/* Excluded / Deleted Mask */}
+                      {!activeSheetItems[1].included && (
+                        <div
+                          className="absolute inset-0 bg-black/65 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1 z-30 p-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPageNum(activeSheetItems[1].pageNumber);
+                          }}
+                        >
+                          <span className="text-[8px] font-semibold text-rose-300 px-1.5 py-0.5 rounded bg-zinc-900/90 border border-rose-500/30 flex items-center gap-1">
+                            <Trash2 className="w-2 h-2 text-rose-400" />
+                            Deleted
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePageIncluded(activeSheetItems[1].pageNumber);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-900 text-[8px] font-bold shadow-xs cursor-pointer"
+                          >
+                            <RotateCcw className="w-2 h-2 text-emerald-600" />
+                            <span>Restore</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="w-full h-[47%] rounded-[2px] border border-dashed border-zinc-300 flex items-center justify-center text-zinc-400 text-[8px]">
@@ -1248,11 +1470,15 @@ export function PageVisualizer({
                       activePageCfg?.pageNumber === activeSheetItems[0]?.pageNumber
                         ? 'border-blue-600 ring-2 ring-blue-600/30'
                         : 'border-zinc-200 hover:border-zinc-300'
-                    }`}
+                    } ${activeSheetItems[0] && !activeSheetItems[0].included ? 'opacity-40 grayscale' : ''}`}
                   >
                     {activeSheetItems[0] ? (
                       <div className="w-full h-full relative flex items-center justify-center">
-                        <span className="absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded bg-blue-600 text-white shadow-2xs">
+                        <span
+                          className={`absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded ${
+                            !activeSheetItems[0].included ? 'bg-rose-600 text-white line-through' : 'bg-blue-600 text-white'
+                          } shadow-2xs`}
+                        >
                           #{activeSheetItems[0].pageNumber} (Left)
                         </span>
                         <button
@@ -1267,6 +1493,24 @@ export function PageVisualizer({
                         >
                           {activeSheetItems[0].colorMode === 'bw' ? 'B&W' : 'Color'}
                         </button>
+
+                        {/* Quick Delete Button */}
+                        {activeSheetItems[0].included && (
+                          <div className="absolute bottom-1 left-1 z-20 flex items-center gap-1 opacity-75 hover:opacity-100 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePageIncluded(activeSheetItems[0].pageNumber);
+                              }}
+                              className="p-1 rounded-md bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white shadow-2xs transition-all cursor-pointer"
+                              title={`Delete Page #${activeSheetItems[0].pageNumber}`}
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        )}
+
                         {thumbnails[activeSheetItems[0].pageNumber] ? (
                           <img
                             src={thumbnails[activeSheetItems[0].pageNumber]}
@@ -1293,6 +1537,33 @@ export function PageVisualizer({
                         ) : (
                           <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
                         )}
+
+                        {/* Excluded / Deleted Mask */}
+                        {!activeSheetItems[0].included && (
+                          <div
+                            className="absolute inset-0 bg-black/65 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1 z-30 p-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedPageNum(activeSheetItems[0].pageNumber);
+                            }}
+                          >
+                            <span className="text-[8px] font-semibold text-rose-300 px-1.5 py-0.5 rounded bg-zinc-900/90 border border-rose-500/30 flex items-center gap-1">
+                              <Trash2 className="w-2 h-2 text-rose-400" />
+                              Deleted
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePageIncluded(activeSheetItems[0].pageNumber);
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-900 text-[8px] font-bold shadow-xs cursor-pointer"
+                            >
+                              <RotateCcw className="w-2 h-2 text-emerald-600" />
+                              <span>Restore</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <span className="text-zinc-300 text-[9px] font-mono">Empty</span>
@@ -1317,11 +1588,15 @@ export function PageVisualizer({
                       activePageCfg?.pageNumber === activeSheetItems[1]?.pageNumber
                         ? 'border-blue-600 ring-2 ring-blue-600/30'
                         : 'border-zinc-200 hover:border-zinc-300'
-                    }`}
+                    } ${activeSheetItems[1] && !activeSheetItems[1].included ? 'opacity-40 grayscale' : ''}`}
                   >
                     {activeSheetItems[1] ? (
                       <div className="w-full h-full relative flex items-center justify-center">
-                        <span className="absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded bg-blue-600 text-white shadow-2xs">
+                        <span
+                          className={`absolute top-1 left-1 z-10 text-[8px] font-mono font-bold px-1 py-0.5 rounded ${
+                            !activeSheetItems[1].included ? 'bg-rose-600 text-white line-through' : 'bg-blue-600 text-white'
+                          } shadow-2xs`}
+                        >
                           #{activeSheetItems[1].pageNumber} (Right)
                         </span>
                         <button
@@ -1336,6 +1611,24 @@ export function PageVisualizer({
                         >
                           {activeSheetItems[1].colorMode === 'bw' ? 'B&W' : 'Color'}
                         </button>
+
+                        {/* Quick Delete Button */}
+                        {activeSheetItems[1].included && (
+                          <div className="absolute bottom-1 left-1 z-20 flex items-center gap-1 opacity-75 hover:opacity-100 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePageIncluded(activeSheetItems[1].pageNumber);
+                              }}
+                              className="p-1 rounded-md bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white shadow-2xs transition-all cursor-pointer"
+                              title={`Delete Page #${activeSheetItems[1].pageNumber}`}
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        )}
+
                         {thumbnails[activeSheetItems[1].pageNumber] ? (
                           <img
                             src={thumbnails[activeSheetItems[1].pageNumber]}
@@ -1361,6 +1654,33 @@ export function PageVisualizer({
                           />
                         ) : (
                           <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                        )}
+
+                        {/* Excluded / Deleted Mask */}
+                        {!activeSheetItems[1].included && (
+                          <div
+                            className="absolute inset-0 bg-black/65 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1 z-30 p-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedPageNum(activeSheetItems[1].pageNumber);
+                            }}
+                          >
+                            <span className="text-[8px] font-semibold text-rose-300 px-1.5 py-0.5 rounded bg-zinc-900/90 border border-rose-500/30 flex items-center gap-1">
+                              <Trash2 className="w-2 h-2 text-rose-400" />
+                              Deleted
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePageIncluded(activeSheetItems[1].pageNumber);
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-900 text-[8px] font-bold shadow-xs cursor-pointer"
+                            >
+                              <RotateCcw className="w-2 h-2 text-emerald-600" />
+                              <span>Restore</span>
+                            </button>
+                          </div>
                         )}
                       </div>
                     ) : (
@@ -1528,7 +1848,11 @@ export function PageVisualizer({
                         <div className="absolute top-1 left-1 z-20 flex items-center gap-1">
                           <span
                             className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded shadow-2xs ${
-                              isSelected ? 'bg-blue-600 text-white' : 'bg-zinc-900/85 text-white'
+                              isExcluded
+                                ? 'bg-rose-600 text-white line-through'
+                                : isSelected
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-zinc-900/85 text-white'
                             }`}
                           >
                             #{cfg.pageNumber}
@@ -1552,6 +1876,39 @@ export function PageVisualizer({
                             title="Toggle B&W / Color"
                           >
                             {cfg.colorMode === 'bw' ? 'B&W' : 'Color'}
+                          </button>
+                        </div>
+
+                        {/* Quick Delete Button (Bottom Left) */}
+                        {!isExcluded && (
+                          <div className="absolute bottom-1 left-1 z-20 flex items-center gap-1 opacity-75 hover:opacity-100 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePageIncluded(cfg.pageNumber);
+                              }}
+                              className="p-1 rounded-md bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white shadow-2xs transition-all cursor-pointer"
+                              title={`Delete Page #${cfg.pageNumber} (Exclude from print)`}
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Quick Preview Eye Button (Bottom Center) */}
+                        <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 opacity-80 hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setZoomPage(cfg.pageNumber);
+                            }}
+                            className="px-1.5 py-0.5 rounded bg-zinc-900/80 hover:bg-blue-600 text-white shadow-2xs transition-all cursor-pointer flex items-center gap-0.5 text-[8.5px] font-semibold"
+                            title={`Inspect Page #${cfg.pageNumber} in High Resolution`}
+                          >
+                            <Eye className="w-2.5 h-2.5 text-blue-400" />
+                            <span>Preview</span>
                           </button>
                         </div>
 
@@ -1618,12 +1975,31 @@ export function PageVisualizer({
                           </div>
                         )}
 
-                        {/* Excluded Mask */}
+                        {/* Excluded / Deleted Mask with Restore Option */}
                         {isExcluded && (
-                          <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] flex items-center justify-center z-30">
-                            <span className="text-[8px] font-semibold text-white px-1.5 py-0.5 rounded bg-zinc-900/90">
-                              Excluded
+                          <div
+                            className="absolute inset-0 bg-black/65 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 z-30 p-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedPageNum(cfg.pageNumber);
+                            }}
+                          >
+                            <span className="text-[8px] font-semibold text-rose-300 px-1.5 py-0.5 rounded bg-zinc-900/90 border border-rose-500/30 flex items-center gap-1">
+                              <Trash2 className="w-2 h-2 text-rose-400" />
+                              Page Deleted
                             </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePageIncluded(cfg.pageNumber);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white hover:bg-zinc-100 text-zinc-900 text-[8.5px] font-bold shadow-xs transition-transform active:scale-95 cursor-pointer"
+                              title={`Restore Page #${cfg.pageNumber}`}
+                            >
+                              <RotateCcw className="w-2.5 h-2.5 text-emerald-600" />
+                              <span>Restore</span>
+                            </button>
                           </div>
                         )}
                       </div>
@@ -1635,29 +2011,29 @@ export function PageVisualizer({
           </div>
 
           {/* Bottom Adobe-Style Navigation Bar: Comfortable Side-by-Side Mobile Controls */}
-          <div className="space-y-1 pt-0.5">
+          <div className="space-y-1.5 pt-1">
             <div className="flex items-center justify-between gap-2 px-0.5">
               {/* Touch-Friendly Previous Button */}
               <button
                 type="button"
                 onClick={() => setCurrentSheetIndex(currentSheetIndex - 1)}
                 disabled={currentSheetIndex === 0}
-                className="h-8 px-2.5 min-w-[36px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 flex items-center justify-center gap-1 text-xs font-bold disabled:opacity-30 disabled:pointer-events-none hover:bg-zinc-100 dark:hover:bg-zinc-700 active:scale-95 transition-all shadow-2xs cursor-pointer"
+                className="h-9 px-3 min-w-[40px] rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 flex items-center justify-center gap-1.5 text-xs font-bold disabled:opacity-30 disabled:pointer-events-none hover:bg-zinc-100 dark:hover:bg-zinc-700 active:scale-95 transition-all shadow-2xs cursor-pointer"
                 title="Previous Sheet"
               >
-                <ChevronLeft className="w-3.5 h-3.5 stroke-[2.5]" />
+                <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
                 <span className="hidden sm:inline">Prev</span>
               </button>
 
               {/* Slider with Live Sheet Count */}
-              <div className="flex-1 flex items-center gap-2 max-w-[240px]">
+              <div className="flex-1 flex items-center gap-2 max-w-[260px]">
                 <input
                   type="range"
                   min={0}
                   max={totalSheets - 1}
                   value={currentSheetIndex}
                   onChange={(e) => setCurrentSheetIndex(parseInt(e.target.value, 10))}
-                  className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  className="w-full h-2 bg-zinc-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
                 />
                 <span className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 shrink-0">
                   {currentSheetIndex + 1}/{totalSheets}
@@ -1669,11 +2045,11 @@ export function PageVisualizer({
                 type="button"
                 onClick={() => setCurrentSheetIndex(currentSheetIndex + 1)}
                 disabled={currentSheetIndex >= totalSheets - 1}
-                className="h-8 px-2.5 min-w-[36px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 flex items-center justify-center gap-1 text-xs font-bold disabled:opacity-30 disabled:pointer-events-none hover:bg-zinc-100 dark:hover:bg-zinc-700 active:scale-95 transition-all shadow-2xs cursor-pointer"
+                className="h-9 px-3 min-w-[40px] rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 flex items-center justify-center gap-1.5 text-xs font-bold disabled:opacity-30 disabled:pointer-events-none hover:bg-zinc-100 dark:hover:bg-zinc-700 active:scale-95 transition-all shadow-2xs cursor-pointer"
                 title="Next Sheet"
               >
                 <span className="hidden sm:inline">Next</span>
-                <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                <ChevronRight className="w-4 h-4 stroke-[2.5]" />
               </button>
             </div>
 
@@ -1685,180 +2061,72 @@ export function PageVisualizer({
                   ({activeSheetItems.filter((p) => p.included).length} printable)
                 </span>
               </span>
-              <span className="text-[9.5px] text-zinc-400">
+              <span className="text-[10px] text-zinc-400">
                 Tap page to customize
               </span>
             </div>
 
-            {/* Dedicated Page Settings Inspector: Ultra-Compact 2-Row Clustered Toolbar */}
+            {/* Dedicated Page Settings Inspector: Spacious, Ergonomic Touch Bar */}
             {activePageCfg && (
-              <div className="mt-1 px-3 py-2 rounded-xl border border-zinc-200/90 dark:border-zinc-800 bg-white/95 dark:bg-[#15161a]/95 backdrop-blur-md flex flex-col gap-1.5 text-xs shadow-xs">
-                {/* Row 1: Page context + Orientation (Left) & Copies (Right) */}
-                <div className="flex items-center justify-between gap-2 w-full">
-                  {/* Left: Page Badge + Selector if multi-up + Orientation buttons */}
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white font-mono font-bold text-[10px] shrink-0 shadow-2xs">
-                      Page #{activePageCfg.pageNumber}
-                    </span>
-                    {activeSheetItems.length > 1 && (
-                      <div className="flex items-center gap-0.5 bg-zinc-100 dark:bg-zinc-800/80 p-0.5 rounded-md shrink-0 border border-zinc-200 dark:border-zinc-700/60">
-                        {activeSheetItems.map((item) => (
-                          <button
-                            key={item.pageNumber}
-                            type="button"
-                            onClick={() => setSelectedPageNum(item.pageNumber)}
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold transition-all cursor-pointer ${
-                              item.pageNumber === activePageCfg.pageNumber
-                                ? 'bg-blue-600 text-white shadow-2xs'
-                                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
-                            }`}
-                          >
-                            #{item.pageNumber}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="h-3.5 w-px bg-zinc-200 dark:bg-zinc-700/60 mx-0.5 shrink-0" />
-
-                    {/* Orientation segment group */}
-                    <div className="inline-flex items-center p-0.5 rounded-lg bg-zinc-100/80 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 shrink-0">
-                      {/* Port button */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = pageConfigs.map((p) =>
-                            p.pageNumber === activePageCfg.pageNumber
-                              ? { ...p, orientation: 'portrait' as const, rotation: 0 }
-                              : p
-                          );
-                          onChange(updated);
-                          const stillHasLandscape = updated.some(
-                            (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
-                          );
-                          if (!stillHasLandscape) {
-                            onOrientationChange?.('portrait');
-                          }
-                        }}
-                        className={`h-5.5 px-2 rounded-md flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer ${
-                          currentEffectiveOrient === 'portrait'
-                            ? 'bg-blue-600 dark:bg-blue-600 text-white font-bold shadow-xs'
-                            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
-                        }`}
-                        title="Set this page to Portrait orientation"
-                      >
-                        <span>▯ Port</span>
-                      </button>
-
-                      {/* Land button */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = pageConfigs.map((p) =>
-                            p.pageNumber === activePageCfg.pageNumber
-                              ? { ...p, orientation: 'landscape' as const, rotation: 0 }
-                              : p
-                          );
-                          onChange(updated);
-                          onOrientationChange?.('landscape');
-                        }}
-                        className={`h-5.5 px-2 rounded-md flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer ${
-                          currentEffectiveOrient === 'landscape'
-                            ? 'bg-blue-600 dark:bg-blue-600 text-white font-bold shadow-xs'
-                            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
-                        }`}
-                        title="Set this page to Landscape orientation"
-                      >
-                        <span>▭ Land</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => rotatePage(activePageCfg.pageNumber)}
-                        className="h-5.5 px-1.5 rounded-md hover:bg-zinc-200 dark:hover:bg-zinc-700 flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-300 cursor-pointer transition-colors"
-                        title={`Rotate page 90° clockwise (currently ${activePageCfg.rotation || 0}°)`}
-                      >
-                        <RotateCw className="w-3 h-3 text-blue-500" />
-                        {(activePageCfg.rotation || 0) > 0 && (
-                          <span className="text-[9px] font-mono text-blue-600 dark:text-blue-400 font-bold">
-                            {activePageCfg.rotation}°
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Right: Copies Stepper */}
-                  <div className="flex items-center gap-1.5 shrink-0 ml-auto pl-1 border-l border-zinc-100 dark:border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-medium">Copies:</span>
-                    <div className="flex items-center h-6 rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 overflow-hidden shadow-2xs">
-                      <button
-                        type="button"
-                        disabled={(activePageCfg.copies || 1) <= 1}
-                        onClick={() => setPageCopies(activePageCfg.pageNumber, -1)}
-                        className="w-5 h-6 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 disabled:opacity-30 cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-                      >
-                        <Minus className="w-2.5 h-2.5" />
-                      </button>
-                      <span className="w-5 text-center font-mono font-bold text-[11px] text-zinc-900 dark:text-zinc-100">
-                        {activePageCfg.copies || 1}
+              <div className="mt-1 px-3 py-2.5 rounded-xl border border-zinc-200/90 dark:border-zinc-800 bg-white dark:bg-[#15161a] flex flex-col gap-2 shadow-xs">
+                {/* Row 1: Primary Print Choices (Color Mode Toggle with Green Flickering Indicator) */}
+                <div className="grid grid-cols-2 gap-2 w-full">
+                  <button
+                    type="button"
+                    onClick={() => setPageColor(activePageCfg.pageNumber, 'bw')}
+                    className={`h-9 px-3 rounded-lg border flex items-center justify-center gap-2 text-xs font-semibold transition-all cursor-pointer ${
+                      activePageCfg.colorMode === 'bw'
+                        ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-950 shadow-xs ring-1 ring-emerald-500/40'
+                        : 'border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-700 bg-zinc-50 dark:bg-zinc-950/50'
+                    }`}
+                  >
+                    {activePageCfg.colorMode === 'bw' ? (
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-80"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)] animate-pulse"></span>
                       </span>
-                      <button
-                        type="button"
-                        disabled={(activePageCfg.copies || 1) >= 99}
-                        onClick={() => setPageCopies(activePageCfg.pageNumber, 1)}
-                        className="w-5 h-6 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 disabled:opacity-30 cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-                      >
-                        <Plus className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-                  </div>
+                    ) : (
+                      <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 opacity-60" />
+                    )}
+                    <span>B&amp;W (₹{TIER_RATES.standard.bw.single})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPageColor(activePageCfg.pageNumber, 'color')}
+                    className={`h-9 px-3 rounded-lg border flex items-center justify-center gap-2 text-xs font-semibold transition-all cursor-pointer ${
+                      activePageCfg.colorMode === 'color'
+                        ? 'border-transparent bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 text-white shadow-xs ring-2 ring-emerald-400/50'
+                        : 'border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-700 bg-zinc-50 dark:bg-zinc-950/50'
+                    }`}
+                  >
+                    {activePageCfg.colorMode === 'color' ? (
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-80"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)] animate-pulse"></span>
+                      </span>
+                    ) : (
+                      <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 opacity-70" />
+                    )}
+                    <span>Color (₹{TIER_RATES.standard.color.single})</span>
+                  </button>
                 </div>
 
-                {/* Row 2: B&W/Color Toggle (Left) & Cust Scale (Right) */}
-                <div className="flex items-center justify-between gap-2 w-full pt-1.5 border-t border-zinc-100 dark:border-zinc-800/70">
-                  {/* Left: B&W / Color Toggle */}
+                {/* Row 2: Scale Stepper (Left) & Copies Stepper (Right) */}
+                <div className="flex items-center justify-between gap-2 w-full pt-1.5 border-t border-zinc-100 dark:border-zinc-800/80">
+                  {/* Left: Scale Stepper for Current Page */}
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setPageColor(activePageCfg.pageNumber, 'bw')}
-                      className={`h-6 px-2.5 rounded-md border flex items-center gap-1.5 text-[11px] font-medium transition-all cursor-pointer ${
-                        activePageCfg.colorMode === 'bw'
-                          ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900 font-semibold shadow-2xs'
-                          : 'border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-700'
-                      }`}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-                      <span>B&amp;W (₹{TIER_RATES.standard.bw.single})</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPageColor(activePageCfg.pageNumber, 'color')}
-                      className={`h-6 px-2.5 rounded-md border flex items-center gap-1.5 text-[11px] font-medium transition-all cursor-pointer ${
-                        activePageCfg.colorMode === 'color'
-                          ? 'border-pink-500 bg-gradient-to-r from-blue-600 to-pink-600 text-white font-semibold shadow-2xs'
-                          : 'border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-700'
-                      }`}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-                      <span>Color (₹{TIER_RATES.standard.color.single})</span>
-                    </button>
-                  </div>
-
-                  {/* Right: Cust Scale Stepper for Current Page */}
-                  <div className="flex items-center gap-1.5 shrink-0 ml-auto pl-1 border-l border-zinc-100 dark:border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-medium">Cust Scale:</span>
-                    <div className="flex items-center h-6 rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 overflow-hidden shadow-2xs">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">Scale:</span>
+                    <div className="flex items-center h-8 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 overflow-hidden shadow-2xs">
                       <button
                         type="button"
                         onClick={() => {
                           const cur = activePageCfg.customScale ?? customScale ?? 100;
                           setPageCustomScale(activePageCfg.pageNumber, Math.max(10, cur - 5));
                         }}
-                        className="w-5 h-6 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none transition-colors"
+                        className="w-7 h-8 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none transition-colors"
                         title="Decrease scale by 5%"
                       >
-                        <Minus className="w-2.5 h-2.5" />
+                        <Minus className="w-3 h-3" />
                       </button>
                       <span
                         onClick={() => {
@@ -1872,7 +2140,7 @@ export function PageVisualizer({
                             if (!isNaN(parsed)) setPageCustomScale(activePageCfg.pageNumber, Math.max(10, Math.min(400, parsed)));
                           }
                         }}
-                        className="px-1.5 min-w-[36px] text-center font-mono font-bold text-[11px] text-zinc-900 dark:text-zinc-100 hover:text-blue-500 cursor-pointer select-none"
+                        className="px-1.5 min-w-[36px] text-center font-mono font-bold text-xs text-zinc-900 dark:text-zinc-100 hover:text-blue-500 cursor-pointer select-none"
                         title="Click to type exact percentage"
                       >
                         {activePageCfg.customScale ?? customScale ?? 100}%
@@ -1883,13 +2151,165 @@ export function PageVisualizer({
                           const cur = activePageCfg.customScale ?? customScale ?? 100;
                           setPageCustomScale(activePageCfg.pageNumber, Math.min(400, cur + 5));
                         }}
-                        className="w-5 h-6 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none transition-colors"
+                        className="w-7 h-8 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none transition-colors"
                         title="Increase scale by 5%"
                       >
-                        <Plus className="w-2.5 h-2.5" />
+                        <Plus className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
+
+                  {/* Right: Copies Stepper for Current Page */}
+                  <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">Copies:</span>
+                    <div className="flex items-center h-8 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 overflow-hidden shadow-2xs">
+                      <button
+                        type="button"
+                        disabled={(activePageCfg.copies || 1) <= 1}
+                        onClick={() => setPageCopies(activePageCfg.pageNumber, -1)}
+                        className="w-7 h-8 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 disabled:opacity-30 cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="w-7 text-center font-mono font-bold text-xs text-zinc-900 dark:text-zinc-100">
+                        {activePageCfg.copies || 1}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={(activePageCfg.copies || 1) >= 99}
+                        onClick={() => setPageCopies(activePageCfg.pageNumber, 1)}
+                        className="w-7 h-8 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 disabled:opacity-30 cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 3: Page Context, Orientation, Rotate, Delete (Single Line - No Wrapping) */}
+                <div className="flex items-center gap-1 sm:gap-1.5 w-full pt-1.5 border-t border-zinc-100 dark:border-zinc-800/80">
+                  <span
+                    className={`h-7.5 px-2 rounded-lg flex items-center font-mono font-bold text-[11px] shrink-0 shadow-2xs ${
+                      activePageCfg.included ? 'bg-blue-600 text-white' : 'bg-rose-600 text-white'
+                    }`}
+                  >
+                    Page #{activePageCfg.pageNumber}
+                    {!activePageCfg.included && ' (Del)'}
+                  </span>
+
+                  {activeSheetItems.length > 1 && (
+                    <div className="flex items-center gap-0.5 bg-zinc-100 dark:bg-zinc-800/80 p-0.5 rounded-lg shrink-0 border border-zinc-200 dark:border-zinc-700/60">
+                      {activeSheetItems.map((item) => (
+                        <button
+                          key={item.pageNumber}
+                          type="button"
+                          onClick={() => setSelectedPageNum(item.pageNumber)}
+                          className={`h-6.5 px-1.5 rounded text-[11px] font-mono font-semibold transition-all cursor-pointer ${
+                            item.pageNumber === activePageCfg.pageNumber
+                              ? item.included
+                                ? 'bg-blue-600 text-white shadow-2xs'
+                                : 'bg-rose-600 text-white shadow-2xs'
+                              : item.included
+                              ? 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                              : 'text-rose-500 line-through opacity-70'
+                          }`}
+                        >
+                          #{item.pageNumber}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Orientation segment group */}
+                  <div className="inline-flex items-center p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800/70 border border-zinc-200 dark:border-zinc-700/60 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = pageConfigs.map((p) =>
+                          p.pageNumber === activePageCfg.pageNumber
+                            ? { ...p, orientation: 'portrait' as const, rotation: 0 }
+                            : p
+                        );
+                        onChange(updated);
+                        const stillHasLandscape = updated.some(
+                          (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
+                        );
+                        if (!stillHasLandscape) {
+                          onOrientationChange?.('portrait');
+                        }
+                      }}
+                      className={`h-6.5 px-2 rounded-md flex items-center gap-0.5 text-[11px] font-medium transition-all cursor-pointer ${
+                        currentEffectiveOrient === 'portrait'
+                          ? 'bg-blue-600 text-white font-bold shadow-xs'
+                          : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                      }`}
+                      title="Set this page to Portrait orientation"
+                    >
+                      <span>▯</span>
+                      <span>Port</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = pageConfigs.map((p) =>
+                          p.pageNumber === activePageCfg.pageNumber
+                            ? { ...p, orientation: 'landscape' as const, rotation: 0 }
+                            : p
+                        );
+                        onChange(updated);
+                        onOrientationChange?.('landscape');
+                      }}
+                      className={`h-6.5 px-2 rounded-md flex items-center gap-0.5 text-[11px] font-medium transition-all cursor-pointer ${
+                        currentEffectiveOrient === 'landscape'
+                          ? 'bg-blue-600 text-white font-bold shadow-xs'
+                          : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                      }`}
+                      title="Set this page to Landscape orientation"
+                    >
+                      <span>▭</span>
+                      <span>Land</span>
+                    </button>
+                  </div>
+
+                  {/* Rotate 90° button */}
+                  <button
+                    type="button"
+                    onClick={() => rotatePage(activePageCfg.pageNumber)}
+                    className="h-7.5 px-2 rounded-lg border border-zinc-200 dark:border-zinc-700/60 bg-zinc-100/80 dark:bg-zinc-800/70 hover:bg-zinc-200 dark:hover:bg-zinc-700 flex items-center gap-1 text-[11px] text-zinc-700 dark:text-zinc-300 cursor-pointer transition-colors shrink-0"
+                    title={`Rotate page 90° clockwise (currently ${activePageCfg.rotation || 0}°)`}
+                  >
+                    <RotateCw className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Rotate</span>
+                    {(activePageCfg.rotation || 0) > 0 && (
+                      <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 font-bold">
+                        {activePageCfg.rotation}°
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Dedicated Delete / Restore Page Icon Button (Placed immediately next to Rotate, no wrap) */}
+                  {activePageCfg.included ? (
+                    <button
+                      type="button"
+                      onClick={() => togglePageIncluded(activePageCfg.pageNumber)}
+                      className="w-7.5 h-7.5 sm:w-8 sm:h-8 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-rose-50/80 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 flex items-center justify-center transition-all cursor-pointer shadow-2xs shrink-0 active:scale-95"
+                      title={`Delete Page #${activePageCfg.pageNumber} from print`}
+                      aria-label={`Delete Page #${activePageCfg.pageNumber}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => togglePageIncluded(activePageCfg.pageNumber)}
+                      className="w-7.5 h-7.5 sm:w-8 sm:h-8 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 flex items-center justify-center transition-all cursor-pointer shadow-2xs shrink-0 active:scale-95"
+                      title={`Restore Page #${activePageCfg.pageNumber}`}
+                      aria-label={`Restore Page #${activePageCfg.pageNumber}`}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-emerald-600" />
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1933,26 +2353,53 @@ export function PageVisualizer({
                       gridTemplateRows: `repeat(${gridConfig.rows}, minmax(0, 1fr))`,
                     }}
                   >
-                    {sheet.map((cfg) => (
-                      <div
-                        key={cfg.pageNumber}
-                        className="relative rounded-[1px] border border-zinc-200/60 bg-white overflow-hidden flex items-center justify-center aspect-[210/297] w-full"
-                      >
-                        <span className="absolute top-0.5 left-0.5 z-10 text-[6px] font-mono font-bold bg-zinc-900/80 text-white px-0.5 rounded">
-                          #{cfg.pageNumber}
-                        </span>
-                        {thumbnails[cfg.pageNumber] ? (
-                          <img
-                            src={thumbnails[cfg.pageNumber]}
-                            alt={`#${cfg.pageNumber}`}
-                            style={{ filter: getLiveFilter(cfg.colorMode, enhanceMode) }}
-                            className="w-full h-full object-contain"
-                          />
-                        ) : (
-                          <span className="text-[6px] text-zinc-400">#{cfg.pageNumber}</span>
-                        )}
-                      </div>
-                    ))}
+                    {sheet.map((cfg) => {
+                      const isDel = !cfg.included;
+                      return (
+                        <div
+                          key={cfg.pageNumber}
+                          className={`relative rounded-[1px] border border-zinc-200/60 bg-white overflow-hidden flex items-center justify-center aspect-[210/297] w-full ${
+                            isDel ? 'opacity-35 grayscale' : ''
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 left-0.5 z-10 text-[6px] font-mono font-bold px-0.5 rounded ${
+                              isDel ? 'bg-rose-600 text-white line-through' : 'bg-zinc-900/80 text-white'
+                            }`}
+                          >
+                            #{cfg.pageNumber}
+                          </span>
+
+                          {/* Quick Delete / Restore in bird's eye view */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePageIncluded(cfg.pageNumber);
+                            }}
+                            className={`absolute top-0.5 right-0.5 z-20 p-0.5 rounded text-[6px] transition-all cursor-pointer ${
+                              isDel
+                                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs'
+                                : 'bg-zinc-900/70 hover:bg-rose-600 text-white shadow-2xs'
+                            }`}
+                            title={isDel ? `Restore Page #${cfg.pageNumber}` : `Delete Page #${cfg.pageNumber}`}
+                          >
+                            {isDel ? <RotateCcw className="w-2 h-2" /> : <Trash2 className="w-2 h-2" />}
+                          </button>
+
+                          {thumbnails[cfg.pageNumber] ? (
+                            <img
+                              src={thumbnails[cfg.pageNumber]}
+                              alt={`#${cfg.pageNumber}`}
+                              style={{ filter: getLiveFilter(cfg.colorMode, enhanceMode) }}
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <span className="text-[6px] text-zinc-400">#{cfg.pageNumber}</span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1961,220 +2408,165 @@ export function PageVisualizer({
         </div>
       )}
 
-      {/* Fullscreen Zoom Modal */}
-      {zoomPage !== null && thumbnails[zoomPage] && (
+      {/* Fullscreen Zoom / High-Res Inspection Modal */}
+      {/* Fullscreen Continuous Vertical Scrolling Preview Modal matching doprint.app */}
+      {zoomPage !== null && (
         <div
-          onClick={() => setZoomPage(null)}
-          className="fixed inset-0 z-50 bg-black/80 dark:bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => {
+            setZoomPage(null);
+            setEnlargedPage(null);
+          }}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-4 animate-in fade-in duration-150"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="max-w-2xl w-full max-h-[90vh] rounded-2xl p-5 border border-zinc-200 dark:border-[#282a2c] flex flex-col space-y-3 relative overflow-hidden bg-white dark:bg-[#1e1f20] shadow-2xl"
+            className="max-w-md sm:max-w-xl w-full max-h-[95vh] rounded-3xl p-3.5 sm:p-5 border border-zinc-200/90 dark:border-zinc-800 flex flex-col gap-3 relative overflow-hidden bg-white dark:bg-[#15161a] shadow-2xl"
           >
-            <div className="flex items-center justify-between pb-2.5 border-b border-zinc-200 dark:border-[#282a2c]">
-              <div className="flex items-center space-x-2">
-                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 text-base">
-                  Page #{zoomPage} Preview
-                </span>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  ({pageConfigs.find((p) => p.pageNumber === zoomPage)?.colorMode === 'color' ? 'Color' : 'B&W'})
-                </span>
+            {/* Header: Title + Page Meta (Left), Close (Right) */}
+            <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
+              <div>
+                <div className="flex items-center gap-1.5 text-base font-bold text-zinc-900 dark:text-zinc-100">
+                  <FileText className="w-4 h-4 text-blue-600" />
+                  <span>Print Preview</span>
+                </div>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium mt-0.5">
+                  {totalPages} {totalPages === 1 ? 'page' : 'pages'} ·{' '}
+                  {colorPagesCount === 0
+                    ? 'Black & White'
+                    : colorPagesCount === includedPagesCount
+                    ? 'Full Color'
+                    : `${colorPagesCount} Color / ${bwPagesCount} B&W`}
+                </p>
               </div>
-              <div className="flex items-center gap-2">
-                {/* Modal Copies Stepper */}
-                {(() => {
-                  const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
-                  const pCopies = Math.max(1, Math.floor(currConf?.copies || 1));
-                  return (
-                    <div className="flex items-center space-x-1 bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] rounded-full px-2 py-1 text-xs">
-                      <span className="text-[10px] text-zinc-500 mr-1">Copies:</span>
-                      <button
-                        type="button"
-                        onClick={() => setPageCopies(zoomPage, -1)}
-                        disabled={pCopies <= 1}
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
-                      >
-                        <Minus className="w-2.5 h-2.5" />
-                      </button>
-                      <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 min-w-[16px] text-center">
-                        {pCopies}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPageCopies(zoomPage, 1)}
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors"
-                      >
-                        <Plus className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-                  );
-                })()}
 
-                {/* Modal Cus Scale Stepper */}
-                {(() => {
-                  const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
-                  const curScale = currConf?.customScale ?? customScale ?? 100;
-                  return (
-                    <div className="flex items-center space-x-1 bg-zinc-100 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] rounded-full px-2 py-1 text-xs">
-                      <span className="text-[10px] text-zinc-500 mr-0.5">Scale:</span>
-                      <button
-                        type="button"
-                        onClick={() => setPageCustomScale(zoomPage, Math.max(10, curScale - 5))}
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer"
-                        title="Decrease scale"
-                      >
-                        <Minus className="w-2.5 h-2.5" />
-                      </button>
-                      <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 min-w-[32px] text-center">
-                        {curScale}%
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPageCustomScale(zoomPage, Math.min(400, curScale + 5))}
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer"
-                        title="Increase scale"
-                      >
-                        <Plus className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-                  );
-                })()}
-
-                {/* Modal Orientation Toggle (No unwanted rotation) */}
-                {(() => {
-                  const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
-                  const isLand = currConf?.orientation === 'landscape';
-                  return (
-                    <div className="inline-flex rounded-full bg-zinc-100 dark:bg-[#131314] p-0.5 border border-zinc-200 dark:border-[#282a2c] text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setPageOrientation(zoomPage, 'portrait')}
-                        className={`px-2.5 py-1 rounded-full font-medium transition-all ${
-                          !isLand ? 'bg-white dark:bg-[#282a2c] text-zinc-950 dark:text-white shadow-2xs font-semibold' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
-                        }`}
-                      >
-                        Portrait
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPageOrientation(zoomPage, 'landscape')}
-                        className={`px-2.5 py-1 rounded-full font-medium transition-all ${
-                          isLand ? 'bg-white dark:bg-[#282a2c] text-zinc-950 dark:text-white shadow-2xs font-semibold' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
-                        }`}
-                      >
-                        Landscape
-                      </button>
-                    </div>
-                  );
-                })()}
-
-                <button
-                  type="button"
-                  onClick={() => rotatePage(zoomPage)}
-                  className="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 dark:bg-[#282a2c] dark:hover:bg-zinc-700 dark:text-zinc-200 text-xs font-medium flex items-center gap-1 transition-colors"
-                  title="Rotate 90 degrees"
-                >
-                  <RotateCw className="w-3.5 h-3.5" />
-                  <span>Rotate</span>
-                </button>
-                <button
-                  onClick={() => setZoomPage(null)}
-                  className="p-1.5 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 dark:bg-[#282a2c] dark:hover:bg-zinc-700 dark:text-zinc-200 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+              {/* Close X button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setZoomPage(null);
+                  setEnlargedPage(null);
+                }}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer shrink-0"
+                title="Close Preview"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-zinc-100 dark:bg-[#131314] rounded-xl">
-              {(() => {
-                const currConf = pageConfigs.find((p) => p.pageNumber === zoomPage);
-                const isLand = currConf?.orientation === 'landscape';
+            {/* Continuous Vertical Scrolling Canvas Feed matching doprint.app */}
+            <div className="flex-1 overflow-y-auto max-h-[72vh] p-2.5 sm:p-4 space-y-6 scrollbar-thin bg-zinc-100/75 dark:bg-[#0c0d10] rounded-2xl border border-zinc-200/80 dark:border-zinc-800">
+              {pageConfigs.map((pageCfg) => {
+                const pageNum = pageCfg.pageNumber;
+                const isLand = pageCfg.orientation === 'landscape';
+                const hasThumb = thumbnails[pageNum];
+                const isEnlarged = enlargedPage === pageNum;
+
                 return (
                   <div
-                    className={`relative flex items-center justify-center bg-white shadow-2xl shadow-black/60 rounded-xs border border-zinc-300 dark:border-zinc-700 transition-all duration-300 overflow-hidden ${
-                      isLand ? 'w-[88%] aspect-[297/210] max-h-[65vh]' : 'w-[58%] aspect-[210/297] max-h-[65vh]'
-                    }`}
+                    key={pageNum}
+                    id={`preview-page-${pageNum}`}
+                    className="flex flex-col items-center gap-2 transition-all"
                   >
-                    {/* Margin guide */}
-                    <div className="absolute inset-2 border border-dashed border-zinc-300 pointer-events-none" />
-                    <span className="absolute bottom-2 right-2 text-[9px] font-mono font-bold text-zinc-400 uppercase">
-                      {isLand ? 'A4 Landscape (297×210 mm)' : 'A4 Portrait (210×297 mm)'}
-                    </span>
-
-                    <button
-                      type="button"
-                      onClick={() => currConf && setPageColor(currConf.pageNumber, currConf.colorMode === 'bw' ? 'color' : 'bw')}
-                      className={`absolute top-2 left-2 z-20 text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-2xs cursor-pointer transition-all hover:scale-105 active:scale-95 ${
-                        currConf?.colorMode === 'bw'
-                          ? 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700'
-                          : 'bg-gradient-to-r from-blue-500 to-purple-600 text-white'
-                      }`}
-                      title="Click to toggle B&W / Color"
+                    {/* Page Paper Card */}
+                    <div
+                      className={`relative w-full max-w-[440px] bg-white rounded-lg shadow-md shadow-black/15 border border-zinc-300 dark:border-zinc-700/80 transition-all duration-200 overflow-hidden ${
+                        isLand ? 'aspect-[297/210]' : 'aspect-[210/297]'
+                      } ${pageCfg.included === false ? 'opacity-50 grayscale' : ''}`}
                     >
-                      {currConf?.colorMode === 'bw' ? 'Black & White' : 'Full Color'}
-                    </button>
+                      {/* Safe Print Margin guide */}
+                      <div className="absolute inset-2 sm:inset-3 border border-dashed border-zinc-200/90 pointer-events-none z-10" />
 
-                    <div className="w-full h-full p-4 flex items-center justify-center overflow-hidden">
-                      <div
-                        className="w-full h-full flex items-center justify-center transition-all duration-300"
-                        style={{
-                          transform: `${currConf?.rotation ? `rotate(${currConf.rotation}deg)` : ''} scale(${Math.max(10, Math.min(400, currConf?.customScale ?? customScale ?? 100)) / 100})`,
-                          transformOrigin: 'center center',
-                        }}
+                      {/* Floating Zoom / Magnify toggle */}
+                      <button
+                        type="button"
+                        onClick={() => setEnlargedPage(isEnlarged ? null : pageNum)}
+                        className="absolute top-2.5 right-2.5 z-20 w-8 h-8 rounded-full bg-zinc-900/80 hover:bg-zinc-900 text-white backdrop-blur-sm flex items-center justify-center shadow-md transition-all active:scale-95 cursor-pointer"
+                        title={isEnlarged ? 'Reset zoom' : 'Enlarge page to read text'}
                       >
-                        <img
-                          src={thumbnails[zoomPage]}
-                          alt={`Zoomed Page ${zoomPage}`}
-                          style={{
-                            filter:
-                              enhanceMode === 'magic_bw'
-                                ? 'grayscale(100%) contrast(210%) brightness(122%)'
-                                : enhanceMode === 'grayscale'
-                                ? 'grayscale(100%) contrast(140%) brightness(108%)'
-                                : enhanceMode === 'color_boost'
-                                ? 'contrast(125%) brightness(108%) saturate(120%)'
-                                : currConf?.colorMode === 'bw'
-                                ? 'grayscale(100%) contrast(125%) brightness(96%)'
-                                : 'none',
-                          }}
-                          className={`${
-                            fitMode === 'fill' ? 'object-cover w-full h-full' : 'object-contain max-h-full max-w-full'
-                          } select-none transition-all duration-200`}
-                        />
+                        {isEnlarged ? <ZoomOut className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
+                      </button>
+
+                      {/* Deleted overlay badge if excluded */}
+                      {pageCfg.included === false && (
+                        <div className="absolute inset-0 z-20 flex items-center justify-center bg-zinc-900/30 backdrop-blur-[1px]">
+                          <span className="text-xs font-bold text-rose-600 bg-white/95 px-3 py-1 rounded-full shadow-md border border-rose-200">
+                            Page Excluded / Deleted
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Content Area */}
+                      <div className="w-full h-full p-2.5 sm:p-3.5 flex items-center justify-center overflow-hidden">
+                        {!hasThumb ? (
+                          <div className="flex flex-col items-center justify-center gap-2 py-16 text-zinc-400">
+                            <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                            <span className="text-[11px] font-mono">Rendering Page #{pageNum}...</span>
+                          </div>
+                        ) : (
+                          <div
+                            className="w-full h-full flex items-center justify-center transition-transform duration-200"
+                            style={{
+                              transform: `${pageCfg.rotation ? `rotate(${pageCfg.rotation}deg)` : ''} scale(${
+                                (isEnlarged ? 1.65 : 1.0) * (Math.max(10, Math.min(400, pageCfg.customScale ?? customScale ?? 100)) / 100)
+                              })`,
+                              transformOrigin: 'center center',
+                            }}
+                          >
+                            <img
+                              src={thumbnails[pageNum]}
+                              alt={`Page ${pageNum}`}
+                              style={{
+                                filter:
+                                  enhanceMode === 'magic_bw'
+                                    ? 'grayscale(100%) contrast(210%) brightness(122%)'
+                                    : enhanceMode === 'grayscale'
+                                    ? 'grayscale(100%) contrast(140%) brightness(108%)'
+                                    : enhanceMode === 'color_boost'
+                                    ? 'contrast(125%) brightness(108%) saturate(120%)'
+                                    : pageCfg.colorMode === 'bw'
+                                    ? 'grayscale(100%) contrast(125%) brightness(96%)'
+                                    : 'none',
+                              }}
+                              className={`${
+                                fitMode === 'fill' ? 'object-cover w-full h-full' : 'object-contain max-h-full max-w-full'
+                              } select-none`}
+                            />
+                          </div>
+                        )}
                       </div>
+                    </div>
+
+                    {/* Page Caption matching DoPrint */}
+                    <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400 font-medium">
+                      <span>Page {pageNum} of {totalPages}</span>
+                      <span>·</span>
+                      <span className={pageCfg.colorMode === 'color' ? 'text-amber-600 dark:text-amber-400 font-semibold' : ''}>
+                        {pageCfg.colorMode === 'color' ? 'Color' : 'B&W'}
+                      </span>
+                      {pageCfg.orientation === 'landscape' && (
+                        <>
+                          <span>·</span>
+                          <span>Landscape</span>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
-              })()}
+              })}
             </div>
 
-            <div className="flex items-center justify-between pt-2">
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                Select color mode for Page #{zoomPage}:
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPageColor(zoomPage, 'bw');
-                    setZoomPage(null);
-                  }}
-                  className="px-3.5 py-1.5 rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 text-xs font-semibold hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors shadow-2xs"
-                >
-                  Set B&amp;W (₹{TIER_RATES.standard.bw.single})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPageColor(zoomPage, 'color');
-                    setZoomPage(null);
-                  }}
-                  className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 text-white text-xs font-semibold hover:opacity-90 transition-opacity shadow-2xs"
-                >
-                  Set Color (₹{TIER_RATES.standard.color.single})
-                </button>
-              </div>
+            {/* Modal Footer: Doprint.app-style Full-Width Blue Close Button */}
+            <div className="pt-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setZoomPage(null);
+                  setEnlargedPage(null);
+                }}
+                className="w-full h-11 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold rounded-xl text-sm shadow-md shadow-blue-600/25 transition-all cursor-pointer flex items-center justify-center"
+              >
+                Close Preview
+              </button>
             </div>
           </div>
         </div>

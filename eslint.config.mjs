@@ -12,7 +12,6 @@ const eslintConfig = defineConfig([
   },
   // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
     ".next/**",
     ".open-next/**",
     "out/**",
@@ -20,6 +19,8 @@ const eslintConfig = defineConfig([
     "public/**",
     "next-env.d.ts",
     "worker.js",
+    "daemon/**",
+    "scratch/**",
   ]),
 ]);
 

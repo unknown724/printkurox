@@ -96,7 +96,7 @@ PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
-HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '30'))
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '6'))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '90')) # Retains local print archive for 90 days on laptop
@@ -186,7 +186,7 @@ def claim_paid_job(job_id):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("claimed"):
-                log(f"Atomically claimed job {job_id[:8]} -> PRINTING_ODD", "SUCCESS")
+                log(f"Atomically claimed job {job_id[:8]} -> {data.get('status', 'PRINTING')}", "SUCCESS")
                 return True
         return False
     except Exception as e:
@@ -229,12 +229,47 @@ def locate_sumatra():
 
 from PIL import Image, ImageOps
 
+def convert_with_libreoffice(file_path):
+    """Converts Office/document file (.docx, .doc, .rtf, .odt, .pptx, .xlsx) to vector PDF via headless LibreOffice (soffice)."""
+    soffice_paths = [
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        "soffice.exe",
+        "soffice"
+    ]
+    soffice_exe = None
+    for p in soffice_paths:
+        if os.path.isfile(p) or shutil.which(p):
+            soffice_exe = p
+            break
+    if not soffice_exe:
+        return None
+
+    out_dir = os.path.dirname(os.path.abspath(file_path))
+    pdf_expected = os.path.splitext(os.path.abspath(file_path))[0] + ".pdf"
+    try:
+        cmd = [soffice_exe, "--headless", "--convert-to", "pdf:writer_pdf_Export", "--outdir", out_dir, os.path.abspath(file_path)]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        if os.path.exists(pdf_expected) and os.path.getsize(pdf_expected) > 500:
+            log(f"Converted {os.path.basename(file_path)} to vector PDF via headless LibreOffice", "SUCCESS")
+            return pdf_expected
+    except Exception as err:
+        log(f"LibreOffice conversion notice: {err}", "WARN")
+    return None
+
 def convert_office_to_pdf(file_path):
     """
     High-fidelity native conversion of Office documents (.docx, .doc, .rtf, .pptx, .ppt, .xlsx, .xls)
-    to true vector PDF using Microsoft Office COM on Windows before sending to SumatraPDF.
+    to true vector PDF using headless LibreOffice or Microsoft Office COM on Windows before sending to SumatraPDF.
     """
     ext = os.path.splitext(file_path)[1].lower()
+    
+    # 1. Try headless LibreOffice first (fast, 1.5s, no popups, zero UI modal hangs)
+    if ext in ['.docx', '.doc', '.rtf', '.odt', '.pptx', '.ppt', '.xlsx', '.xls', '.csv']:
+        lo_pdf = convert_with_libreoffice(file_path)
+        if lo_pdf and os.path.exists(lo_pdf):
+            return lo_pdf
+
     pdf_path = os.path.splitext(file_path)[0] + "_office.pdf"
     abs_src = os.path.abspath(file_path)
     abs_dst = os.path.abspath(pdf_path)
@@ -338,23 +373,42 @@ try {{
 
 def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
     """If file is an image or Office document, convert it to A4 PDF for SumatraPDF respecting orientation and fit mode."""
+    if not file_path or not os.path.exists(file_path):
+        return file_path
+
+    # 1. Inspect Magic Bytes: If it actually starts with %PDF-, it's already a valid PDF!
+    # CRITICAL: SumatraPDF routes file parsers strictly by file extension!
+    # If a valid PDF has a .png/.jpg/.jpeg extension, it MUST be renamed/copied to .pdf,
+    # otherwise SumatraPDF parses it with libpng/libjpeg and spools a blank page!
     try:
         with open(file_path, 'rb') as f:
-            header = f.read(5)
-            if header.startswith(b'%PDF'):
+            header = f.read(8)
+            if header.startswith(b'%PDF-'):
+                if not file_path.lower().endswith('.pdf'):
+                    pdf_renamed = os.path.splitext(file_path)[0] + '.pdf'
+                    if not os.path.exists(pdf_renamed) or os.path.getsize(pdf_renamed) != os.path.getsize(file_path):
+                        shutil.copy2(file_path, pdf_renamed)
+                    log(f"Normalized PDF extension for SumatraPDF: {os.path.basename(pdf_renamed)}", "INFO")
+                    return pdf_renamed
                 return file_path
     except Exception:
         pass
 
-    ext = os.path.splitext(file_path)[1].lower()
-    # Check Office documents first
-    if ext in ['.docx', '.doc', '.rtf', '.pptx', '.ppt', '.xlsx', '.xls', '.csv']:
-        converted_office = convert_office_to_pdf(file_path)
-        if converted_office.lower().endswith('.pdf') and os.path.exists(converted_office):
-            return converted_office
+    # 2. Check if the file is an Image (JPEG, PNG, WEBP, BMP, etc.) via PIL Image.open
+    # This detects images EVEN IF downloaded or named with a .pdf extension!
+    is_image = False
+    img_format = None
+    try:
+        with Image.open(file_path) as test_img:
+            is_image = True
+            img_format = test_img.format
+    except Exception:
+        is_image = False
 
-    if ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp']:
-        pdf_path = os.path.splitext(file_path)[0] + "_converted.pdf"
+    if is_image:
+        pdf_path = os.path.splitext(file_path)[0]
+        if not pdf_path.endswith('_converted.pdf'):
+            pdf_path += '_converted.pdf'
         try:
             image = Image.open(file_path)
             # Correct smartphone camera rotation from EXIF metadata
@@ -408,11 +462,19 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
                 canvas.paste(img_copy, (offset_x, offset_y))
 
             canvas.save(pdf_path, "PDF", resolution=300.0)
-            log(f"Converted {os.path.basename(file_path)} to professional A4 {'Landscape' if is_landscape else 'Portrait'} PDF (Fit: {fit_mode})", "INFO")
+            log(f"Converted {os.path.basename(file_path)} ({img_format or 'Image'}) to professional A4 {'Landscape' if is_landscape else 'Portrait'} PDF", "INFO")
             return pdf_path
         except Exception as e:
             log(f"Image to PDF conversion warning: {e}", "WARN")
             return file_path
+
+    # 3. Check Office documents
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in ['.docx', '.doc', '.rtf', '.pptx', '.ppt', '.xlsx', '.xls', '.csv']:
+        converted_office = convert_office_to_pdf(file_path)
+        if converted_office.lower().endswith('.pdf') and os.path.exists(converted_office):
+            return converted_office
+
     return file_path
 
 def get_windows_printer_telemetry():
@@ -428,13 +490,26 @@ def get_windows_printer_telemetry():
         if not target_name:
             target_name = "Default Printer"
 
-        ps_cmd = f"Get-Printer -Name '{target_name}' -ErrorAction SilentlyContinue | Select-Object PrinterStatus, JobCount | ConvertTo-Json"
+        ps_cmd = f"""
+$p = Get-Printer -Name '{target_name}' -ErrorAction SilentlyContinue
+if ($p) {{
+    $cim = Get-CimInstance Win32_Printer -Filter "Name = '$($p.Name.Replace("'", "''"))'" -ErrorAction SilentlyContinue
+    $isWorkOffline = if ($p.WorkOffline -ne $null) {{ [bool]$p.WorkOffline }} elseif ($cim -and $cim.WorkOffline -ne $null) {{ [bool]$cim.WorkOffline }} else {{ $false }}
+    [PSCustomObject]@{{
+        PrinterStatus = [int]$p.PrinterStatus
+        JobCount = [int]$p.JobCount
+        WorkOffline = $isWorkOffline
+        Name = [string]$p.Name
+    }} | ConvertTo-Json -Compress
+}}
+"""
         res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
         if res.returncode == 0 and res.stdout.strip():
             import json
             data = json.loads(res.stdout)
-            raw_status = data.get("PrinterStatus", 0)
+            raw_status = int(data.get("PrinterStatus", 0))
             job_count = int(data.get("JobCount", 0))
+            work_offline = bool(data.get("WorkOffline", False))
 
             status_map = {
                 0: "Ready",
@@ -451,8 +526,12 @@ def get_windows_printer_telemetry():
                 13: "Offline",
                 21: "User Intervention"
             }
-            status_text = status_map.get(raw_status, "Ready" if raw_status in (0, 2, 3) else "Offline" if raw_status in (4, 7, 8, 13) else str(raw_status))
-            is_online = 0 if raw_status in [4, 7, 8, 13] else 1
+            if work_offline or raw_status in [4, 7, 8, 13]:
+                status_text = "Offline"
+                is_online = 0
+            else:
+                status_text = status_map.get(raw_status, "Ready" if raw_status in (0, 2, 3) else str(raw_status))
+                is_online = 1
 
             return {
                 "name": target_name,
@@ -460,12 +539,12 @@ def get_windows_printer_telemetry():
                 "status_text": status_text,
                 "spooler_jobs": job_count
             }
-    except Exception:
-        pass
+    except Exception as telem_err:
+        log(f"Telemetry query notice: {telem_err}", "DEBUG")
     return {
         "name": target_name or "Default Printer",
-        "is_online": 1,
-        "status_text": "Ready",
+        "is_online": 0,
+        "status_text": "Offline",
         "spooler_jobs": 0
     }
 
@@ -1134,9 +1213,11 @@ def main():
                     raw_name = os.path.basename(file_name.replace('\\', '/'))
                     base_name = re.sub(r'[^a-zA-Z0-9._-]', '_', raw_name) or "document"
                     clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code)
-                    local_filename = f"{clean_pickup}_{job_id[:6]}_{base_name}"
-                    if not local_filename.lower().endswith('.pdf'):
-                        local_filename += '.pdf'
+                    _, orig_ext = os.path.splitext(base_name)
+                    if not orig_ext:
+                        local_filename = f"{clean_pickup}_{job_id[:6]}_{base_name}.pdf"
+                    else:
+                        local_filename = f"{clean_pickup}_{job_id[:6]}_{base_name}"
                     local_path = os.path.join(TEMP_DIR, local_filename)
 
                     # Search local disk storage (printed_archive and temp_prints)

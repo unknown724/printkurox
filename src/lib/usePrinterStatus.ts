@@ -9,7 +9,7 @@ interface PrinterStatus {
   loading: boolean;
 }
 
-export function usePrinterStatus(pollIntervalMs = 30_000, stationId?: string): PrinterStatus {
+export function usePrinterStatus(pollIntervalMs = 6_000, stationId?: string): PrinterStatus {
   const [status, setStatus] = useState<PrinterStatus>({
     online: true, // Optimistic default until we know
     lastSeen: null,
@@ -22,7 +22,10 @@ export function usePrinterStatus(pollIntervalMs = 30_000, stationId?: string): P
       const url = stationId
         ? `/api/printer-status?station_id=${encodeURIComponent(stationId)}`
         : '/api/printer-status';
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       setStatus({
@@ -45,7 +48,21 @@ export function usePrinterStatus(pollIntervalMs = 30_000, stationId?: string): P
 
     // Poll on interval
     const timer = setInterval(check, pollIntervalMs);
-    return () => clearInterval(timer);
+
+    // Instant refresh on tab focus / visibility
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        check();
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', check);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', check);
+    };
   }, [check, pollIntervalMs]);
 
   return status;

@@ -49,16 +49,16 @@ export function FooterLegal() {
           </button>
           <span>•</span>
           <a
-            href="https://wa.me/919863013886?text=Hi%20PrintKurox%20Developer,%20I%20need%20assistance"
+            href="https://wa.me/919362980761?text=Hi%20PrintKurox%2C%20I%20want%20to%20print%20a%20document"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 hover:border-emerald-500/50 shadow-xs hover:shadow-emerald-500/15 transition-all active:scale-95 group"
-            title="Chat with Developer on WhatsApp (+91 98630 13886)"
+            title="Chat with Official WhatsApp Print Bot"
           >
             <span className="w-3.5 h-3.5 rounded-full bg-[#25D366] flex items-center justify-center text-white shrink-0 group-hover:scale-110 transition-transform shadow-xs">
               <WhatsAppIcon className="w-2.5 h-2.5 fill-white" />
             </span>
-            <span>Contact Developer</span>
+            <span>WhatsApp Bot · Instant Print</span>
             <span className="relative flex h-1.5 w-1.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
@@ -174,22 +174,28 @@ export function FooterLegal() {
 
               {activeTab === 'contact' && (
                 <>
-                  {/* Dedicated Developer WhatsApp Support Card */}
-                  <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/15 via-teal-500/5 to-transparent border border-emerald-500/30 dark:border-emerald-500/25 space-y-3 shadow-xs">
+                  {/* Official 24/7 WhatsApp Print Bot Card */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/20 via-teal-500/10 to-transparent border border-emerald-500/35 space-y-3 shadow-xs">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-[#25D366] flex items-center justify-center shadow-md shadow-emerald-500/20 text-white shrink-0">
-                          <WhatsAppIcon className="w-5 h-5 fill-white" />
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative w-11 h-11 rounded-xl overflow-hidden border border-emerald-500/40 shadow-sm shrink-0 bg-black">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src="/brand/whatsapp_official_dp.jpg"
+                            alt="PrintKurox Official Bot"
+                            className="w-full h-full object-cover"
+                          />
+                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-black" />
                         </div>
                         <div className="min-w-0">
                           <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                            <span>Developer Support Desk</span>
+                            <span>Official Print Bot</span>
                             <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider">
-                              Live
+                              24/7 Autonomous
                             </span>
                           </h4>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                            Direct technical assistance &amp; kiosk inquiries
+                            Forward PDFs &amp; photos to print instantly at Room 29
                           </p>
                         </div>
                       </div>
@@ -198,16 +204,54 @@ export function FooterLegal() {
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-500/20">
                       <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
                         <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>+91 93629 80761</span>
+                      </div>
+                      <a
+                        href="https://wa.me/919362980761?text=Hi%20PrintKurox%2C%20I%20want%20to%20print%20a%20document"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3.5 py-1.5 rounded-xl bg-[#25D366] hover:bg-[#20bd5a] text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all hover:scale-[1.02] active:scale-95"
+                      >
+                        <WhatsAppIcon className="w-3.5 h-3.5 fill-white" />
+                        <span>Chat with Bot</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Dedicated Developer WhatsApp Support Card */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-500/10 via-slate-500/5 to-transparent border border-indigo-500/20 dark:border-indigo-500/15 space-y-3 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center shadow-md shadow-indigo-500/20 text-white shrink-0">
+                          <WhatsAppIcon className="w-5 h-5 fill-white" />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            <span>Developer &amp; Technical Support</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider">
+                              Tech Desk
+                            </span>
+                          </h4>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            Hardware diagnostics, refunds &amp; developer assistance
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-indigo-500/15">
+                      <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+                        <span className="inline-block w-2 h-2 rounded-full bg-indigo-500" />
                         <span>+91 98630 13886</span>
                       </div>
                       <a
                         href="https://wa.me/919863013886?text=Hi%20PrintKurox%20Developer,%20I%20need%20technical%20assistance"
                         target="_blank"
                         rel="noreferrer"
-                        className="px-3.5 py-1.5 rounded-xl bg-[#25D366] hover:bg-[#20bd5a] text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all hover:scale-[1.02] active:scale-95"
+                        className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all hover:scale-[1.02] active:scale-95"
                       >
                         <WhatsAppIcon className="w-3.5 h-3.5 fill-white" />
-                        <span>Chat on WhatsApp</span>
+                        <span>Developer Desk</span>
                       </a>
                     </div>
                   </div>

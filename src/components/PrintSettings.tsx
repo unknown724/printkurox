@@ -160,19 +160,19 @@ export function PrintSettings({
           <span>Total Set Copies</span>
         </div>
 
-        <div className="flex items-center space-x-1 bg-zinc-100/80 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 rounded-full p-1 shadow-2xs">
+        <div className="flex items-center space-x-1.5 bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl p-1 shadow-2xs">
           <button
             type="button"
             onClick={() => update({ copies: Math.max(1, settings.copies - 1) })}
             disabled={settings.copies <= 1}
-            className="w-7 h-7 rounded-full bg-white dark:bg-white/10 border border-zinc-200 dark:border-white/15 hover:bg-zinc-50 dark:hover:bg-white/20 disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 transition-colors shadow-2xs cursor-pointer"
+            className="w-8 h-8 rounded-lg bg-white dark:bg-zinc-700 border border-zinc-200/80 dark:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-600/80 disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-800 dark:text-zinc-100 transition-all shadow-2xs active:scale-95 cursor-pointer"
             title="Decrease copies"
             aria-label="Decrease copies"
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
 
-          <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100 font-mono px-3 tabular-nums min-w-[2.5rem] text-center">
+          <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100 font-mono px-2.5 tabular-nums min-w-[2.25rem] text-center select-none">
             {settings.copies}
           </span>
 
@@ -180,7 +180,7 @@ export function PrintSettings({
             type="button"
             onClick={() => update({ copies: Math.min(50, settings.copies + 1) })}
             disabled={settings.copies >= 50}
-            className="w-7 h-7 rounded-full bg-white dark:bg-white/10 border border-zinc-200 dark:border-white/15 hover:bg-zinc-50 dark:hover:bg-white/20 disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-700 dark:text-zinc-200 transition-colors shadow-2xs cursor-pointer"
+            className="w-8 h-8 rounded-lg bg-white dark:bg-zinc-700 border border-zinc-200/80 dark:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-600/80 disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-zinc-800 dark:text-zinc-100 transition-all shadow-2xs active:scale-95 cursor-pointer"
             title="Increase copies"
             aria-label="Increase copies"
           >

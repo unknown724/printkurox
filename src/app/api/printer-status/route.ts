@@ -69,7 +69,7 @@ export async function GET(req: Request) {
 
         const lastSeenDate = new Date(row.updated_at.replace(' ', 'T') + 'Z');
         const ageSeconds = Math.max(0, (now - lastSeenDate.getTime()) / 1000);
-        const online = ageSeconds <= 90;
+        const online = ageSeconds <= 20;
 
         return {
           stationId: station.id,
@@ -89,7 +89,9 @@ export async function GET(req: Request) {
         {
           status: 200,
           headers: {
-            'Cache-Control': 'public, max-age=10, stale-while-revalidate=20',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
           },
         }
       );
@@ -114,13 +116,41 @@ export async function GET(req: Request) {
     }
 
     if (!rows || rows.length === 0) {
-      return NextResponse.json({ online: false, stationId: station.id, lastSeen: null }, { status: 200 });
+      return NextResponse.json(
+        { online: false, stationId: station.id, lastSeen: null },
+        {
+          status: 200,
+          headers: {
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          },
+        }
+      );
+    }
+
+    // Check physical hardware telemetry for primary station
+    let hardwareOnline = true;
+    let hardwareStatusText = 'Ready';
+    if (station.id === 'block_b' || station.id === 'main') {
+      try {
+        const telemRows = await queryD1<{ is_online?: number; status_text?: string }>(
+          `SELECT is_online, status_text FROM printer_telemetry WHERE id = 1 LIMIT 1`
+        );
+        if (telemRows && telemRows.length > 0) {
+          if (telemRows[0].is_online === 0) {
+            hardwareOnline = false;
+            hardwareStatusText = telemRows[0].status_text || 'Offline';
+          }
+        }
+      } catch {}
     }
 
     const lastSeen: string = rows[0].updated_at;
     const lastSeenDate = new Date(lastSeen.replace(' ', 'T') + 'Z');
     const ageSeconds = (Date.now() - lastSeenDate.getTime()) / 1000;
-    const online = ageSeconds <= 90;
+    const daemonAlive = ageSeconds <= 20;
+    const online = daemonAlive && hardwareOnline;
 
     return NextResponse.json(
       {
@@ -129,16 +159,29 @@ export async function GET(req: Request) {
         stationName: station.name,
         lastSeen,
         ageSeconds: Math.round(ageSeconds),
+        hardwareStatus: hardwareStatusText,
       },
       {
         status: 200,
         headers: {
-          'Cache-Control': 'public, max-age=15, stale-while-revalidate=30',
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
         },
       }
     );
   } catch (err) {
     console.error('[printer-status]', err);
-    return NextResponse.json({ online: false, lastSeen: null }, { status: 200 });
+    return NextResponse.json(
+      { online: false, lastSeen: null },
+      {
+        status: 200,
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+      }
+    );
   }
 }

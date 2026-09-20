@@ -44,7 +44,7 @@ interface JobItem {
   is_duplex: boolean | number;
   copies: number;
   total_price: number;
-  status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING_ODD' | 'AWAITING_FLIP' | 'PRINTING_EVEN' | 'COMPLETED' | 'FAILED';
+  status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING' | 'PRINTING_ODD' | 'AWAITING_FLIP' | 'PRINTING_EVEN' | 'COMPLETED' | 'FAILED';
   payment_id?: string;
   created_at: string;
   expires_at?: string;
@@ -825,7 +825,7 @@ export default function StationOperatorPortal() {
           ) : (
             filteredJobs.map((job) => {
               const isPaid = job.status === 'PAID';
-              const isPrinting = ['PRINTING_ODD', 'AWAITING_FLIP', 'PRINTING_EVEN'].includes(job.status);
+              const isPrinting = ['PRINTING', 'PRINTING_ODD', 'AWAITING_FLIP', 'PRINTING_EVEN'].includes(job.status);
               const isCompleted = job.status === 'COMPLETED';
               const isFailed = job.status === 'FAILED';
 
@@ -858,7 +858,11 @@ export default function StationOperatorPortal() {
                               : 'bg-slate-700/30 text-slate-400'
                           }`}
                         >
-                          {job.status.replace(/_/g, ' ')}
+                          {job.status === 'PRINTING'
+                            ? 'PRINTING'
+                            : job.status === 'PRINTING_ODD'
+                            ? (!job.is_duplex ? 'PRINTING' : 'PRINTING PASS 1')
+                            : job.status.replace(/_/g, ' ')}
                         </span>
                       </div>
 

@@ -172,6 +172,12 @@ function HomePageContent() {
         pageRangeType: isAll ? 'all' : 'custom',
         customPageRange: rangeStr,
       }));
+    } else {
+      setSettings((prev) => ({
+        ...prev,
+        pageRangeType: 'custom',
+        customPageRange: '',
+      }));
     }
   };
 

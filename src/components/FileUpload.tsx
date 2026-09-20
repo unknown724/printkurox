@@ -15,6 +15,8 @@ import {
   ArrowRight,
   Camera,
   ShieldCheck,
+  MessageCircle,
+  Zap,
 } from 'lucide-react';
 import { convertDocxToPdfClient } from '@/lib/client-docx-converter';
 
@@ -276,21 +278,43 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         newFileList.map(async (f) => {
           const lowerName = f.name.toLowerCase();
           if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
-            // Option B: High-Fidelity Client-Side Conversion in the browser
-            // Uses docx-preview to render DOM in memory, html2canvas to rasterize, and pdf-lib to pack A4 PDF
+            setUploadPhase('converting-docx');
+            // Priority 1: High-Speed & 100% Authentic Vector Conversion via Local Server LibreOffice Engine
             try {
-              setUploadPhase('converting-docx');
+              const formData = new FormData();
+              formData.append('file', f);
+              const convRes = await fetch('/api/convert-docx', {
+                method: 'POST',
+                body: formData,
+              });
+
+              if (convRes.ok) {
+                const pdfBlob = await convRes.blob();
+                if (pdfBlob && pdfBlob.size > 500) {
+                  const outPdfName = f.name.replace(/\.(docx|doc)$/i, '.pdf');
+                  const serverPdf = new File([pdfBlob], outPdfName, { type: 'application/pdf' });
+                  console.log(`[FileUpload] Converted "${f.name}" to vector PDF via local LibreOffice (${(serverPdf.size / 1024).toFixed(1)} KB)`);
+                  return serverPdf;
+                }
+              }
+            } catch (serverErr) {
+              console.warn('[FileUpload] Local server DOCX conversion failed, falling back to browser:', serverErr);
+            }
+
+            // Priority 2: Fallback in-browser conversion if server endpoint is unreachable
+            try {
               const clientPdf = await convertDocxToPdfClient(f, (curr, tot) => {
                 setDocxProgress({ current: curr, total: tot });
               });
               if (clientPdf && clientPdf.size > 1000) {
-                console.log(`[FileUpload] Successfully converted "${f.name}" to client-side A4 PDF (${(clientPdf.size / 1024).toFixed(1)} KB)`);
+                console.log(`[FileUpload] Converted "${f.name}" to client-side A4 PDF (${(clientPdf.size / 1024).toFixed(1)} KB)`);
                 return clientPdf;
               }
             } catch (clientErr) {
               console.warn('[FileUpload] Browser DOCX conversion fallback:', clientErr);
             }
-            // Fallback: If browser conversion fails, pass file along to server converter
+
+            // Priority 3: Fallback - pass raw file along
             return f;
           }
           return optimizeImage(f);
@@ -680,6 +704,58 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
   // Initial Upload Box with Qronos Glassmorphism
   return (
     <div className="space-y-2.5">
+      {/* Ultra-Compact WhatsApp Ingestion Bar */}
+      <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.06] hover:bg-emerald-500/[0.10] backdrop-blur-xl transition-all shadow-xs">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="relative w-8 h-8 rounded-xl overflow-hidden border border-emerald-500/30 shrink-0 bg-black">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/whatsapp_official_dp.jpg"
+              alt="PrintKurox Bot"
+              className="w-full h-full object-cover"
+            />
+            <span className="absolute bottom-0 right-0 w-2 h-2 bg-emerald-500 rounded-full border border-black" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 font-semibold text-xs sm:text-sm text-zinc-900 dark:text-zinc-100 truncate">
+              <span>Print via WhatsApp</span>
+              <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400">· Fast</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 font-medium text-zinc-800 dark:text-zinc-200">
+                <FileText className="w-3 h-3 text-red-500 shrink-0" />
+                <span>PDF</span>
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
+              <span className="inline-flex items-center gap-1 font-medium text-zinc-800 dark:text-zinc-200">
+                <FileText className="w-3 h-3 text-blue-500 shrink-0" />
+                <span>Word</span>
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
+              <span className="inline-flex items-center gap-1 font-medium text-zinc-800 dark:text-zinc-200">
+                <Camera className="w-3 h-3 text-sky-500 shrink-0" />
+                <span>Photos</span>
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
+              <span className="inline-flex items-center gap-0.5 font-semibold text-emerald-600 dark:text-emerald-400">
+                <Zap className="w-2.5 h-2.5 fill-emerald-500 text-emerald-500 shrink-0" />
+                <span>Instant</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <a
+          href="https://wa.me/919362980761?text=Hi%20PrintKurox%2C%20I%20want%20to%20print%20a%20document"
+          target="_blank"
+          rel="noreferrer"
+          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-all hover:scale-[1.02] active:scale-95 shrink-0"
+        >
+          <MessageCircle className="w-3.5 h-3.5 fill-white" />
+          <span>Open Chat</span>
+        </a>
+      </div>
+
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -780,9 +856,24 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
               or drag &amp; drop files anywhere here
             </p>
 
-            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1 font-normal">
-              Supports PDF, Word (.docx), or photos · Up to 10 files
-            </p>
+            <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400 mt-1.5 font-medium flex-wrap">
+              <span className="inline-flex items-center gap-1">
+                <FileText className="w-3 h-3 text-red-500" />
+                <span>PDF</span>
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-700 select-none">•</span>
+              <span className="inline-flex items-center gap-1">
+                <FileText className="w-3 h-3 text-blue-500" />
+                <span>Word (.docx)</span>
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-700 select-none">•</span>
+              <span className="inline-flex items-center gap-1">
+                <Camera className="w-3 h-3 text-sky-500" />
+                <span>Photos</span>
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-700 select-none">•</span>
+              <span className="text-zinc-400 dark:text-zinc-500 font-normal">A4 standard · Up to 10 files</span>
+            </div>
           </>
         )}
       </div>

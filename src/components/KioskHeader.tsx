@@ -8,8 +8,8 @@ import { AdminBadge } from '@/components/AdminBadge';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
 import { PwaInstallButton } from '@/components/PwaInstallButton';
 import { HostelSelectorModal } from '@/components/HostelSelectorModal';
-import { getStationConfig } from '@/lib/stations';
-import { ChevronDown, Building2, Lock } from 'lucide-react';
+import { getStationConfig, OFFICIAL_WHATSAPP_BOT_LINK, OFFICIAL_WHATSAPP_BOT_NUMBER } from '@/lib/stations';
+import { ChevronDown, Building2, Lock, MessageCircle } from 'lucide-react';
 import { useHostelChangeSetting } from '@/lib/useHostelChangeSetting';
 
 function HeaderContent() {
@@ -35,44 +35,13 @@ function HeaderContent() {
         {/* Brand Mark - Printer Logo & Campus Station Selector */}
         <div className="flex items-center space-x-2 sm:space-x-2.5">
           <Link href={isRomen ? '/?station=romen' : '/'} className="flex items-center space-x-2 group shrink-0">
-            <div className="w-8 h-8 rounded-xl bg-zinc-100 dark:bg-white/[0.05] border border-zinc-200 dark:border-white/10 flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
-              <svg
-                className="w-4.5 h-4.5 shrink-0"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <defs>
-                  <linearGradient id="kiosk-gemini-logo" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#4285F4" />
-                    <stop offset="50%" stopColor="#9B72CF" />
-                    <stop offset="100%" stopColor="#D96570" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d="M7 2.5H17V7.5H7V2.5Z"
-                  fill="url(#kiosk-gemini-logo)"
-                  opacity="0.85"
-                />
-                <rect
-                  x="3"
-                  y="7"
-                  width="18"
-                  height="10"
-                  rx="2.5"
-                  fill="url(#kiosk-gemini-logo)"
-                />
-                <path
-                  d="M6 14H18V19.5C18 20.0523 17.5523 20.5 17 20.5H7C6.44772 20.5 6 20.0523 6 19.5V14Z"
-                  fill="#ffffff"
-                />
-                <path d="M8.5 17H15.5" stroke="#131314" strokeWidth="1.2" strokeLinecap="round" />
-                <circle cx="17.5" cy="10" r="0.9" fill="#ffffff" />
-                <path
-                  d="M20 1C20 2.2 18.8 3.2 17.5 3.2C18.8 3.2 20 4.2 20 5.4C20 4.2 21.2 3.2 22.5 3.2C21.2 3.2 20 2.2 20 1Z"
-                  fill="url(#kiosk-gemini-logo)"
-                />
-              </svg>
+            <div className="w-8 h-8 rounded-xl bg-black border border-red-500/40 flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/whatsapp_official_dp.jpg"
+                alt="PrintKurox"
+                className="w-full h-full object-cover"
+              />
             </div>
           </Link>
 
@@ -87,12 +56,12 @@ function HeaderContent() {
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#f4f4f5] flex items-center gap-1">
-                    NERIST PrintHub
+                    PrintKurox
                   </span>
-                  <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full border bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25">
+                  <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full border bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/25">
                     {station.blockCode || 'Hostel'}
                   </span>
-                  <ChevronDown className="w-3 h-3 text-zinc-400 group-hover/station:text-blue-500 transition-colors" />
+                  <ChevronDown className="w-3 h-3 text-zinc-400 group-hover/station:text-red-500 transition-colors" />
                 </div>
                 <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-normal -mt-0.5 truncate max-w-[170px] sm:max-w-[210px]">
                   {`${station.shortName || 'Block B · Pare'} (Room 29)`}
@@ -104,13 +73,13 @@ function HeaderContent() {
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-[#f4f4f5] flex items-center gap-1">
-                    {isRomen ? 'Romen Xerox' : 'NERIST PrintHub'}
+                    {isRomen ? 'Romen Xerox' : 'PrintKurox'}
                   </span>
                   <span
                     className={`text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded-full border ${
                       isRomen
                         ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                        : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25'
+                        : 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/25'
                     }`}
                   >
                     {isRomen ? 'External' : station.blockCode || 'Hostel'}
@@ -128,6 +97,21 @@ function HeaderContent() {
 
         {/* Right controls */}
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Official WhatsApp Bot Action Pill */}
+          <a
+            href={OFFICIAL_WHATSAPP_BOT_LINK}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-xs font-semibold shadow-xs transition-all hover:scale-[1.02] active:scale-95 group"
+            title={`Chat with Official WhatsApp Print Bot (${OFFICIAL_WHATSAPP_BOT_NUMBER})`}
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+            <MessageCircle className="w-3.5 h-3.5 fill-current" />
+            <span className="truncate">WA Bot</span>
+          </a>
           <PwaInstallButton />
           <ThemeToggle />
           <AdminBadge />

@@ -321,12 +321,12 @@ export function DocumentStudio({
             </div>
           </div>
 
-          {/* Professional Adobe Acrobat Print Studio Layout (Mobile optimized & Desktop 2-column) */}
-          <div className="flex flex-col lg:grid lg:grid-cols-12 gap-2.5 sm:gap-3 lg:gap-3.5 items-start">
-            {/* Left Column on Desktop (Col 1-5) holding all settings without artificial gap */}
-            <div className="contents lg:block lg:col-span-5 xl:col-span-5 space-y-2 sm:space-y-2.5">
-              {/* Box 1 & 2: Sizing & Orientation */}
-              <div className="order-1 lg:order-none space-y-2">
+          {/* Professional Adobe Acrobat Print Studio Layout (Mobile preview-first & Desktop 2-column) */}
+          <div className="flex flex-col lg:grid lg:grid-cols-12 gap-2.5 sm:gap-3 lg:gap-3.5 items-stretch lg:items-start w-full">
+            {/* Left Column on Desktop (Col 1-5) / Below Preview on Mobile */}
+            <div className="contents lg:block lg:col-span-5 xl:col-span-5 space-y-2 sm:space-y-2.5 w-full">
+              {/* Box 1 & 2: Sizing & Orientation (order-2 on mobile, immediately under Preview) */}
+              <div className="order-2 lg:order-none w-full space-y-2">
                 <AdobePageHandling
                   settings={layoutSettings}
                   onChange={onLayoutSettingsChange}
@@ -367,8 +367,8 @@ export function DocumentStudio({
                 />
               </div>
 
-              {/* Box 3: Pages to Print (appears 3rd on mobile, immediately under Box 2 on desktop) */}
-              <div className="order-3 lg:order-none space-y-2 lg:mt-2 sm:lg:mt-2.5">
+              {/* Box 3: Pages to Print (order-3 on mobile, below Page Sizing) */}
+              <div className="order-3 lg:order-none w-full space-y-2 lg:mt-2 sm:lg:mt-2.5">
                 <AdobePagesToPrint
                   totalPages={uploadedBatch.totalPages}
                   pageConfigs={pageConfigs}
@@ -381,8 +381,8 @@ export function DocumentStudio({
               </div>
             </div>
 
-            {/* Right Column on Desktop (Col 6-12) / Middle on Mobile (order-2) */}
-            <div className="order-2 lg:order-none lg:col-span-7 xl:col-span-7 w-full lg:sticky lg:top-2">
+            {/* Right Column on Desktop (Col 6-12) / Top on Mobile (order-1) */}
+            <div className="order-1 lg:order-none lg:col-span-7 xl:col-span-7 w-full lg:sticky lg:top-2">
               <PageVisualizer
                 totalPages={uploadedBatch.totalPages}
                 downloadUrl={uploadedBatch.downloadUrl}
@@ -428,19 +428,31 @@ export function DocumentStudio({
 
             {/* Quick Price Indicator */}
             <div className="flex items-center gap-1.5 sm:gap-2 text-xs truncate">
-              <span className="font-bold text-zinc-900 dark:text-white truncate">
-                {uploadedBatch.totalPages} {uploadedBatch.totalPages === 1 ? 'Page' : 'Pages'}
-              </span>
-              <span className="text-zinc-300 dark:text-zinc-600">•</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-bold shrink-0">
-                ₹{pricing?.totalPrice || (bwCount * TIER_RATES.standard.bw.single + colorCount * TIER_RATES.standard.color.single) || TIER_RATES.standard.bw.single}
-              </span>
+              {bwCount + colorCount === 0 ? (
+                <span className="font-bold text-rose-500 text-xs">
+                  No printable pages (all deleted)
+                </span>
+              ) : (
+                <>
+                  <span className="font-bold text-zinc-900 dark:text-white truncate">
+                    {bwCount + colorCount} {bwCount + colorCount === 1 ? 'Page' : 'Pages'}
+                    {bwCount + colorCount < uploadedBatch.totalPages && (
+                      <span className="text-zinc-400 font-normal"> ({uploadedBatch.totalPages - (bwCount + colorCount)} deleted)</span>
+                    )}
+                  </span>
+                  <span className="text-zinc-300 dark:text-zinc-600">•</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-bold shrink-0">
+                    ₹{pricing?.totalPrice || (bwCount * TIER_RATES.standard.bw.single + colorCount * TIER_RATES.standard.color.single) || TIER_RATES.standard.bw.single}
+                  </span>
+                </>
+              )}
             </div>
 
             <button
               type="button"
+              disabled={bwCount + colorCount === 0}
               onClick={() => goToStep(3)}
-              className="h-10 px-4 sm:px-6 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shadow-lg shadow-blue-500/35 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shrink-0 ml-auto"
+              className="h-10 px-4 sm:px-6 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 disabled:pointer-events-none text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shadow-lg shadow-blue-500/35 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shrink-0 ml-auto"
             >
               <span>Proceed to Checkout</span>
               <ArrowRight className="w-4 h-4" />

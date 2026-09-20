@@ -21,7 +21,7 @@ export interface PrintJobRecord {
   total_price: number;
   payment_id: string | null;
   order_id: string | null;
-  status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING_ODD' | 'AWAITING_FLIP' | 'PRINTING_EVEN' | 'COMPLETED' | 'FAILED';
+  status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING' | 'PRINTING_ODD' | 'AWAITING_FLIP' | 'PRINTING_EVEN' | 'COMPLETED' | 'FAILED';
   station_id?: string | null;
   orientation?: 'portrait' | 'landscape' | 'auto';
   page_configs?: string | null;

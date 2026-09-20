@@ -28,7 +28,7 @@ import { getStationConfig } from '@/lib/stations';
 interface JobStatusData {
   id: string;
   pickupCode: string;
-  status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING_ODD' | 'AWAITING_FLIP' | 'PRINTING_EVEN' | 'COMPLETED' | 'FAILED';
+  status: 'PENDING_PAYMENT' | 'PAID' | 'PRINTING' | 'PRINTING_ODD' | 'AWAITING_FLIP' | 'PRINTING_EVEN' | 'COMPLETED' | 'FAILED';
   fileName: string;
   totalPages: number;
   pageRange: string;
@@ -178,6 +178,7 @@ export default function JobStatusPage({
           color: 'text-zinc-200 border-white/20 bg-white/5',
           step: 1,
         };
+      case 'PRINTING':
       case 'PRINTING_ODD':
         return {
           title: job.isDuplex ? 'Printing Pass 1 (Front Sides)' : 'Printing Document...',

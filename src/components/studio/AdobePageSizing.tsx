@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Scissors,
   ChevronDown,
   ChevronUp,
   AlignLeft,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import {
   PhotoLayoutSettings,
@@ -15,7 +17,12 @@ import {
   getTextOverlayItems,
 } from './PhotoLayoutSelector';
 import { PageConfig } from '@/lib/pricing';
-import { parsePageRange } from '@/lib/pdf-utils';
+import {
+  parsePageRange,
+  pagesToRangeString,
+  getRelativeOddEvenPages,
+  excludePagesFromList,
+} from '@/lib/pdf-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENT 1: AdobePagesToPrint (Pages to Print Section)
@@ -40,18 +47,40 @@ export function AdobePagesToPrint({
   onRangeChange,
   activePageNumber = 1,
 }: AdobePagesToPrintProps) {
-  const [prevRangeKey, setPrevRangeKey] = useState(`${pageRangeType}_${customPageRange}_${totalPages}`);
+  // Local input text to allow uninterrupted typing of ranges like "4-11"
   const [rangeInput, setRangeInput] = useState(
     pageRangeType === 'all' ? `1-${totalPages}` : customPageRange || `1-${totalPages}`
   );
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [showExcludeInput, setShowExcludeInput] = useState(false);
+  const [excludeInput, setExcludeInput] = useState('');
 
-  const currentRangeKey = `${pageRangeType}_${customPageRange}_${totalPages}`;
-  if (prevRangeKey !== currentRangeKey) {
-    setPrevRangeKey(currentRangeKey);
-    setRangeInput(pageRangeType === 'custom' && customPageRange ? customPageRange : `1-${totalPages}`);
-  }
+  // Base working range before odd/even filter (e.g. 4-11 => [4, 5, 6, 7, 8, 9, 10, 11])
+  const [baseRange, setBaseRange] = useState<number[]>(() =>
+    Array.from({ length: totalPages }, (_, i) => i + 1)
+  );
+  const [sequenceFilter, setSequenceFilter] = useState<'all' | 'odd' | 'even'>('all');
+
+  // Sync rangeInput when parent updates externally (e.g. clicking delete on card or preset)
+  // BUT do not disrupt the user if their cursor is inside the input!
+  useEffect(() => {
+    if (!isInputFocused && pageConfigs) {
+      const included = pageConfigs.filter((c) => c.included).map((c) => c.pageNumber);
+      if (included.length === totalPages) {
+        setRangeInput('All');
+        setBaseRange(Array.from({ length: totalPages }, (_, i) => i + 1));
+      } else {
+        const formatted = pagesToRangeString(included);
+        setRangeInput(formatted);
+      }
+    }
+  }, [pageConfigs, totalPages, isInputFocused]);
 
   const handleSelectAll = () => {
+    const allPages = Array.from({ length: totalPages }, (_, i) => i + 1);
+    setBaseRange(allPages);
+    setSequenceFilter('all');
+    setRangeInput('All');
     onRangeChange?.('all', 'All');
     if (pageConfigs && onPageConfigsChange) {
       onPageConfigsChange(pageConfigs.map((c) => ({ ...c, included: true })));
@@ -59,7 +88,10 @@ export function AdobePagesToPrint({
   };
 
   const handleSelectCurrent = () => {
+    setBaseRange([activePageNumber]);
+    setSequenceFilter('all');
     const pageStr = String(activePageNumber);
+    setRangeInput(pageStr);
     onRangeChange?.('custom', pageStr);
     if (pageConfigs && onPageConfigsChange) {
       onPageConfigsChange(
@@ -71,79 +103,328 @@ export function AdobePagesToPrint({
     }
   };
 
-  const handleCustomRange = (inputVal: string) => {
-    setRangeInput(inputVal);
-    onRangeChange?.('custom', inputVal);
+  const handleApplyCustomRange = (inputVal: string) => {
+    const trimmed = inputVal.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'all') {
+      handleSelectAll();
+      return;
+    }
+    const parsed = parsePageRange(trimmed, totalPages);
+    if (parsed.length > 0) {
+      setBaseRange(parsed);
+      setSequenceFilter('all');
+      const formatted = parsed.length === totalPages ? 'All' : pagesToRangeString(parsed);
+      setRangeInput(formatted);
+      onRangeChange?.(parsed.length === totalPages ? 'all' : 'custom', formatted);
+      if (pageConfigs && onPageConfigsChange) {
+        onPageConfigsChange(
+          pageConfigs.map((c) => ({
+            ...c,
+            included: parsed.includes(c.pageNumber),
+          }))
+        );
+      }
+    }
+  };
+
+  const handleInputChange = (val: string) => {
+    setRangeInput(val);
+    const trimmed = val.trim();
+    // Do not parse if user is midway through typing a range like "4-" or a list like "1,"
+    if (trimmed.endsWith('-') || trimmed.endsWith(',')) return;
+    const parsed = parsePageRange(trimmed, totalPages);
+    if (parsed.length > 0) {
+      setBaseRange(parsed);
+      setSequenceFilter('all');
+      if (pageConfigs && onPageConfigsChange) {
+        onPageConfigsChange(
+          pageConfigs.map((c) => ({
+            ...c,
+            included: parsed.includes(c.pageNumber),
+          }))
+        );
+      }
+      onRangeChange?.(parsed.length === totalPages ? 'all' : 'custom', pagesToRangeString(parsed));
+    }
+  };
+
+  const getWorkingBase = () => {
+    if (sequenceFilter === 'all') {
+      const currentIncluded = pageConfigs
+        ? pageConfigs.filter((c) => c.included).map((c) => c.pageNumber)
+        : [];
+      if (currentIncluded.length > 0) return currentIncluded;
+    }
+    if (baseRange.length > 0) return baseRange;
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  };
+
+  const handleSelectOdd = () => {
+    const workingBase = getWorkingBase();
+    setBaseRange(workingBase);
+    const oddPages = getRelativeOddEvenPages(workingBase, 'odd');
+    setSequenceFilter('odd');
+    const formatted = pagesToRangeString(oddPages);
+    setRangeInput(formatted);
+    onRangeChange?.('custom', formatted);
     if (pageConfigs && onPageConfigsChange) {
-      const parsedPages = parsePageRange(inputVal, totalPages);
       onPageConfigsChange(
         pageConfigs.map((c) => ({
           ...c,
-          included: parsedPages.includes(c.pageNumber),
+          included: oddPages.includes(c.pageNumber),
         }))
       );
     }
   };
 
+  const handleSelectEven = () => {
+    const workingBase = getWorkingBase();
+    setBaseRange(workingBase);
+    const evenPages = getRelativeOddEvenPages(workingBase, 'even');
+    setSequenceFilter('even');
+    const formatted = pagesToRangeString(evenPages);
+    setRangeInput(formatted);
+    onRangeChange?.('custom', formatted);
+    if (pageConfigs && onPageConfigsChange) {
+      onPageConfigsChange(
+        pageConfigs.map((c) => ({
+          ...c,
+          included: evenPages.includes(c.pageNumber),
+        }))
+      );
+    }
+  };
+
+  const handleExcludeRangeSubmit = (excludeStr: string) => {
+    const trimmed = excludeStr.trim();
+    if (!trimmed) return;
+    const toExclude = parsePageRange(trimmed, totalPages);
+    if (toExclude.length > 0) {
+      const currentIncluded = pageConfigs
+        ? pageConfigs.filter((c) => c.included).map((c) => c.pageNumber)
+        : Array.from({ length: totalPages }, (_, i) => i + 1);
+      const remaining = excludePagesFromList(currentIncluded, toExclude);
+      setBaseRange(remaining);
+      setSequenceFilter('all');
+      const formatted = pagesToRangeString(remaining);
+      setRangeInput(formatted);
+      onRangeChange?.('custom', formatted);
+      if (pageConfigs && onPageConfigsChange) {
+        onPageConfigsChange(
+          pageConfigs.map((c) => ({
+            ...c,
+            included: remaining.includes(c.pageNumber),
+          }))
+        );
+      }
+      setExcludeInput('');
+      setShowExcludeInput(false);
+    }
+  };
+
+  const includedCount = pageConfigs ? pageConfigs.filter((c) => c.included).length : totalPages;
+  const deletedCount = totalPages - includedCount;
+
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#121216] shadow-2xs text-xs overflow-hidden">
-      <div className="px-3 py-2 sm:px-3.5 sm:py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="font-bold text-zinc-900 dark:text-zinc-100 text-xs">Pages to Print:</span>
-          <span className="text-[10px] text-zinc-400">({totalPages} total)</span>
-        </div>
+    <div className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#121216] shadow-2xs text-xs overflow-hidden">
+      <div className="px-3 py-2 sm:px-3.5 sm:py-2.5 flex flex-col gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="font-bold text-zinc-900 dark:text-zinc-100 text-xs">Pages to Print:</span>
+            {deletedCount > 0 ? (
+              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                ({includedCount} of {totalPages} printable)
+              </span>
+            ) : (
+              <span className="text-[10px] text-zinc-400">({totalPages} total)</span>
+            )}
+          </div>
 
-        {/* Clean, compact inline options */}
-        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3.5 text-xs">
-          {/* All */}
-          <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-zinc-800 dark:text-zinc-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-            <input
-              type="radio"
-              name="adobePageRange"
-              checked={pageRangeType === 'all'}
-              onChange={handleSelectAll}
-              className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer"
-            />
-            <span>All</span>
-          </label>
+          {/* Clean, compact interactive presets */}
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs">
+            {/* All */}
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              className={`px-2 py-0.5 rounded-md font-medium text-[11px] transition-colors cursor-pointer border ${
+                pageRangeType === 'all' && sequenceFilter === 'all' && includedCount === totalPages
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-2xs font-semibold'
+                  : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+              }`}
+            >
+              All
+            </button>
 
-          {/* Current Page */}
-          <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-zinc-800 dark:text-zinc-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-            <input
-              type="radio"
-              name="adobePageRange"
-              checked={pageRangeType === 'custom' && customPageRange === String(activePageNumber)}
-              onChange={handleSelectCurrent}
-              className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer"
-            />
-            <span>Current (#{activePageNumber})</span>
-          </label>
+            {/* Current */}
+            <button
+              type="button"
+              onClick={handleSelectCurrent}
+              className={`px-2 py-0.5 rounded-md font-medium text-[11px] transition-colors cursor-pointer border ${
+                includedCount === 1 && pageConfigs?.some((p) => p.pageNumber === activePageNumber && p.included)
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-2xs font-semibold'
+                  : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+              }`}
+              title={`Print only Current Page #${activePageNumber}`}
+            >
+              Current (#{activePageNumber})
+            </button>
 
-          {/* Custom Pages Input */}
-          <div className="inline-flex items-center gap-1.5">
-            <label className="inline-flex items-center gap-1 cursor-pointer font-medium text-zinc-800 dark:text-zinc-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+            {/* Odd Pages (Calculated relative to active sequence) */}
+            <button
+              type="button"
+              onClick={handleSelectOdd}
+              className={`px-2 py-0.5 rounded-md font-medium text-[11px] transition-colors cursor-pointer border ${
+                sequenceFilter === 'odd'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs font-semibold'
+                  : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-400'
+              }`}
+              title="Print Odd pages of active range (1st, 3rd, 5th...)"
+            >
+              Odd Pages
+            </button>
+
+            {/* Even Pages (Calculated relative to active sequence) */}
+            <button
+              type="button"
+              onClick={handleSelectEven}
+              className={`px-2 py-0.5 rounded-md font-medium text-[11px] transition-colors cursor-pointer border ${
+                sequenceFilter === 'even'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs font-semibold'
+                  : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-400'
+              }`}
+              title="Print Even pages of active range (2nd, 4th, 6th...)"
+            >
+              Even Pages
+            </button>
+
+            {/* Custom Pages Input with explicit Apply button */}
+            <div className="inline-flex items-center gap-1">
+              <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Pages:</span>
               <input
-                type="radio"
-                name="adobePageRange"
-                checked={pageRangeType === 'custom' && customPageRange !== String(activePageNumber)}
-                onChange={() => handleCustomRange(rangeInput || `1-${totalPages}`)}
-                className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer"
+                type="text"
+                placeholder={`1-${totalPages}`}
+                value={rangeInput}
+                onFocus={() => setIsInputFocused(true)}
+                onBlur={() => {
+                  setIsInputFocused(false);
+                  handleApplyCustomRange(rangeInput);
+                }}
+                onChange={(e) => handleInputChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleApplyCustomRange(rangeInput);
+                  }
+                }}
+                className="w-24 h-6 px-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 font-mono text-[11px] text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs"
+                title="Enter pages or ranges like 4-11, 1, 3, 5-8"
               />
-              <span>Pages:</span>
-            </label>
-            <input
-              type="text"
-              placeholder={`1-${totalPages}`}
-              value={rangeInput}
-              onChange={(e) => handleCustomRange(e.target.value)}
-              onFocus={() => {
-                if (pageRangeType !== 'custom') handleCustomRange(rangeInput || `1-${totalPages}`);
-              }}
-              className="w-20 h-6 px-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 font-mono text-[11px] text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
+              <button
+                type="button"
+                onClick={() => handleApplyCustomRange(rangeInput)}
+                className="h-6 px-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-blue-600 hover:text-white text-[10px] font-semibold text-zinc-700 dark:text-zinc-300 transition-colors cursor-pointer"
+                title="Apply page range"
+              >
+                Apply
+              </button>
+            </div>
+
+            {/* Exclude / Delete Range button */}
+            <button
+              type="button"
+              onClick={() => setShowExcludeInput(!showExcludeInput)}
+              className="h-6 px-2 rounded border border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-[10px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              title="Exclude/delete specific page numbers or ranges"
+            >
+              <Trash2 className="w-2.5 h-2.5" />
+              <span>Exclude Range</span>
+            </button>
           </div>
         </div>
+
+        {/* Inline Exclude Range Form */}
+        {showExcludeInput && (
+          <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/80 flex flex-wrap items-center gap-2 text-xs animate-fade-in-up">
+            <span className="text-[11px] font-medium text-rose-600 dark:text-rose-400 flex items-center gap-1">
+              <Trash2 className="w-3 h-3" />
+              Delete Pages from Print:
+            </span>
+            <input
+              type="text"
+              placeholder="e.g. 1-3, 12-14"
+              value={excludeInput}
+              onChange={(e) => setExcludeInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleExcludeRangeSubmit(excludeInput);
+                }
+              }}
+              className="w-32 h-6 px-1.5 rounded border border-rose-300 dark:border-rose-800 bg-rose-50/30 dark:bg-rose-950/20 font-mono text-[11px] text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-rose-500"
+            />
+            <button
+              type="button"
+              onClick={() => handleExcludeRangeSubmit(excludeInput)}
+              className="h-6 px-2.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] transition-colors cursor-pointer"
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowExcludeInput(false);
+                setExcludeInput('');
+              }}
+              className="h-6 px-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </div>
+
+      {(deletedCount > 0 || sequenceFilter !== 'all') && (
+        <div className="px-3 py-1.5 bg-amber-500/10 border-t border-amber-500/20 flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-700 dark:text-amber-300">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {sequenceFilter === 'odd' && (
+              <span className="font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                Odd Pages of Range ({includedCount} pgs)
+              </span>
+            )}
+            {sequenceFilter === 'even' && (
+              <span className="font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                Even Pages of Range ({includedCount} pgs)
+              </span>
+            )}
+            <span>
+              {deletedCount} page{deletedCount !== 1 ? 's' : ''} excluded from print
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {baseRange.length < totalPages && sequenceFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSequenceFilter('all');
+                  handleApplyCustomRange(pagesToRangeString(baseRange));
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-800 dark:text-indigo-200 transition-colors cursor-pointer"
+                title={`Restore all ${baseRange.length} pages of range ${pagesToRangeString(baseRange)}`}
+              >
+                All in Range ({pagesToRangeString(baseRange)})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-800 dark:text-amber-200 transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              Restore All ({totalPages} pgs)
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -188,8 +469,12 @@ export function AdobePageHandling({
   const isCustomActive = settings.layoutMode === 'custom';
   const [prevCustomScale, setPrevCustomScale] = useState(customScale);
   const [scaleText, setScaleText] = useState(String(customScale || 100));
-  const [isSizingOpen, setIsSizingOpen] = useState(true);
-  const [isOrientationOpen, setIsOrientationOpen] = useState(true);
+  const [isSizingOpen, setIsSizingOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024;
+    }
+    return true;
+  });
 
   const updateTargetScale = (newScale: number) => {
     const clamped = Math.max(10, Math.min(500, newScale));
@@ -294,9 +579,9 @@ export function AdobePageHandling({
   };
 
   return (
-    <div className="space-y-2.5 text-xs">
+    <div className="w-full space-y-2.5 text-xs">
       {/* BOX 1: PAGE SIZING & HANDLING PANEL */}
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#121216] p-2.5 sm:p-3 space-y-2.5 shadow-2xs transition-all">
+      <div className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#121216] p-2.5 sm:p-3 space-y-2.5 shadow-2xs transition-all">
         <button
           type="button"
           onClick={() => setIsSizingOpen(!isSizingOpen)}
@@ -316,6 +601,8 @@ export function AdobePageHandling({
                   : activeTab === 'multiple'
                   ? `${settings.pagesPerSheet || 2}-Up`
                   : 'Text'}
+                {' · '}
+                {orientation === 'auto' ? 'Auto' : orientation === 'portrait' ? 'Port' : 'Land'}
               </span>
             )}
             <span className="text-[10px] text-zinc-400 font-medium hidden sm:inline">
@@ -370,14 +657,16 @@ export function AdobePageHandling({
                   : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-700'
               }`}
             >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <input
-                  type="radio"
-                  name="adobeScaling"
-                  checked={scaling === 'fit'}
-                  onChange={() => handleScalingChange('fit')}
-                  className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer shrink-0"
-                />
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                    scaling === 'fit'
+                      ? 'border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500'
+                      : 'border-zinc-400 dark:border-zinc-600 bg-transparent'
+                  }`}
+                >
+                  {scaling === 'fit' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </div>
                 <span className="font-semibold text-[11px] truncate">Fit to margins</span>
               </div>
             </div>
@@ -391,14 +680,16 @@ export function AdobePageHandling({
                   : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-700'
               }`}
             >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <input
-                  type="radio"
-                  name="adobeScaling"
-                  checked={scaling === 'actual'}
-                  onChange={() => handleScalingChange('actual')}
-                  className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer shrink-0"
-                />
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                    scaling === 'actual'
+                      ? 'border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500'
+                      : 'border-zinc-400 dark:border-zinc-600 bg-transparent'
+                  }`}
+                >
+                  {scaling === 'actual' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </div>
                 <span className="font-semibold text-[11px] truncate">Actual size</span>
               </div>
             </div>
@@ -412,14 +703,16 @@ export function AdobePageHandling({
                   : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-700'
               }`}
             >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <input
-                  type="radio"
-                  name="adobeScaling"
-                  checked={scaling === 'fill'}
-                  onChange={() => handleScalingChange('fill')}
-                  className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer shrink-0"
-                />
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                    scaling === 'fill'
+                      ? 'border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500'
+                      : 'border-zinc-400 dark:border-zinc-600 bg-transparent'
+                  }`}
+                >
+                  {scaling === 'fill' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </div>
                 <span className="font-semibold text-[11px] truncate">Shrink / Fill</span>
               </div>
             </div>
@@ -427,27 +720,29 @@ export function AdobePageHandling({
             {/* 4. Custom Scale */}
             <div
               onClick={() => handleScalingChange('custom', customScale || 100)}
-              className={`col-span-2 sm:col-span-1 min-h-[38px] px-2.5 py-1.5 rounded-lg border flex items-center justify-between gap-2 cursor-pointer transition-all ${
+              className={`min-h-[38px] px-2 py-1.5 rounded-lg border flex items-center justify-between gap-1 sm:gap-2 cursor-pointer transition-all ${
                 scaling === 'custom'
                   ? 'border-blue-500 bg-blue-500/10 dark:bg-blue-950/35 text-blue-950 dark:text-blue-100 ring-1 ring-blue-500/40 shadow-2xs'
                   : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-700'
               }`}
             >
               <div className="flex items-center gap-1.5 min-w-0 shrink-0">
-                <input
-                  type="radio"
-                  name="adobeScaling"
-                  checked={scaling === 'custom'}
-                  onChange={() => handleScalingChange('custom', customScale || 100)}
-                  className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer shrink-0"
-                />
-                <span className="font-semibold text-[11px] whitespace-nowrap">Custom Scale</span>
+                <div
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                    scaling === 'custom'
+                      ? 'border-blue-600 dark:border-blue-400 bg-blue-600 dark:bg-blue-500'
+                      : 'border-zinc-400 dark:border-zinc-600 bg-transparent'
+                  }`}
+                >
+                  {scaling === 'custom' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </div>
+                <span className="font-semibold text-[11px] whitespace-nowrap">Custom</span>
               </div>
 
               {/* Compact Touch Stepper with Editable Input */}
               <div
                 onClick={(e) => e.stopPropagation()}
-                className="flex items-center h-6 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-hidden shadow-2xs shrink-0"
+                className="flex items-center h-6.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-hidden shadow-2xs shrink-0"
               >
                 <button
                   type="button"
@@ -456,7 +751,7 @@ export function AdobePageHandling({
                     e.stopPropagation();
                     updateTargetScale((customScale || 100) - 5);
                   }}
-                  className="w-5 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none"
+                  className="w-6 h-full flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-bold text-xs cursor-pointer select-none"
                   title="Decrease 5%"
                 >
                   -
@@ -1099,111 +1394,87 @@ export function AdobePageHandling({
             </div>
           );
         })()}
-          </>
-        )}
-      </div>
 
-      {/* BOX 2: SHEET ORIENTATION PANEL */}
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#121216] p-2.5 sm:p-3 space-y-2.5 shadow-2xs transition-all">
-        <button
-          type="button"
-          onClick={() => setIsOrientationOpen(!isOrientationOpen)}
-          className="w-full flex items-center justify-between pb-1 border-b border-zinc-100 dark:border-zinc-800/70 text-left cursor-pointer group select-none"
-        >
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-3.5 bg-indigo-500 rounded-full inline-block" />
-            <h4 className="font-bold text-zinc-900 dark:text-zinc-100 text-xs tracking-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-              Sheet Orientation
-            </h4>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {!isOrientationOpen && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/40 font-semibold">
-                {orientation.toUpperCase()} {settings.autoRotate ? '· Auto-rot' : ''}
-              </span>
-            )}
-            <span className="text-[10px] text-zinc-400 font-medium hidden sm:inline">
-              {isOrientationOpen ? 'Minimize' : 'Expand'}
-            </span>
-            {isOrientationOpen ? (
-              <ChevronUp className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200 transition-transform" />
-            ) : (
-              <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200 transition-transform" />
-            )}
-          </div>
-        </button>
+            {/* Unified Sheet Orientation Section */}
+            <div className="pt-2.5 border-t border-zinc-100 dark:border-zinc-800/70 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-3 bg-indigo-500 rounded-full inline-block" />
+                  <span className="font-bold text-zinc-900 dark:text-zinc-100 text-xs">
+                    Sheet Orientation:
+                  </span>
+                </div>
+                <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={settings.autoRotate ?? true}
+                    onChange={(e) =>
+                      onChange({
+                        ...settings,
+                        autoRotate: e.target.checked,
+                      })
+                    }
+                    className="h-3.5 w-3.5 rounded text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer"
+                  />
+                  <span>Auto-rotate pages</span>
+                </label>
+              </div>
 
-        {isOrientationOpen && (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  onOrientationChange('auto');
-                  if (pageConfigs && onPageConfigsChange) {
-                    onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: undefined })));
-                  }
-                }}
-                className={`h-7 px-2.5 rounded-md border flex items-center gap-1.5 font-medium text-xs transition-all cursor-pointer ${
-                  orientation === 'auto'
-                    ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                    : 'border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300'
-                }`}
-                title="Automatically detect optimal sheet orientation for pages"
-              >
-                <span>⚙ Auto</span>
-              </button>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOrientationChange('auto');
+                    if (pageConfigs && onPageConfigsChange) {
+                      onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: undefined })));
+                    }
+                  }}
+                  className={`h-8 px-2 rounded-lg border flex items-center justify-center gap-1 font-medium text-xs transition-all cursor-pointer ${
+                    orientation === 'auto'
+                      ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                      : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300'
+                  }`}
+                  title="Automatically detect optimal sheet orientation for pages"
+                >
+                  <span>⚙ Auto</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  onOrientationChange('portrait');
-                  if (pageConfigs && onPageConfigsChange) {
-                    onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: 'portrait' as const })));
-                  }
-                }}
-                className={`h-7 px-2.5 rounded-md border flex items-center gap-1.5 font-medium text-xs transition-all cursor-pointer ${
-                  orientation === 'portrait'
-                    ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                    : 'border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300'
-                }`}
-              >
-                <span>▯ Portrait</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOrientationChange('portrait');
+                    if (pageConfigs && onPageConfigsChange) {
+                      onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: 'portrait' as const })));
+                    }
+                  }}
+                  className={`h-8 px-2 rounded-lg border flex items-center justify-center gap-1 font-medium text-xs transition-all cursor-pointer ${
+                    orientation === 'portrait'
+                      ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                      : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300'
+                  }`}
+                >
+                  <span>▯ Portrait</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  onOrientationChange('landscape');
-                  if (pageConfigs && onPageConfigsChange) {
-                    onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: 'landscape' as const })));
-                  }
-                }}
-                className={`h-7 px-2.5 rounded-md border flex items-center gap-1.5 font-medium text-xs transition-all cursor-pointer ${
-                  orientation === 'landscape'
-                    ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-semibold shadow-2xs'
-                    : 'border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300'
-                }`}
-              >
-                <span>▭ Landscape</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOrientationChange('landscape');
+                    if (pageConfigs && onPageConfigsChange) {
+                      onPageConfigsChange(pageConfigs.map((p) => ({ ...p, orientation: 'landscape' as const })));
+                    }
+                  }}
+                  className={`h-8 px-2 rounded-lg border flex items-center justify-center gap-1 font-medium text-xs transition-all cursor-pointer ${
+                    orientation === 'landscape'
+                      ? 'border-blue-500 bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
+                      : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300'
+                  }`}
+                >
+                  <span>▭ Landscape</span>
+                </button>
+              </div>
             </div>
-
-            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-xs text-zinc-700 dark:text-zinc-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-              <input
-                type="checkbox"
-                checked={settings.autoRotate ?? true}
-                onChange={(e) =>
-                  onChange({
-                    ...settings,
-                    autoRotate: e.target.checked,
-                  })
-                }
-                className="h-3.5 w-3.5 rounded text-blue-600 focus:ring-blue-500 border-zinc-300 dark:border-zinc-700 cursor-pointer"
-              />
-              <span>Auto-rotate pages within sheet</span>
-            </label>
-          </div>
+          </>
         )}
       </div>
     </div>

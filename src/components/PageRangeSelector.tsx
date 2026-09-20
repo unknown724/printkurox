@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Check, X, AlertCircle, ListFilter } from 'lucide-react';
-import { pagesToRangeString, validatePageRangeInput } from '@/lib/pdf-utils';
+import { pagesToRangeString, validatePageRangeInput, getRelativeOddEvenPages } from '@/lib/pdf-utils';
 import { PageConfig } from '@/lib/pricing';
 
 interface PageRangeSelectorProps {
@@ -73,15 +73,19 @@ export function PageRangeSelector({
     applyPages(Array.from({ length: totalPages }, (_, i) => i + 1));
 
   const applyPresetOdd = () => {
-    const pages: number[] = [];
-    for (let i = 1; i <= totalPages; i += 2) pages.push(i);
-    applyPages(pages);
+    const base =
+      activePageNumbers.length > 0 && activePageNumbers.length < totalPages
+        ? activePageNumbers
+        : Array.from({ length: totalPages }, (_, i) => i + 1);
+    applyPages(getRelativeOddEvenPages(base, 'odd'));
   };
 
   const applyPresetEven = () => {
-    const pages: number[] = [];
-    for (let i = 2; i <= totalPages; i += 2) pages.push(i);
-    applyPages(pages);
+    const base =
+      activePageNumbers.length > 0 && activePageNumbers.length < totalPages
+        ? activePageNumbers
+        : Array.from({ length: totalPages }, (_, i) => i + 1);
+    applyPages(getRelativeOddEvenPages(base, 'even'));
   };
 
   const togglePageNumber = (pageNum: number) => {

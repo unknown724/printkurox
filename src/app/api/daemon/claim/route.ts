@@ -24,8 +24,8 @@ export async function POST(req: NextRequest) {
 
     // Verify job belongs to this station and is PAID
     const checkSql = isMain
-      ? `SELECT id, status, pickup_code FROM print_jobs WHERE id = ? AND (station_id = 'main' OR station_id = 'block_b' OR station_id IS NULL) LIMIT 1`
-      : `SELECT id, status, pickup_code FROM print_jobs WHERE id = ? AND station_id = ? LIMIT 1`;
+      ? `SELECT id, status, pickup_code, is_duplex, total_pages FROM print_jobs WHERE id = ? AND (station_id = 'main' OR station_id = 'block_b' OR station_id IS NULL) LIMIT 1`
+      : `SELECT id, status, pickup_code, is_duplex, total_pages FROM print_jobs WHERE id = ? AND station_id = ? LIMIT 1`;
     const checkParams = isMain ? [jobId] : [jobId, station.id];
 
     const rows = await queryD1<PrintJobRecord>(checkSql, checkParams);
@@ -42,17 +42,21 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Atomic CAS update
+    // Atomic CAS update: Only use PRINTING_ODD for multi-page manual duplex jobs!
+    // For single-sided or 1-page jobs, set status to 'PRINTING'
+    const isDuplex = (Number(job.is_duplex) === 1) && ((job.total_pages || 1) > 1);
+    const targetStatus = isDuplex ? 'PRINTING_ODD' : 'PRINTING';
+
     const updateSuccess = await executeD1(
-      `UPDATE print_jobs SET status = 'PRINTING_ODD' WHERE id = ? AND status = 'PAID'`,
-      [jobId]
+      `UPDATE print_jobs SET status = ? WHERE id = ? AND status = 'PAID'`,
+      [targetStatus, jobId]
     );
 
     return NextResponse.json({
       claimed: updateSuccess,
       jobId,
       pickup_code: job.pickup_code,
-      status: 'PRINTING_ODD',
+      status: targetStatus,
     });
   } catch (err: unknown) {
     console.error('Daemon claim error:', err);

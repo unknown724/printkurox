@@ -2183,6 +2183,8 @@ export default function AdminKuroxPage() {
                               <span>
                                 {j.payment_id?.startsWith('ADMIN_') ? (
                                   <span className="text-amber-500 font-medium">👑 Admin Free</span>
+                                ) : j.payment_id?.startsWith('CASH_') ? (
+                                  <span className="text-emerald-500 font-medium">💵 Cash Paid</span>
                                 ) : j.payment_id ? (
                                   <span className="text-emerald-500 font-medium">💳 Razorpay Paid</span>
                                 ) : (
@@ -2293,7 +2295,7 @@ export default function AdminKuroxPage() {
                                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
                               )}
                               {j.status === 'COMPLETED' && <Check className="w-2.5 h-2.5" />}
-                              <span>{j.status}</span>
+                              <span>{j.status === 'PRINTING_ODD' && !j.is_duplex ? 'PRINTING' : j.status}</span>
                             </span>
                           </div>
                         </div>

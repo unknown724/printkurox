@@ -30,6 +30,9 @@ export interface StationConfig {
 
 export const DEFAULT_STATION_ID = 'block_b';
 export const DEFAULT_DEVELOPER_WHATSAPP = '+919863013886';
+export const OFFICIAL_WHATSAPP_BOT_NUMBER = '+919362980761';
+export const OFFICIAL_WHATSAPP_BOT_RAW = '919362980761';
+export const OFFICIAL_WHATSAPP_BOT_LINK = 'https://wa.me/919362980761?text=Hi%20PrintKurox%2C%20I%20want%20to%20print%20a%20document';
 
 export const STATIONS: Record<string, StationConfig> = {
   // --- PRIMARY OPERATIONAL CAMPUS STATION ---
@@ -40,7 +43,7 @@ export const STATIONS: Record<string, StationConfig> = {
     blockCode: 'Block B',
     riverName: 'Pare',
     tagline: 'Autonomous Hostel Print Station · Room 29',
-    whatsappNumber: '+919863013886',
+    whatsappNumber: '+919362980761',
     adminPin: process.env.ADMIN_SECRET_KEY || 'Kurox725#29',
     operatorName: 'Devananda / Custodian',
     allowOnlinePayment: true,
@@ -59,7 +62,7 @@ export const STATIONS: Record<string, StationConfig> = {
     blockCode: 'Block B',
     riverName: 'Pare',
     tagline: 'Autonomous Hostel Print Station · Room 29',
-    whatsappNumber: '+919863013886',
+    whatsappNumber: '+919362980761',
     adminPin: process.env.ADMIN_SECRET_KEY || 'Kurox725#29',
     operatorName: 'Devananda / Custodian',
     allowOnlinePayment: true,
@@ -79,7 +82,7 @@ export const STATIONS: Record<string, StationConfig> = {
     blockCode: 'Block C',
     riverName: 'Dibang',
     tagline: 'Next Campus Print Hub · Ground Floor',
-    whatsappNumber: '+919863013886',
+    whatsappNumber: '+919362980761',
     adminPin: 'Dibang725#',
     operatorName: 'Block C Manager (In Setup)',
     allowOnlinePayment: true,
