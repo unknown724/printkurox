@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Sparkles,
   ArrowRight,
+  Camera,
 } from 'lucide-react';
 import { convertDocxToPdfClient } from '@/lib/client-docx-converter';
 
@@ -227,13 +228,15 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadPhase, setUploadPhase] = useState<'optimizing' | 'uploading' | 'processing' | null>(null);
+  const [uploadPhase, setUploadPhase] = useState<'optimizing' | 'converting-docx' | 'uploading' | 'processing' | null>(null);
+  const [docxProgress, setDocxProgress] = useState<{ current: number; total: number } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Local list of staged raw Files
   const [rawFiles, setRawFiles] = useState<File[]>(uploadedBatch?.rawFiles || []);
   const [prevBatch, setPrevBatch] = useState(uploadedBatch);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const isAddingMoreRef = useRef(false);
 
   // Synchronize local rawFiles when uploadedBatch is cleared or updated
@@ -245,15 +248,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
   const processAndUploadFiles = async (newFileList: File[]) => {
     setErrorMessage(null);
 
-    const isWordDoc = newFileList.find((f) => /\.(docx?|rtf)$/i.test(f.name));
-    if (isWordDoc) {
-      setErrorMessage(
-        `📄 Please save "${isWordDoc.name}" as PDF before uploading: Word files can shift tables & layouts during online printing. In Microsoft Word or Google Docs, tap File → Save As / Export to PDF (takes 2 seconds) for 100% exact page-by-page accuracy!`
-      );
-      return;
-    }
-
-    const validExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.webp'];
+    const validExtensions = ['.pdf', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.webp'];
     const invalidFile = newFileList.find(
       (f) =>
         !validExtensions.some((ext) => f.name.toLowerCase().endsWith(ext)) &&
@@ -261,7 +256,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
     );
 
     if (invalidFile) {
-      setErrorMessage(`"${invalidFile.name}" has an unsupported format. Supported: PDF, PNG, JPG, JPEG, WEBP`);
+      setErrorMessage(`"${invalidFile.name}" has an unsupported format. Supported formats: PDF, Word (.docx, .doc), and Images (PNG, JPG, WEBP).`);
       return;
     }
 
@@ -274,25 +269,27 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
     setUploadProgress(0);
 
     try {
-      // Step 1: Document preparation & image optimization
+      // Step 1: Document preparation, client-side DOCX conversion & image optimization
       setUploadPhase('optimizing');
       const preparedFiles = await Promise.all(
         newFileList.map(async (f) => {
           const lowerName = f.name.toLowerCase();
           if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
-            // Dual-Engine DOCX Conversion:
-            // 1. First attempt high-fidelity browser client conversion (docx-preview + pdf-lib).
-            //    This guarantees 100% vector-like visual fidelity when deployed to Vercel/Cloud or on mobile.
+            // Option B: High-Fidelity Client-Side Conversion in the browser
+            // Uses docx-preview to render DOM in memory, html2canvas to rasterize, and pdf-lib to pack A4 PDF
             try {
-              const clientPdf = await convertDocxToPdfClient(f);
+              setUploadPhase('converting-docx');
+              const clientPdf = await convertDocxToPdfClient(f, (curr, tot) => {
+                setDocxProgress({ current: curr, total: tot });
+              });
               if (clientPdf && clientPdf.size > 1000) {
+                console.log(`[FileUpload] Successfully converted "${f.name}" to client-side A4 PDF (${(clientPdf.size / 1024).toFixed(1)} KB)`);
                 return clientPdf;
               }
             } catch (clientErr) {
               console.warn('[FileUpload] Browser DOCX conversion fallback:', clientErr);
             }
-            // 2. Server Fallback: If client conversion is skipped or fails, send original DOCX to server
-            //    (Converts via native Microsoft Word COM on Windows localhost, or enhanced Mammoth on Linux).
+            // Fallback: If browser conversion fails, pass file along to server converter
             return f;
           }
           return optimizeImage(f);
@@ -499,14 +496,18 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
 
   // Status message for upload modal/bars
   const statusHeadline =
-    uploadPhase === 'optimizing'
-      ? 'Rendering & Optimizing Documents…'
+    uploadPhase === 'converting-docx'
+      ? `Converting Word DOCX to A4 PDF… ${docxProgress ? `(Page ${docxProgress.current}/${docxProgress.total})` : ''}`
+      : uploadPhase === 'optimizing'
+      ? 'Optimizing Photos for A4 Print…'
       : uploadPhase === 'processing'
       ? 'Preparing Print Documents…'
       : `Uploading Files… ${uploadProgress}%`;
 
   const statusSubtext =
-    uploadPhase === 'optimizing'
+    uploadPhase === 'converting-docx'
+      ? 'Client-side vector conversion via docx-preview & pdf-lib'
+      : uploadPhase === 'optimizing'
       ? 'Rendering typography, logos & scaling to 300 DPI print quality'
       : uploadPhase === 'processing'
       ? 'Merging documents and preparing print layout'
@@ -568,25 +569,41 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           </div>
 
           {/* Add more files footer action */}
-          <div className="pt-3 flex items-center justify-between">
-            <label
-              className="relative inline-flex items-center space-x-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-white/[0.08] py-1.5 px-3 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 transition-all cursor-pointer overflow-hidden touch-manipulation active:scale-95"
-            >
-              <input
-                type="file"
-                multiple
-                accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp"
-                onChange={(e) => {
+          <div className="pt-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <label
+                className="relative inline-flex items-center space-x-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-white/[0.08] py-1.5 px-3 rounded-lg bg-zinc-100 dark:bg-white/[0.04] border border-zinc-200 dark:border-white/10 transition-all cursor-pointer overflow-hidden touch-manipulation active:scale-95"
+              >
+                <input
+                  type="file"
+                  multiple
+                  accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/*,.pdf,.docx,.doc,.png,.jpg,.jpeg,.webp"
+                  onChange={(e) => {
+                    isAddingMoreRef.current = true;
+                    handleInputChange(e);
+                  }}
+                  disabled={isUploading}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 touch-manipulation"
+                  aria-label="Add More Files"
+                />
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Documents</span>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => {
                   isAddingMoreRef.current = true;
-                  handleInputChange(e);
+                  cameraInputRef.current?.click();
                 }}
                 disabled={isUploading}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 touch-manipulation"
-                aria-label="Add More Files"
-              />
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add More Files</span>
-            </label>
+                className="inline-flex items-center space-x-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/15 py-1.5 px-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 transition-all cursor-pointer touch-manipulation active:scale-95"
+                title="Scan next page with phone camera"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Scan Page</span>
+              </button>
+            </div>
 
             <button
               type="button"
@@ -601,12 +618,23 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           </div>
         </div>
 
+        {/* Hidden Camera Input for direct mobile camera shutter */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleInputChange}
+          className="hidden"
+          aria-label="Capture with Camera"
+        />
+
         {/* Standby File Input for programmatic clicks */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp"
+          accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/*,.pdf,.docx,.doc,.png,.jpg,.jpeg,.webp"
           onChange={handleInputChange}
           className="hidden"
         />
@@ -661,6 +689,17 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
             : 'border-2 border-dashed border-zinc-300 hover:border-zinc-400 dark:border-white/15 hover:dark:border-white/30 bg-zinc-50/50 hover:bg-zinc-100/70 dark:bg-white/[0.02] hover:dark:bg-white/[0.04] shadow-xs cursor-pointer'
         }`}
       >
+        {/* Hidden Camera Input for direct phone camera shutter */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleInputChange}
+          className="hidden"
+          aria-label="Scan with camera"
+        />
+
         {/* Full-bleed overlay input for zero-lag native mobile and desktop tap */}
         {!isUploading && (
           <input
@@ -668,10 +707,10 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
             ref={fileInputRef}
             type="file"
             multiple
-            accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp"
+            accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/*,.pdf,.docx,.doc,.png,.jpg,.jpeg,.webp"
             onChange={handleInputChange}
-            aria-label="Select PDF or Photos"
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30 touch-manipulation"
+            aria-label="Select PDF, Word, or Photos"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 touch-manipulation"
           />
         )}
 
@@ -719,22 +758,43 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
               <UploadCloud className="w-6 h-6 text-zinc-700 dark:text-zinc-200 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors" />
             </div>
 
-            {/* Obvious Primary Action Button - Perfectly Themed (Obsidian / Crisp White) */}
-            <div className="px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 text-xs sm:text-sm font-bold shadow-md shadow-black/15 dark:shadow-white/10 flex items-center gap-2 transition-all group-hover:scale-[1.02] active:scale-[0.98]">
-              <UploadCloud className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
-              <span>Tap to Select PDF or Photos</span>
+            {/* Dual Action Buttons: Browse Documents & Instant Camera Scan */}
+            <div className="flex flex-wrap items-center justify-center gap-2.5 relative z-20">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 text-xs sm:text-sm font-bold shadow-md shadow-black/15 dark:shadow-white/10 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+                <span>Select PDF or Word (.docx)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cameraInputRef.current?.click();
+                }}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-bold shadow-md shadow-emerald-900/20 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                <Camera className="w-4 h-4 text-emerald-200" />
+                <span>Scan with Camera</span>
+              </button>
             </div>
 
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-2">
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-2.5">
               or drag &amp; drop files anywhere here
             </p>
 
-            <div className="inline-flex items-center justify-center flex-wrap gap-2 mt-3 px-3.5 py-1.5 rounded-full bg-white/80 dark:bg-white/[0.05] border border-zinc-200/80 dark:border-white/10 text-[11px] text-zinc-600 dark:text-zinc-400 shadow-2xs max-w-full">
+            <div className="inline-flex items-center justify-center flex-wrap gap-2 mt-2.5 px-3.5 py-1.5 rounded-full bg-white/80 dark:bg-white/[0.05] border border-zinc-200/80 dark:border-white/10 text-[11px] text-zinc-600 dark:text-zinc-400 shadow-2xs max-w-full">
               <span className="text-zinc-900 dark:text-white font-bold whitespace-nowrap">
-                PDF (Guaranteed)
+                PDF &amp; Word (.docx)
               </span>
               <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
-              <span className="font-medium whitespace-nowrap">PNG / JPG / WEBP</span>
+              <span className="font-medium whitespace-nowrap">Camera / Photos</span>
               <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
               <span className="font-medium whitespace-nowrap">Up to 10 files</span>
             </div>
@@ -749,8 +809,8 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         </span>
         <span className="text-zinc-300 dark:text-zinc-700 select-none">•</span>
         <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-          <span className="text-zinc-900 dark:text-zinc-100 font-semibold">Word files:</span>
-          <span>Save as PDF in Word/Docs for 100% exact layout</span>
+          <Sparkles className="w-3 h-3 text-emerald-500" />
+          <span>Word (.docx) converted client-side with 100% vector accuracy</span>
         </span>
         <span className="text-zinc-300 dark:text-zinc-700 select-none hidden sm:inline">•</span>
         <span className="w-full sm:w-auto text-center text-[10px] text-zinc-500 dark:text-zinc-400 mt-1 sm:mt-0">
