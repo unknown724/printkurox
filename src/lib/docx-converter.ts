@@ -224,7 +224,11 @@ async function convertWithLibreOffice(buffer: Buffer, fileExt: string = 'docx'):
 /**
  * Converts a DOCX buffer into a standard printable A4 PDF document
  */
-export async function convertDocxToPdf(buffer: Buffer, fileExt: string = 'docx'): Promise<DocxConversionResult> {
+export async function convertDocxToPdf(
+  buffer: Buffer,
+  fileExt: string = 'docx',
+  allowPlainFallback: boolean = false
+): Promise<DocxConversionResult> {
   // Step 1: Try headless LibreOffice on Windows/Linux (100% authentic vector output, 1.5s, no popups)
   try {
     const loResult = await convertWithLibreOffice(buffer, fileExt);
@@ -245,7 +249,13 @@ export async function convertDocxToPdf(buffer: Buffer, fileExt: string = 'docx')
     console.warn('Native Word conversion error; falling back to JS converter:', nativeErr);
   }
 
-  // Step 2: Fallback in-process JS converter (mammoth + pdf-lib)
+  // If server does not have LibreOffice or Word installed (e.g. Vercel cloud container),
+  // do NOT return degraded stripped plain-text. Reject so client-side docx-preview can render genuine styles.
+  if (!allowPlainFallback) {
+    throw new Error('Native LibreOffice/Word engine not present on cloud server. Fallback to high-fidelity client docx-preview.');
+  }
+
+  // Step 3: Fallback in-process JS converter (mammoth + pdf-lib)
   await getDocxMetadata(buffer);
 
   let html = '';

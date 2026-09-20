@@ -973,6 +973,65 @@ class LocalArchiveHTTPHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in ('/convert-docx', '/convert'):
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length <= 0:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"error": "No file body"}')
+                    return
+
+                body = self.rfile.read(content_length)
+                content_type = self.headers.get('Content-Type', '')
+                raw_bytes = body
+                ext = '.docx'
+                if 'multipart/form-data' in content_type:
+                    pk_idx = body.find(b'PK\x03\x04')
+                    if pk_idx != -1:
+                        end_boundary = body.rfind(b'-----------------------------')
+                        if end_boundary > pk_idx:
+                            raw_bytes = body[pk_idx:end_boundary].rstrip(b'\r\n')
+                        else:
+                            raw_bytes = body[pk_idx:]
+
+                import uuid
+                tmp_id = uuid.uuid4().hex[:8]
+                tmp_in = os.path.join(TEMP_DIR, f"web_conv_{tmp_id}{ext}")
+                with open(tmp_in, 'wb') as f_out:
+                    f_out.write(raw_bytes)
+
+                pdf_out = convert_office_to_pdf(tmp_in)
+                if pdf_out and os.path.exists(pdf_out):
+                    with open(pdf_out, 'rb') as f_pdf:
+                        pdf_data = f_pdf.read()
+                    try: os.remove(tmp_in)
+                    except: pass
+                    try: os.remove(pdf_out)
+                    except: pass
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/pdf')
+                    self.send_header('Content-Length', str(len(pdf_data)))
+                    self.send_header('X-Converted-By', 'PrintKurox-Station-LibreOffice')
+                    self.end_headers()
+                    self.wfile.write(pdf_data)
+                    return
+                else:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"error": "Conversion failed on station LibreOffice"}')
+                    return
+            except Exception as conv_err:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(conv_err)}).encode('utf-8'))
+                return
+
         self.do_GET()
 
     def do_GET(self):

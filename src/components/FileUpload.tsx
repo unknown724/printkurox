@@ -279,7 +279,27 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           const lowerName = f.name.toLowerCase();
           if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
             setUploadPhase('converting-docx');
-            // Priority 1: High-Speed & 100% Authentic Vector Conversion via Local Server LibreOffice Engine
+            // Priority 0: High-Speed conversion via Station PC Daemon (Port 7250) if running on kiosk
+            try {
+              const stationRes = await fetch('http://127.0.0.1:7250/convert-docx', {
+                method: 'POST',
+                body: f,
+                signal: AbortSignal.timeout(3500),
+              });
+              if (stationRes.ok) {
+                const pdfBlob = await stationRes.blob();
+                if (pdfBlob && pdfBlob.size > 500) {
+                  const outPdfName = f.name.replace(/\.(docx|doc)$/i, '.pdf');
+                  const stationPdf = new File([pdfBlob], outPdfName, { type: 'application/pdf' });
+                  console.log(`[FileUpload] Converted "${f.name}" to vector PDF via local station LibreOffice (${(stationPdf.size / 1024).toFixed(1)} KB)`);
+                  return stationPdf;
+                }
+              }
+            } catch {
+              // Station daemon not on local loopback, proceed to server endpoint
+            }
+
+            // Priority 1: Server-side conversion via Next.js API route (active on localhost with LibreOffice)
             try {
               const formData = new FormData();
               formData.append('file', f);
@@ -293,15 +313,15 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
                 if (pdfBlob && pdfBlob.size > 500) {
                   const outPdfName = f.name.replace(/\.(docx|doc)$/i, '.pdf');
                   const serverPdf = new File([pdfBlob], outPdfName, { type: 'application/pdf' });
-                  console.log(`[FileUpload] Converted "${f.name}" to vector PDF via local LibreOffice (${(serverPdf.size / 1024).toFixed(1)} KB)`);
+                  console.log(`[FileUpload] Converted "${f.name}" to vector PDF via server LibreOffice (${(serverPdf.size / 1024).toFixed(1)} KB)`);
                   return serverPdf;
                 }
               }
             } catch (serverErr) {
-              console.warn('[FileUpload] Local server DOCX conversion failed, falling back to browser:', serverErr);
+              console.warn('[FileUpload] Server DOCX conversion failed or unavailable, falling back to browser engine:', serverErr);
             }
 
-            // Priority 2: Fallback in-browser conversion if server endpoint is unreachable
+            // Priority 2: High-Fidelity in-browser conversion via docx-preview + html2canvas (runs on Vercel/cloud)
             try {
               const clientPdf = await convertDocxToPdfClient(f, (curr, tot) => {
                 setDocxProgress({ current: curr, total: tot });

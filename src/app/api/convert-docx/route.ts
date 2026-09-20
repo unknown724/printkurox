@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const { pdfBuffer, pageCount } = await convertDocxToPdf(buffer, ext);
+    const { pdfBuffer, pageCount } = await convertDocxToPdf(buffer, ext, false);
 
     if (!pdfBuffer || pdfBuffer.length === 0) {
       return NextResponse.json({ error: 'Conversion produced empty output' }, { status: 500 });
@@ -41,8 +41,11 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err: unknown) {
-    console.error('[API /api/convert-docx] Conversion error:', err);
+    console.warn('[API /api/convert-docx] Server-side LibreOffice engine unavailable on cloud container:', err);
     const message = err instanceof Error ? err.message : 'DOCX conversion failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: message, fallbackToClient: true },
+      { status: 501 }
+    );
   }
 }

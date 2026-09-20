@@ -587,6 +587,13 @@ async function sendDedicatedPaymentCard({ sock, senderJid, senderName, session }
     } catch (rzpErr) {
       console.error('[WA-Bot] Razorpay link creation error:', rzpErr);
     }
+  // Ensure background R2 upload has fully settled before creating order
+  if (session.uploadPromise) {
+    try {
+      await session.uploadPromise;
+    } catch (upErr) {
+      console.warn('[WA-Bot] Upload promise wait notice:', upErr.message);
+    }
   }
 
   // Save order to Cloudflare D1
@@ -746,6 +753,14 @@ async function handleCashOrder({ sock, senderJid, session }) {
       text: `ℹ️ No active document found. Please forward your PDF or photo first!`,
     });
     return;
+  }
+
+  if (session.uploadPromise) {
+    try {
+      await session.uploadPromise;
+    } catch (upErr) {
+      console.warn('[WA-Bot] Upload promise wait notice in cash order:', upErr.message);
+    }
   }
 
   const currentStation = session.station || defaultStation;
@@ -914,19 +929,21 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
     }
   }
 
-  // Upload to Cloudflare R2
+  // Upload to Cloudflare R2 asynchronously so Step 1 buttons pop up immediately without waiting for network upload
   const randomPrefix = crypto.randomUUID().slice(0, 8);
   const cleanBaseName = finalFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
   const r2Key = `uploads/wa-${randomPrefix}-${cleanBaseName}`;
 
-  await s3Client.send(
+  const r2UploadPromise = s3Client.send(
     new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: r2Key,
       Body: finalBuffer,
       ContentType: finalMimeType,
     })
-  );
+  ).catch((err) => {
+    console.error('[WA-Bot R2 Upload Error]:', err.message);
+  });
 
   const fileSizeMb = (finalBuffer.length / (1024 * 1024)).toFixed(2);
 
@@ -946,6 +963,7 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
     imageBuffer: (!isMergedBatch && finalMimeType.startsWith('image/')) ? finalBuffer : null,
     isMergedBatch,
     batchCount: files.length,
+    uploadPromise: r2UploadPromise,
   };
 
   userSessions.set(senderJid, newSession);
@@ -964,7 +982,7 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
   }
 
   await sendStep1Buttons(sock, senderJid, finalFileName, totalPages, fileSizeMb);
-  console.log(`[WA-Bot] Dispatched Step 1 Action Buttons to ${senderName} for ${finalFileName} (${totalPages}p)`);
+  console.log(`[WA-Bot] Dispatched Step 1 Action Buttons instantly to ${senderName} for ${finalFileName} (${totalPages}p)`);
 }
 
 // ============================================================================
@@ -1021,6 +1039,7 @@ async function startBot() {
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     try {
+      if (type !== 'notify') return;
       if (!messages || messages.length === 0) return;
 
       for (const msg of messages) {
@@ -1075,6 +1094,9 @@ async function startBot() {
         // Ignore regular outgoing messages from ourselves unless it was a test
         if (msg.key.fromMe) continue;
 
+        // Acknowledge read receipt asynchronously to keep connection responsive
+        sock.readMessages([msg.key]).catch(() => {});
+
         let session = userSessions.get(senderJid) || userSessions.get(normalizedJid);
         if (session) session.senderName = senderName;
 
@@ -1087,9 +1109,11 @@ async function startBot() {
         if (documentMsg || imageMsg) {
           console.log(`[WA-Bot] Media attachment received from ${senderName} (${senderJid})`);
 
-          await sock.sendMessage(senderJid, {
+          // Non-blocking reaction & typing indicator for zero-delay user feedback
+          sock.sendMessage(senderJid, {
             react: { text: '⏳', key: msg.key },
-          });
+          }).catch(() => {});
+          sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
 
           let buffer = await downloadMediaMessage(
             msg,
@@ -1159,6 +1183,10 @@ async function startBot() {
             isPdf: fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf'),
           });
 
+          // Fast adaptive debounce: 250ms for single docs (PDF/Word), 500ms for photos (merging burst)
+          const isSingleDoc = !!documentMsg || fileName.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.docx');
+          const debounceDelay = isSingleDoc ? 250 : 500;
+
           if (entry.timer) clearTimeout(entry.timer);
           entry.timer = setTimeout(async () => {
             try {
@@ -1166,7 +1194,7 @@ async function startBot() {
             } catch (err) {
               console.error('[WA-Bot] Error processing buffered files:', err);
             }
-          }, 1500);
+          }, debounceDelay);
 
           return;
         }
