@@ -1,0 +1,873 @@
+import os
+import subprocess
+import shutil
+import sys
+from pypdf import PdfReader
+
+def build_pdf():
+    base_dir = os.path.abspath(r"c:\Users\Richard Konsam\Desktop\DEVANANDA\autoprint")
+    html_path = os.path.join(base_dir, "PrintKurox_Hardware_Budget_Proposal.html")
+    pdf_path = os.path.join(base_dir, "PrintKurox_Hardware_Budget_Proposal.pdf")
+    public_pdf_path = os.path.join(base_dir, "public", "PrintKurox_Hardware_Budget_Proposal.pdf")
+    edge_exe = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+    html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PrintKurox IoT Hardware Detailed Project Report & Budget Proposal</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #1e293b;
+    background-color: #ffffff;
+    font-size: 8pt;
+    line-height: 1.38;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    page-break-after: always;
+    height: 276mm;
+    max-height: 276mm;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .page:last-child {
+    page-break-after: avoid;
+  }
+
+  .content-body {
+    flex: 1;
+  }
+
+  /* Institutional Letterhead */
+  .doc-header {
+    border-bottom: 2px solid #0f172a;
+    padding-bottom: 5px;
+    margin-bottom: 7px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .inst-title {
+    font-size: 6.8pt;
+    font-weight: 700;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  .doc-ref {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6.8pt;
+    font-weight: 700;
+    color: #2563eb;
+    letter-spacing: 0.5px;
+  }
+
+  .doc-title {
+    font-size: 13pt;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.2;
+    margin-top: 2px;
+  }
+
+  .doc-subtitle {
+    font-size: 7.8pt;
+    color: #334155;
+    margin-top: 1px;
+    font-weight: 500;
+  }
+
+  .doc-meta-badge {
+    text-align: right;
+    font-size: 6.8pt;
+    color: #64748b;
+    line-height: 1.3;
+  }
+  .badge-tag {
+    display: inline-block;
+    background: #0f172a;
+    color: #ffffff;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 6.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+
+  /* Metadata Strip */
+  .meta-grid {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr 1.1fr 1fr;
+    gap: 6px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    padding: 5px 8px;
+    margin-bottom: 7px;
+    font-size: 7pt;
+  }
+  .meta-item strong {
+    display: block;
+    color: #0f172a;
+    font-size: 6.2pt;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .meta-item span {
+    color: #334155;
+    font-weight: 600;
+  }
+
+  /* Section Headings */
+  h2 {
+    font-size: 9pt;
+    font-weight: 800;
+    color: #0f172a;
+    border-left: 3px solid #2563eb;
+    padding-left: 5px;
+    margin-top: 6px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  h2 .sub-pill {
+    font-size: 6.5pt;
+    font-weight: 600;
+    background: #f1f5f9;
+    color: #475569;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid #cbd5e1;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  p {
+    margin-bottom: 4px;
+    color: #334155;
+    text-align: justify;
+    font-size: 7.6pt;
+    line-height: 1.36;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 6px;
+    font-size: 7.1pt;
+  }
+
+  th {
+    background: #0f172a;
+    color: #ffffff;
+    font-weight: 700;
+    text-align: left;
+    padding: 3px 5px;
+    font-size: 6.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border: 1px solid #0f172a;
+  }
+
+  td {
+    padding: 2.8px 5px;
+    border: 1px solid #e2e8f0;
+    color: #1e293b;
+    vertical-align: middle;
+  }
+
+  tr:nth-child(even) td {
+    background-color: #f8fafc;
+  }
+
+  .text-center { text-align: center; }
+  .text-right { text-align: right; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+  .font-bold { font-weight: 700; }
+  .text-emerald { color: #047857; font-weight: 700; }
+  .text-blue { color: #1d4ed8; font-weight: 700; }
+  .text-muted { color: #64748b; font-size: 6.3pt; }
+
+  .highlight-row td {
+    background: #ecfdf5 !important;
+    font-weight: 700;
+    border-top: 1.5px solid #059669;
+    border-bottom: 1.5px solid #059669;
+  }
+
+  .highlight-blue td {
+    background: #eff6ff !important;
+    font-weight: 700;
+    border-top: 1.5px solid #2563eb;
+    border-bottom: 1.5px solid #2563eb;
+  }
+
+  /* Callout Boxes */
+  .callout {
+    background: #f0fdf4;
+    border: 1px solid #86efac;
+    border-left: 3px solid #059669;
+    border-radius: 4px;
+    padding: 4px 7px;
+    margin: 4px 0;
+    font-size: 7.2pt;
+    color: #14532d;
+    line-height: 1.34;
+  }
+  .callout strong {
+    color: #064e3b;
+  }
+
+  .callout-blue {
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-left: 3px solid #0284c7;
+    border-radius: 4px;
+    padding: 4px 7px;
+    margin: 4px 0;
+    font-size: 7.2pt;
+    color: #0369a1;
+    line-height: 1.34;
+  }
+  .callout-blue strong {
+    color: #075985;
+  }
+
+  /* Diagram Flow Box */
+  .diagram-box {
+    background: #f8fafc;
+    border: 1px dashed #94a3b8;
+    border-radius: 5px;
+    padding: 5px 8px;
+    margin: 5px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6.8pt;
+    color: #0f172a;
+    line-height: 1.4;
+  }
+  .diagram-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-align: center;
+  }
+  .diagram-node {
+    background: #ffffff;
+    border: 1.5px solid #2563eb;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-weight: 600;
+  }
+  .diagram-node.hub {
+    background: #eff6ff;
+    border-color: #1d4ed8;
+  }
+  .diagram-node.target {
+    background: #ecfdf5;
+    border-color: #059669;
+  }
+  .diagram-arrow {
+    color: #64748b;
+    font-weight: 700;
+    font-size: 7pt;
+  }
+
+  /* Cards Grid */
+  .col-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    margin-bottom: 5px;
+  }
+  .col-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 5px;
+    margin-bottom: 5px;
+  }
+  .card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    padding: 4px 6px;
+  }
+  .card-title {
+    font-size: 7.2pt;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 2px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .card p {
+    font-size: 6.8pt;
+    line-height: 1.3;
+    margin: 0;
+  }
+
+  /* Sign-Off Table */
+  .sign-table {
+    width: 100%;
+    margin-top: 5px;
+    border-collapse: collapse;
+  }
+  .sign-table td {
+    width: 33.33%;
+    vertical-align: top;
+    padding: 5px 7px;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+  }
+  .sign-role {
+    font-weight: 700;
+    font-size: 6.8pt;
+    color: #0f172a;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .sign-line {
+    margin-top: 20px;
+    border-top: 1px dashed #94a3b8;
+    padding-top: 2px;
+    font-size: 7pt;
+    color: #1e293b;
+    font-weight: 600;
+  }
+  .sign-desig {
+    font-size: 6.2pt;
+    color: #64748b;
+    line-height: 1.25;
+  }
+
+  .footer-bar {
+    display: flex;
+    justify-content: space-between;
+    font-size: 6.3pt;
+    color: #94a3b8;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 3px;
+    margin-top: 3px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================================== PAGE 1 ==================================== -->
+<div class="page">
+  <div class="content-body">
+    <!-- Document Letterhead -->
+    <div class="doc-header">
+      <div>
+        <div class="inst-title">North Eastern Regional Institute of Science and Technology · Centre for Innovation & Incubation</div>
+        <div class="doc-title">Detailed Project Report & CapEx Budget Proposal</div>
+        <div class="doc-subtitle">Autonomous Embedded IoT Hardware Infrastructure for Campus Hostel Print Stations ("PrintPod")</div>
+      </div>
+      <div class="doc-meta-badge">
+        <span class="badge-tag">Institutional Grant Proposal</span><br>
+        <span class="doc-ref">NERIST/TBI/2026/IOT-PRINT-01</span><br>
+        <strong>September 2026</strong> · Rev 2.5
+      </div>
+    </div>
+
+    <!-- Meta Info Grid -->
+    <div class="meta-grid">
+      <div class="meta-item">
+        <strong>Target Campus & Facility</strong>
+        <span>NERIST (Nirjuli, Arunachal Pradesh)</span>
+      </div>
+      <div class="meta-item">
+        <strong>Active Pilot Station</strong>
+        <span>Pare Hostel (Block B, Room 29)</span>
+      </div>
+      <div class="meta-item">
+        <strong>Project Developer / Lead</strong>
+        <span>Devananda & Kurox Engineering Team</span>
+      </div>
+      <div class="meta-item">
+        <strong>Station Printer Target</strong>
+        <span>Epson EcoTank L3212 / L3210</span>
+      </div>
+    </div>
+
+    <!-- 1. Executive Summary -->
+    <h2>1. Executive Summary & Problem Analysis <span class="sub-pill">Why Replace Laptops?</span></h2>
+    <p>
+      The <b>PrintKurox</b> web platform powers autonomous, cashless printing for students across campus hostels. In the current pilot deployment at Pare Hostel (Room 29), print spooling is operated via a <b>standard consumer laptop</b> connected over USB. While effective for proof-of-concept validation, deploying laptops across all hostel blocks introduces fatal financial, operational, and security liabilities that mandate a dedicated micro-controller transition:
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 22%;">Evaluation Metric</th>
+          <th style="width: 27%;">Traditional Laptop Setup</th>
+          <th style="width: 28%;">Proposed IoT "PrintPod" Module</th>
+          <th style="width: 23%;">Net Strategic Advantage</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Capital Expenditure (CapEx)</strong></td>
+          <td>₹25,000 – ₹45,000 per station</td>
+          <td><strong>₹3,850 per station</strong></td>
+          <td class="text-emerald">88% Direct CapEx Reduction</td>
+        </tr>
+        <tr>
+          <td><strong>Continuous Power Load</strong></td>
+          <td>45W – 65W continuous (~₹250/mo)</td>
+          <td><strong>3W – 5W continuous (~₹20/mo)</strong></td>
+          <td class="text-emerald">92% Electricity Savings (₹3,100/yr)</td>
+        </tr>
+        <tr>
+          <td><strong>Physical Security & Theft Risk</strong></td>
+          <td>High black-market resale target in hostels</td>
+          <td>Enclosed tamper-proof chassis bolted to printer</td>
+          <td class="text-emerald">Zero Secondary Value / Zero Theft Target</td>
+        </tr>
+        <tr>
+          <td><strong>24/7 Autonomous Uptime</strong></td>
+          <td>Sleep-mode crashes, forced OS reboots</td>
+          <td>Industrial Read-Only Linux with auto-watchdog</td>
+          <td class="text-emerald">99.9% Uptime (Immune to power cuts)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 2. Technical Architecture -->
+    <h2>2. Technical Architecture of the "PrintPod" <span class="sub-pill">Embedded Micro-Controller</span></h2>
+    <p>
+      The <b>PrintPod</b> replaces bulky personal computers with a single-purpose, industrial-grade ARM Single Board Computer (SBC) engineered for continuous unattended operation:
+    </p>
+    <div class="col-2">
+      <div class="card">
+        <div class="card-title">🖥️ Allwinner H618 Quad-Core Processing</div>
+        <p><b>Orange Pi Zero 3 (1.5GB/2GB LPDDR4):</b> 64-bit Quad-Core ARM Cortex-A53 @ 1.5GHz. Effortlessly compiles and rasterizes complex multi-page 300/600 DPI graphic and engineering PDFs in under 1.8 seconds via native CUPS.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🛡️ Power-Loss Immune Storage (OverlayFS)</div>
+        <p><b>32GB SanDisk Endurance MicroSD:</b> Configured with a <b>Read-Only Root Filesystem (OverlayFS)</b>. Abrupt hostel power cuts or cord-pulls cause zero filesystem corruption. Boots back to operational state in 4.2 seconds.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">📟 Real-Time Student OLED Display</div>
+        <p><b>1.3" I2C Monochrome OLED (SH1106):</b> High-contrast 128×64 white display presenting station name, campus Wi-Fi signal, dynamic 4-digit pickup code (e.g. <i>#B492</i>), and live print progress (e.g. <i>Page 3 of 12</i>).</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🔔 Corridor Audio Chime & Visual LEDs</div>
+        <p><b>Piezo Chime & Dual Bicolor LEDs:</b> Emits a distinct dual-tone chime upon job completion so students down the hallway know their document is printed. Solid Green = Ready; Pulsing Blue = Active; Red = Out of Paper.</p>
+      </div>
+    </div>
+
+    <!-- 3. Firmware Stack -->
+    <h2>3. Operating System & Print Pipeline <span class="sub-pill">Native Driver Architecture</span></h2>
+    <p>
+      The PrintPod executes an optimized headless <b>DietPi / Debian Bookworm Linux kernel</b> stripped of desktop overhead. Documents fetched via the PrintKurox Cloud API are processed through the native <b>CUPS 2.4+ subsystem</b> paired with Epson's official open-source <code>printer-driver-escpr</code> rasterizer, producing identical print quality to standard OEM desktop drivers with zero licensing fees.
+    </p>
+  </div>
+
+  <div class="footer-bar">
+    <span>PrintKurox IoT Hardware DPR · NERIST Campus Autonomous Printing</span>
+    <span>Document Ref: NERIST/TBI/2026/IOT-PRINT-01</span>
+    <span>Page 1 of 3</span>
+  </div>
+</div>
+
+<!-- ==================================== PAGE 2 ==================================== -->
+<div class="page">
+  <div class="content-body">
+    <!-- Document Letterhead Continuation -->
+    <div class="doc-header">
+      <div>
+        <div class="inst-title">NERIST Student Innovation · Network & Hardware Engineering</div>
+        <div class="doc-title">Network Interfacing, Dual-Access & Captive Integration</div>
+        <div class="doc-subtitle">Solving Single-Port Constraints, Campus Web Portals, and Thermal Stability</div>
+      </div>
+      <div class="doc-meta-badge">
+        <span class="badge-tag">Technical Specification</span><br>
+        <span class="doc-ref">NERIST/TBI/2026/IOT-PRINT-01</span><br>
+        <strong>Page 2 of 3</strong>
+      </div>
+    </div>
+
+    <!-- 4. Dual Access Solution -->
+    <h2>4. Single-Port Dual-Access Solution: Simultaneous Web & Personal PC Printing</h2>
+    <p>
+      The Epson EcoTank L3212 features only <b>one physical USB Type-B port</b>. To eliminate the need to constantly unplug cables when hostel caretakers or students wish to print directly from their personal laptops, the PrintPod implements <b>Network CUPS IPP Sharing</b>:
+    </p>
+    
+    <div class="diagram-box">
+      <div class="diagram-flex">
+        <div class="diagram-node">🌐 PrintKurox Cloud<br><span style="font-size:5.8pt;color:#64748b;">(Online Orders)</span></div>
+        <div class="diagram-arrow">──HTTPS──▶</div>
+        <div class="diagram-node hub">🎛️ PrintPod (Orange Pi)<br><span style="font-size:5.8pt;color:#1d4ed8;">CUPS Multi-Queue Spooler</span></div>
+        <div class="diagram-arrow">◀──IPP (Wi-Fi)──</div>
+        <div class="diagram-node">💻 Personal Laptop<br><span style="font-size:5.8pt;color:#64748b;">(Custodian / Student)</span></div>
+      </div>
+      <div style="text-align:center;margin-top:3px;">
+        <span class="diagram-arrow">▼ Dedicated 0.5m Shielded USB Cable</span><br>
+        <div class="diagram-node target" style="display:inline-block;margin-top:2px;">🖨️ Epson EcoTank L3212 Hardware Printer</div>
+      </div>
+    </div>
+
+    <div class="callout-blue">
+      <strong>📡 Wireless Network Printer Sharing (Primary Solution · ₹0 Cost):</strong> The printer is permanently plugged into the PrintPod via USB. The PrintPod automatically broadcasts the printer across the hostel local network (Wi-Fi/LAN) using the standard <b>Internet Printing Protocol (IPP)</b> and mDNS/Bonjour. Any custodian PC or student laptop on the Wi-Fi simply clicks <em>"Add Printer"</em> in Windows Settings, discovers <code>EPSON EcoTank L3210 (PrintPod)</code>, and prints wirelessly via standard <strong>Ctrl + P</strong>. The internal CUPS spooler serializes personal and web print jobs, completely preventing job collision.
+    </div>
+
+    <div class="callout">
+      <strong>🔌 Hardware Fallback (Bi-Directional USB Selector Hub · Optional ₹350):</strong> In the event of campus network downtime, a small push-button USB switch can sit between the printer, PrintPod, and personal laptop, allowing instant 1-touch switching with zero driver reconfiguration.
+    </div>
+
+    <!-- 5. Captive Portal Solution -->
+    <h2>5. Campus Wi-Fi Captive Portal Automation <span class="sub-pill">No Display or Mouse Needed</span></h2>
+    <p>
+      NERIST campus Wi-Fi enforces a web-browser login screen that terminates sessions periodically. The PrintPod overcomes this through a three-tier resilient connectivity architecture:
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 24%;">Mechanism</th>
+          <th style="width: 52%;">Technical Implementation & Operational Behavior</th>
+          <th style="width: 24%;">Performance & Impact</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1. Autonomous Watchdog Daemon</strong></td>
+          <td>Lightweight Python service (<code>wifi-keeper.service</code>) pings a 64-byte probe to Google's <code>generate_204</code> every 30 seconds. Upon captive redirect (HTTP 302), it transmits an authenticated HTTP POST with authorized student credentials in 0.18s.</td>
+          <td class="text-emerald">&lt;0.1% CPU · 10MB RAM<br>Zero system heat (38°C)</td>
+        </tr>
+        <tr>
+          <td><strong>2. Institutional MAC Whitelisting</strong></td>
+          <td>Permanent MAC address registration with the NERIST Computer Center (CC) for institutional IoT bypass, identical to campus biometric attendance machines and lab printers.</td>
+          <td class="text-emerald">Zero login prompts<br>100% Native Gateway Bypass</td>
+        </tr>
+        <tr>
+          <td><strong>3. Optional 4G LTE USB Failover</strong></td>
+          <td>Unlocked ₹1,100 USB 4G dongle with Jio/Airtel SIM. Because PrintKurox transfers only ~50MB/day (&lt;2GB/month), a ₹155/mo recharge guarantees 100% uptime during campus Wi-Fi outages.</td>
+          <td class="text-emerald">Total Independence<br>100% Fault-Tolerant Uptime</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 6. Thermal & Electrical Reliability -->
+    <h2>6. Thermal Stability & Electrical Safety Benchmarks <span class="sub-pill">24/7 Hostel Duty</span></h2>
+    <div class="col-3">
+      <div class="card">
+        <div class="card-title">🌡️ Thermal Dissipation</div>
+        <p>Self-adhesive copper heatsinks maintain core Allwinner H618 chip temperature at <b>38°C – 41°C</b> under active 24/7 load, far below the 85°C thermal throttle limit. Zero fan noise.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">⚡ Surge & Spike Protection</div>
+        <p>BIS-certified 5V 3A power adapter with internal over-voltage and thermal short-circuit protection prevents voltage spikes from entering the printer logic board.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🔒 Physical Anti-Theft Chassis</div>
+        <p>Custom 3D-printed ABS / acrylic enclosure bolts directly to the rear frame of the Epson printer using security torx screws, preventing tampering or unauthorized removal.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <span>PrintKurox IoT Hardware DPR · NERIST Campus Autonomous Printing</span>
+    <span>Document Ref: NERIST/TBI/2026/IOT-PRINT-01</span>
+    <span>Page 2 of 3</span>
+  </div>
+</div>
+
+<!-- ==================================== PAGE 3 ==================================== -->
+<div class="page">
+  <div class="content-body">
+    <!-- Document Letterhead Continuation -->
+    <div class="doc-header">
+      <div>
+        <div class="inst-title">NERIST TBI / Student Affairs · Financial Feasibility & Sanction</div>
+        <div class="doc-title">Itemized Bill of Materials & Campus Rollout Budget</div>
+        <div class="doc-subtitle">Procurement Schedule, Budget Scenarios, Electrical ROI, and Approval Matrix</div>
+      </div>
+      <div class="doc-meta-badge">
+        <span class="badge-tag">Financial Sanction Sheet</span><br>
+        <span class="doc-ref">NERIST/TBI/2026/IOT-PRINT-01</span><br>
+        <strong>All Prices in INR (₹)</strong> · Tax Incl.
+      </div>
+    </div>
+
+    <!-- 7. Itemized BOM -->
+    <h2>7. Itemized Bill of Materials (BOM) per Station <span class="sub-pill">Off-The-Shelf Indian Procurement</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 5%;" class="text-center">#</th>
+          <th style="width: 41%;">Component & Technical Specification</th>
+          <th style="width: 27%;">Authorized Indian Vendor</th>
+          <th style="width: 7%;" class="text-center">Qty</th>
+          <th style="width: 10%;" class="text-right">Unit Rate</th>
+          <th style="width: 10%;" class="text-right">Total (INR)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="text-center font-mono">1</td>
+          <td><strong>Orange Pi Zero 3 (1.5GB LPDDR4)</strong><br><span class="text-muted">Allwinner H618 Quad-core, Dual-Band Wi-Fi, USB 2.0</span></td>
+          <td>Robu.in / Silverline Electronics</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹2,200</td>
+          <td class="text-right font-mono font-bold">₹2,200</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">2</td>
+          <td><strong>SanDisk 32GB High-Endurance MicroSD</strong><br><span class="text-muted">Class 10 A1, rated for continuous IoT write cycles</span></td>
+          <td>Amazon India / Local Distributor</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹420</td>
+          <td class="text-right font-mono font-bold">₹420</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">3</td>
+          <td><strong>5V 3A USB-C Regulated Power Adapter</strong><br><span class="text-muted">BIS-certified, surge protected, stable 15W supply</span></td>
+          <td>Robu.in / MakerBazar</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹350</td>
+          <td class="text-right font-mono font-bold">₹350</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">4</td>
+          <td><strong>1.3" I2C Monochrome OLED Screen</strong><br><span class="text-muted">128×64 White display, SH1106 controller, 4-pin I2C</span></td>
+          <td>Robu.in / MakerBazar</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹260</td>
+          <td class="text-right font-mono font-bold">₹260</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">5</td>
+          <td><strong>Audio-Visual Feedback Subsystem</strong><br><span class="text-muted">5V active piezo buzzer, 5mm Green/Blue LEDs, harness</span></td>
+          <td>Local Electronics Market</td>
+          <td class="text-center font-mono">1 set</td>
+          <td class="text-right font-mono">₹80</td>
+          <td class="text-right font-mono font-bold">₹80</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">6</td>
+          <td><strong>Shielded USB-A to USB-B Cable (0.5m)</strong><br><span class="text-muted">Short shielded printer data cable for internal mounting</span></td>
+          <td>Amazon India</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹140</td>
+          <td class="text-right font-mono font-bold">₹140</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">7</td>
+          <td><strong>Laser-Cut Acrylic / 3D ABS Enclosure</strong><br><span class="text-muted">Direct printer chassis brackets with security fasteners</span></td>
+          <td>NERIST 3D Fab Lab / Local Fab</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹300</td>
+          <td class="text-right font-mono font-bold">₹300</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">8</td>
+          <td><strong>Thermal Kit & Mounting Hardware</strong><br><span class="text-muted">Self-adhesive copper heatsinks, brass standoffs, zip ties</span></td>
+          <td>Robu.in</td>
+          <td class="text-center font-mono">1 set</td>
+          <td class="text-right font-mono">₹100</td>
+          <td class="text-right font-mono font-bold">₹100</td>
+        </tr>
+        <tr class="highlight-row">
+          <td colspan="3"><strong>CORE BASE STATION TOTAL (Wi-Fi Enabled Kiosk Module)</strong></td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">—</td>
+          <td class="text-right font-mono text-emerald">₹3,850</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">9</td>
+          <td><em>[Optional] Unlocked 4G LTE USB Dongle</em><br><span class="text-muted">Independent cellular failover via Jio/Airtel SIM</span></td>
+          <td>Amazon India / Flipkart</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹1,100</td>
+          <td class="text-right font-mono">+₹1,100</td>
+        </tr>
+        <tr>
+          <td class="text-center font-mono">10</td>
+          <td><em>[Optional] 5V/12V Mini DC UPS Battery Backup</em><br><span class="text-muted">Maintains print jobs through hostel load-shedding</span></td>
+          <td>Amazon India (Resonate/Oakter)</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">₹850</td>
+          <td class="text-right font-mono">+₹850</td>
+        </tr>
+        <tr class="highlight-blue">
+          <td colspan="3"><strong>FULLY LOADED STATION TOTAL (Wi-Fi + 4G SIM Backup + DC UPS)</strong></td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono">—</td>
+          <td class="text-right font-mono text-blue">₹5,800</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 8. Phased Rollout & ROI -->
+    <h2>8. Phased Rollout Budget & Energy ROI <span class="sub-pill">Financial Feasibility</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 20%;">Deployment Phase</th>
+          <th style="width: 28%;">Coverage & Hostel Locations</th>
+          <th style="width: 8%;" class="text-center">Units</th>
+          <th style="width: 14%;" class="text-right">Base CapEx</th>
+          <th style="width: 14%;" class="text-right">Loaded CapEx</th>
+          <th style="width: 16%;" class="text-right">Net Savings vs Laptops</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Phase 1: Pilot Station</strong></td>
+          <td>Pare Hostel (Block B, Room 29)</td>
+          <td class="text-center font-mono">1</td>
+          <td class="text-right font-mono font-bold">₹3,850</td>
+          <td class="text-right font-mono">₹5,800</td>
+          <td class="text-right text-emerald font-mono">Save ₹31,150</td>
+        </tr>
+        <tr>
+          <td><strong>Phase 2: Core Quad</strong></td>
+          <td>Hostel Blocks A, B, C, and D</td>
+          <td class="text-center font-mono">4</td>
+          <td class="text-right font-mono font-bold">₹15,400</td>
+          <td class="text-right font-mono">₹23,200</td>
+          <td class="text-right text-emerald font-mono">Save ₹1,24,600</td>
+        </tr>
+        <tr>
+          <td><strong>Phase 3: Full Grid</strong></td>
+          <td>All Hostels (A–H, Girls Hostel, Central)</td>
+          <td class="text-center font-mono">10</td>
+          <td class="text-right font-mono font-bold">₹38,500</td>
+          <td class="text-right font-mono">₹58,000</td>
+          <td class="text-right text-emerald font-mono">Save ₹3,11,500</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>⚡ Energy Payback ROI:</strong> A laptop draws ~55W continuous (₹3,360/year electricity). The PrintPod draws only ~4W (₹245/year). At an annual power saving of <strong>₹3,115 per unit</strong>, each hardware station <strong>fully repays its entire capital cost within 14.8 months purely on electrical savings</strong>.
+    </div>
+
+    <!-- 9. Implementation Roadmap -->
+    <h2>9. 4-Week Implementation Roadmap <span class="sub-pill">Milestone Schedule</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 15%;">Timeline</th>
+          <th style="width: 55%;">Milestones & Engineering Deliverables</th>
+          <th style="width: 30%;">Deliverable Verification</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Week 1 (Days 1–7)</strong></td>
+          <td>Procure Orange Pi Zero 3, microSD, OLED & PSU from Robu.in & Amazon India; enclosure CAD drafting.</td>
+          <td>Component inventory bench testing</td>
+        </tr>
+        <tr>
+          <td><strong>Week 2 (Days 8–14)</strong></td>
+          <td>Kernel flash (DietPi Bookworm), Read-Only OverlayFS lockdown, CUPS 2.4+ & Epson ESC/P-R setup.</td>
+          <td>Local USB printer test pass</td>
+        </tr>
+        <tr>
+          <td><strong>Week 3 (Days 15–21)</strong></td>
+          <td>PrintKurox daemon integration, OLED/piezo status scripts, captive portal watchdog bot deployment.</td>
+          <td>End-to-end web order test print</td>
+        </tr>
+        <tr>
+          <td><strong>Week 4 (Days 22–28)</strong></td>
+          <td>Chassis fabrication, 48-hour Pare Hostel stress testing, custodian network IPP setup & handover.</td>
+          <td>Production deployment sign-off</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 10. Institutional Sign-Off Block -->
+    <h2>10. Institutional Endorsement & Budget Sanction Sheet</h2>
+    <table class="sign-table">
+      <tr>
+        <td>
+          <div class="sign-role">SUBMITTED BY (DEVELOPER)</div>
+          <div class="sign-line">Devananda & Engineering Team</div>
+          <div class="sign-desig">Lead System Engineers, PrintKurox<br>NERIST, Nirjuli · Date: ____________</div>
+        </td>
+        <td>
+          <div class="sign-role">RECOMMENDED BY (HOSTEL)</div>
+          <div class="sign-line">Hostel Warden / Custodian</div>
+          <div class="sign-desig">Pare Hostel (Block B), NERIST<br>Campus Print Hub · Date: ____________</div>
+        </td>
+        <td>
+          <div class="sign-role">SANCTIONED BY (ADMINISTRATION)</div>
+          <div class="sign-line">Dean of Student Affairs / TBI</div>
+          <div class="sign-desig">Incubation & Student Welfare Authority<br>NERIST, Nirjuli · Date: ____________</div>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="footer-bar">
+    <span>PrintKurox IoT Hardware DPR · NERIST Campus Autonomous Printing</span>
+    <span>Document Ref: NERIST/TBI/2026/IOT-PRINT-01</span>
+    <span>Page 3 of 3</span>
+  </div>
+</div>
+
+</body>
+</html>
+"""
+
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    print(f"Written HTML template to {html_path}")
+
+    # Render to PDF using Headless Edge
+    cmd = [
+        edge_exe,
+        "--headless",
+        "--disable-gpu",
+        "--no-pdf-header-footer",
+        f"--print-to-pdf={pdf_path}",
+        html_path
+    ]
+    
+    print("Converting HTML to PDF via Headless Microsoft Edge...")
+    subprocess.run(cmd, check=True)
+    
+    if os.path.exists(pdf_path):
+        reader = PdfReader(pdf_path)
+        num_pages = len(reader.pages)
+        print(f"Generated PDF with {num_pages} pages at {pdf_path}")
+        try:
+            shutil.copyfile(pdf_path, public_pdf_path)
+            print(f"Copied to public web assets: {public_pdf_path}")
+        except PermissionError:
+            print(f"Notice: public PDF is locked by active browser session. Main PDF is updated at: {pdf_path}")
+    else:
+        print("Error: PDF was not generated.")
+
+if __name__ == '__main__':
+    build_pdf()

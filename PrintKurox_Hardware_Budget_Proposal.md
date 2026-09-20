@@ -42,7 +42,18 @@ The proposed **PrintPod** is an embedded ARM Single Board Computer (SBC) designe
 
 ---
 
-## 3. Campus Network Connectivity & Captive Portal Handling
+## 3. Single-Port Dual-Access Solution (Simultaneous Web & Personal PC Printing)
+
+The Epson EcoTank L3212 features only **one physical USB Type-B port**. To enable hostel caretakers or students to print personal files from their laptops without unplugging cables:
+
+* **Wireless Network Printer Sharing via CUPS IPP (Primary Solution · ₹0 Cost):**
+  The printer is permanently connected via USB to the PrintPod. The PrintPod automatically shares the printer over the local hostel network (Wi-Fi/LAN) using standard **Internet Printing Protocol (IPP)** and mDNS/Bonjour. Any student laptop or custodian PC on the Wi-Fi simply clicks *"Add Printer"* in Windows Settings, discovers `EPSON EcoTank L3210 (PrintPod)`, and prints wirelessly via standard **Ctrl + P**. The internal CUPS spooler intelligently arbitrates between online web print jobs and local PC print jobs, eliminating queue collisions and paper jams.
+* **Hardware Bi-Directional USB Switcher (Fallback · Optional ₹350):**
+  For offline environments without Wi-Fi, a physical push-button USB switch can be placed between the printer, PrintPod, and personal PC for instant one-touch toggling.
+
+---
+
+## 4. Campus Network Connectivity & Captive Portal Handling
 
 To navigate the **NERIST campus Wi-Fi web captive login portal** autonomously without a display, keyboard, or mouse:
 
@@ -52,7 +63,7 @@ To navigate the **NERIST campus Wi-Fi web captive login portal** autonomously wi
 
 ---
 
-## 4. Itemized Bill of Materials (BOM) & Sourcing per Station
+## 5. Itemized Bill of Materials (BOM) & Sourcing per Station
 
 All components are standard off-the-shelf parts available from certified Indian distributors with GST billing:
 
@@ -73,7 +84,7 @@ All components are standard off-the-shelf parts available from certified Indian 
 
 ---
 
-## 5. Phased Campus Rollout Budget Scenarios
+## 6. Phased Campus Rollout Budget Scenarios
 
 | Deployment Phase | Scope / Target Locations | Units | Base Budget (Wi-Fi) | Loaded Budget (+4G) | Traditional Laptop Cost |
 | :--- | :--- | :-: | :-: | :-: | :-: |
@@ -87,7 +98,7 @@ All components are standard off-the-shelf parts available from certified Indian 
 
 ---
 
-## 6. Implementation Schedule (4-Week Roadmap)
+## 7. Implementation Schedule (4-Week Roadmap)
 
 * **Week 1 (Procurement):** Sourcing Orange Pi Zero 3, MicroSDs, displays, and power supplies via Robu.in and Amazon India.
 * **Week 2 (OS & Printing Subsystem):** Flashing headless DietPi / Debian, configuring CUPS with Epson ESC/P-R filters, and configuring OverlayFS read-only root.
@@ -96,7 +107,7 @@ All components are standard off-the-shelf parts available from certified Indian 
 
 ---
 
-## 7. Institutional Endorsements & Approvals
+## 8. Institutional Endorsements & Approvals
 
 ```
 PREPARED BY:                        RECOMMENDED BY (HOSTEL):             APPROVED BY (ADMIN / INCUBATION):
