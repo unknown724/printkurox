@@ -267,7 +267,7 @@ export async function POST(req: NextRequest) {
 
       if (needsTransform) {
         try {
-          const originalBuffer = cachedBuffer || (await getFileBufferFromR2(fileKey));
+          const originalBuffer = await getFileBufferFromR2(fileKey);
           const { transformedBuffer, totalPages: transformedPages } = await transformPdfForPrint(
             originalBuffer,
             fileName,

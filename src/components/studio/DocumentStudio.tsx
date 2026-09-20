@@ -525,29 +525,28 @@ export function DocumentStudio({
         </div>
       )}
 
-      {/* Rate Card Modal: Original clean stack on Mobile, Professional Executive-grade on Desktop */}
-      {/* Rate Card Modal: Original clean stack on Mobile, Professional Executive-grade on Desktop */}
+      {/* Rate Card Modal: Dynamic custom block rate card, fully visible and scrollable on Desktop & Mobile */}
       {showRatesModal && (
         <div
           onClick={() => setShowRatesModal(false)}
-          className="fixed inset-0 z-50 bg-black/80 dark:bg-black/90 backdrop-blur-md overflow-y-auto p-3 sm:p-6 flex flex-col items-center justify-start py-6 sm:py-10 animate-fade-in-up"
+          className="fixed inset-0 z-50 bg-black/80 dark:bg-black/90 backdrop-blur-md overflow-y-auto p-3 sm:p-4 md:p-6 flex items-center justify-center animate-fade-in-up"
         >
-          {/* ======================= MOBILE VIEW (KEPT EXACTLY AS IT WAS) ======================= */}
+          {/* ======================= MOBILE VIEW ======================= */}
           <div
             onClick={(e) => e.stopPropagation()}
             className="md:hidden w-full max-w-md my-auto rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4 sm:p-5 shadow-2xl text-xs space-y-3.5 animate-scale-in"
           >
             {/* Mobile Header */}
             <div className="flex items-center justify-between pb-2.5 border-b border-zinc-200 dark:border-zinc-800 font-bold text-zinc-900 dark:text-zinc-100">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-sm font-bold">Official Kiosk Rate Card</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <span className="text-sm font-bold truncate">{currentStation.name} Rate Card</span>
               </div>
               <button
                 type="button"
                 onClick={() => setShowRatesModal(false)}
                 aria-label="Close Rate Card"
-                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer shrink-0"
               >
                 ✕
               </button>
@@ -563,19 +562,19 @@ export function DocumentStudio({
                       Standard (1 – 9 sheets)
                     </span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold">
-                      Save 20–30% vs Offline
+                      Base Rate
                     </span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 space-y-0.5">
                     <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W (Single)</p>
-                    <p className="text-zinc-500">Web App: <span className="font-bold text-zinc-900 dark:text-zinc-100 font-mono">₹{TIER_RATES.standard.bw.single}</span>/sheet</p>
+                    <p className="text-zinc-500">Web App: <span className="font-bold text-zinc-900 dark:text-zinc-100 font-mono">₹{activeTiers.standard.bw.single.toFixed(2)}</span>/sheet</p>
                     <p className="text-[10px] text-zinc-400 font-mono">(Offline shop: ₹5)</p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200/80 dark:border-zinc-800 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
-                    <p className="text-zinc-500">Web App: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.standard.color.single}</span>/sheet</p>
+                    <p className="text-zinc-500">Web App: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{activeTiers.standard.color.single.toFixed(2)}</span>/sheet</p>
                     <p className="text-[10px] text-zinc-400 font-mono">(Offline shop: ₹10)</p>
                   </div>
                 </div>
@@ -589,20 +588,24 @@ export function DocumentStudio({
                       Assignment Saver (10 – 29 sheets)
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-600 text-white font-bold shadow-2xs">
-                      ₹{TIER_RATES.assignment.bw.single.toFixed(2)} / pg
+                      ₹{activeTiers.assignment.bw.single.toFixed(2)} / pg
                     </span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
                     <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
-                    <p className="text-zinc-500">Web: <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">₹{TIER_RATES.assignment.bw.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save 40% vs shop</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">₹{activeTiers.assignment.bw.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">
+                      Save ₹{(activeTiers.standard.bw.single - activeTiers.assignment.bw.single).toFixed(2)}/pg
+                    </p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
-                    <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.assignment.color.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹4.50/sheet</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{activeTiers.assignment.color.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">
+                      Save ₹{(activeTiers.standard.color.single - activeTiers.assignment.color.single).toFixed(2)}/pg
+                    </p>
                   </div>
                 </div>
               </div>
@@ -615,20 +618,24 @@ export function DocumentStudio({
                       Mega Bulk Saver (30+ sheets)
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold shadow-2xs">
-                      ₹{TIER_RATES.mega.bw.single.toFixed(2)} / pg!
+                      ₹{activeTiers.mega.bw.single.toFixed(2)} / pg!
                     </span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
                     <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
-                    <p className="text-zinc-500">Web: <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">₹{TIER_RATES.mega.bw.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save 50% vs shop</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">₹{activeTiers.mega.bw.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">
+                      Save ₹{(activeTiers.standard.bw.single - activeTiers.mega.bw.single).toFixed(2)}/pg
+                    </p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
                     <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
-                    <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{TIER_RATES.mega.color.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">Save ₹5.50/sheet</p>
+                    <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{activeTiers.mega.color.single.toFixed(2)}</span>/sheet</p>
+                    <p className="text-[10px] text-emerald-600 font-mono">
+                      Save ₹{(activeTiers.standard.color.single - activeTiers.mega.color.single).toFixed(2)}/pg
+                    </p>
                   </div>
                 </div>
               </div>
@@ -653,25 +660,25 @@ export function DocumentStudio({
           {/* ======================= DESKTOP VIEW (EXECUTIVE MASTER RATE TABLE) ======================= */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className="hidden md:block w-full max-w-4xl xl:max-w-5xl my-auto relative rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#0c0c0e] p-6 sm:p-7 shadow-2xl backdrop-blur-2xl text-zinc-900 dark:text-zinc-100 animate-scale-in space-y-4 sm:space-y-5 overflow-hidden"
+            className="hidden md:flex flex-col w-full max-w-4xl xl:max-w-5xl max-h-[90vh] my-auto relative rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#0c0c0e] shadow-2xl backdrop-blur-2xl text-zinc-900 dark:text-zinc-100 animate-scale-in overflow-hidden"
           >
             {/* Top-Middle Luminous Specular Flare */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-80 sm:w-96 h-[2.5px] bg-gradient-to-r from-transparent via-white/80 to-transparent shadow-[0_0_20px_rgba(255,255,255,0.9)] pointer-events-none" />
 
-            {/* Desktop Header */}
-            <div className="flex items-start justify-between border-b border-zinc-200 dark:border-zinc-800/80 pb-3.5">
+            {/* Desktop Header - Pinned */}
+            <div className="flex items-start justify-between border-b border-zinc-200 dark:border-zinc-800/80 px-6 py-4 shrink-0 bg-white/95 dark:bg-[#0c0c0e]/95 backdrop-blur-md">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                   <span className="text-[11px] font-mono font-bold tracking-wider text-emerald-600 dark:text-emerald-400 uppercase">
-                    Official Station Tariff · Live Dynamic Pricing
+                    {currentStation.blockCode || currentStation.shortName || 'Station'} Official Tariff · Live Dynamic Pricing
                   </span>
                 </div>
                 <h3 className="text-xl sm:text-2xl font-black tracking-tight text-zinc-900 dark:text-white">
-                  NERIST Campus Rate Schedule &amp; Volume Discounts
+                  {currentStation.name} Rate Schedule &amp; Volume Discounts
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl leading-relaxed">
-                  Web-exclusive student pricing: <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">₹{TIER_RATES.standard.bw.single}.00 B&amp;W</strong> and <strong className="text-pink-600 dark:text-pink-400 font-semibold">₹{TIER_RATES.standard.color.single}.00 Color</strong> (save vs offline shop rates). Online jobs print single-sided for 100% paper-feed reliability.
+                  Web-exclusive student pricing: <strong className="text-emerald-600 dark:text-emerald-400 font-semibold font-mono">₹{currentBwSingle.toFixed(2)} B&amp;W</strong> and <strong className="text-pink-600 dark:text-pink-400 font-semibold font-mono">₹{currentColorSingle.toFixed(2)} Color</strong> (save vs offline shop rates). Online jobs print single-sided for 100% paper-feed reliability.
                 </p>
               </div>
 
@@ -689,146 +696,149 @@ export function DocumentStudio({
               </button>
             </div>
 
-            {/* Master Pricing Table with Horizontal Scroll Protection */}
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 shadow-xs overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[540px]">
-                <thead>
-                  <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/80 dark:bg-zinc-950/90 text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">
-                    <th className="py-3 px-4 sm:px-5 w-[30%]">Tier &amp; Volume</th>
-                    <th className="py-3 px-3 sm:px-4 w-[20%]">B&amp;W Single</th>
-                    <th className="py-3 px-3 sm:px-4 w-[20%]">Color Single</th>
-                    <th className="py-3 px-3 sm:px-4 w-[15%]">Rate Type</th>
-                    <th className="py-3 px-3 sm:px-4 w-[15%]">Bulk Discount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800/70 text-xs sm:text-sm">
-                  {/* Tier 1: Standard */}
-                  <tr className="hover:bg-zinc-100/60 dark:hover:bg-zinc-800/30 transition-colors">
-                    <td className="py-3 px-4 sm:px-5">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-sm text-zinc-900 dark:text-white">Standard</span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-zinc-200/70 dark:bg-white/10 text-zinc-700 dark:text-zinc-300 font-bold border border-zinc-300/80 dark:border-white/15">
-                            Base Price
-                          </span>
+            {/* Desktop Scrollable Body */}
+            <div className="px-6 py-4 overflow-y-auto space-y-4">
+              {/* Master Pricing Table with Horizontal Scroll Protection */}
+              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40 shadow-xs overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[540px]">
+                  <thead>
+                    <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/80 dark:bg-zinc-950/90 text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">
+                      <th className="py-2.5 px-4 w-[28%]">Tier &amp; Volume</th>
+                      <th className="py-2.5 px-4 w-[20%]">B&amp;W Single</th>
+                      <th className="py-2.5 px-4 w-[20%]">Color Single</th>
+                      <th className="py-2.5 px-4 w-[16%]">Rate Type</th>
+                      <th className="py-2.5 px-4 w-[16%]">Bulk Discount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800/70 text-xs sm:text-sm">
+                    {/* Tier 1: Standard */}
+                    <tr className="hover:bg-zinc-100/60 dark:hover:bg-zinc-800/30 transition-colors">
+                      <td className="py-2.5 px-4">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-sm text-zinc-900 dark:text-white">Standard</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-zinc-200/70 dark:bg-white/10 text-zinc-700 dark:text-zinc-300 font-bold border border-zinc-300/80 dark:border-white/15">
+                              Base Price
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">1 – 9 sheets</div>
                         </div>
-                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">1 – 9 sheets</div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-zinc-900 dark:text-white">₹{activeTiers.standard.bw.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-zinc-500">per sheet</div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.standard.color.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-zinc-500">per sheet</div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400 font-medium">Standard</span>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <span className="text-xs text-zinc-400 font-mono">Base Rate</span>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="font-bold text-base sm:text-lg font-mono text-zinc-900 dark:text-white">₹{activeTiers.standard.bw.single.toFixed(2)}</div>
+                        <div className="text-[10px] text-zinc-500">per sheet</div>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="font-bold text-base sm:text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.standard.color.single.toFixed(2)}</div>
+                        <div className="text-[10px] text-zinc-500">per sheet</div>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400 font-medium">Standard</span>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span className="text-xs text-zinc-400 font-mono">Base Rate</span>
+                      </td>
+                    </tr>
 
-                  {/* Tier 2: Assignment Saver */}
-                  <tr className="bg-sky-50/40 dark:bg-sky-950/20 hover:bg-sky-50/70 dark:hover:bg-sky-950/30 transition-colors">
-                    <td className="py-3 px-4 sm:px-5">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-sm text-sky-950 dark:text-sky-200">Assignment Saver</span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-700 dark:text-sky-300 font-bold border border-sky-500/40">
-                            Bulk 10+
-                          </span>
+                    {/* Tier 2: Assignment Saver */}
+                    <tr className="bg-sky-50/40 dark:bg-sky-950/20 hover:bg-sky-50/70 dark:hover:bg-sky-950/30 transition-colors">
+                      <td className="py-2.5 px-4">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-sm text-sky-950 dark:text-sky-200">Assignment Saver</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-700 dark:text-sky-300 font-bold border border-sky-500/40">
+                              Bulk 10+
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-sky-700 dark:text-sky-300/90 font-mono font-semibold">10 – 29 sheets</div>
                         </div>
-                        <div className="text-[11px] text-sky-700 dark:text-sky-300/90 font-mono font-semibold">10 – 29 sheets</div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-sky-700 dark:text-sky-300">₹{activeTiers.assignment.bw.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-sky-600 dark:text-sky-400 font-mono">₹{activeTiers.assignment.bw.single.toFixed(2)} / pg</div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.assignment.color.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-zinc-500">₹{activeTiers.assignment.color.single.toFixed(2)} / pg</div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <span className="text-xs font-mono text-sky-600 dark:text-sky-400 font-medium">Bulk Discount</span>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                        Save ₹{(activeTiers.standard.bw.single - activeTiers.assignment.bw.single).toFixed(2)}/pg
-                      </span>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="font-bold text-base sm:text-lg font-mono text-sky-700 dark:text-sky-300">₹{activeTiers.assignment.bw.single.toFixed(2)}</div>
+                        <div className="text-[10px] text-sky-600 dark:text-sky-400 font-mono">₹{activeTiers.assignment.bw.single.toFixed(2)} / pg</div>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="font-bold text-base sm:text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.assignment.color.single.toFixed(2)}</div>
+                        <div className="text-[10px] text-zinc-500">₹{activeTiers.assignment.color.single.toFixed(2)} / pg</div>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span className="text-xs font-mono text-sky-600 dark:text-sky-400 font-medium">Bulk Discount</span>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                          Save ₹{(activeTiers.standard.bw.single - activeTiers.assignment.bw.single).toFixed(2)}/pg
+                        </span>
+                      </td>
+                    </tr>
 
-                  {/* Tier 3: Mega Bulk Saver */}
-                  <tr className="bg-emerald-50/40 dark:bg-emerald-950/20 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30 transition-colors">
-                    <td className="py-3 px-4 sm:px-5">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-sm text-emerald-950 dark:text-emerald-200">Mega Bulk Saver</span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/40">
-                            Bulk 30+
-                          </span>
+                    {/* Tier 3: Mega Bulk Saver */}
+                    <tr className="bg-emerald-50/40 dark:bg-emerald-950/20 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30 transition-colors">
+                      <td className="py-2.5 px-4">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-sm text-emerald-950 dark:text-emerald-200">Mega Bulk Saver</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/40">
+                              Bulk 30+
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-emerald-700 dark:text-emerald-300/90 font-mono font-semibold">30+ sheets</div>
                         </div>
-                        <div className="text-[11px] text-emerald-700 dark:text-emerald-300/90 font-mono font-semibold">30+ sheets</div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-emerald-700 dark:text-emerald-300">₹{activeTiers.mega.bw.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">₹{activeTiers.mega.bw.single.toFixed(2)} / pg!</div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <div className="font-bold text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.mega.color.single.toFixed(2)}</div>
-                      <div className="text-[10px] text-zinc-500">₹{activeTiers.mega.color.single.toFixed(2)} / pg</div>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-medium">Mega Discount</span>
-                    </td>
-                    <td className="py-3 px-3 sm:px-4">
-                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                        Save ₹{(activeTiers.standard.bw.single - activeTiers.mega.bw.single).toFixed(2)}/pg
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="font-bold text-base sm:text-lg font-mono text-emerald-700 dark:text-emerald-300">₹{activeTiers.mega.bw.single.toFixed(2)}</div>
+                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">₹{activeTiers.mega.bw.single.toFixed(2)} / pg!</div>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="font-bold text-base sm:text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.mega.color.single.toFixed(2)}</div>
+                        <div className="text-[10px] text-zinc-500">₹{activeTiers.mega.color.single.toFixed(2)} / pg</div>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-medium">Mega Discount</span>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                          Save ₹{(activeTiers.standard.bw.single - activeTiers.mega.bw.single).toFixed(2)}/pg
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Highlights Strip */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="flex items-center gap-2 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 text-xs">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                  <div className="truncate">
+                    <span className="font-semibold text-zinc-900 dark:text-white">Auto Volume Tiers:</span>{' '}
+                    <span className="text-zinc-500 dark:text-zinc-400">Discounts unlock automatically</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 text-xs">
+                  <span className="w-2 h-2 rounded-full bg-pink-500 shrink-0" />
+                  <div className="truncate">
+                    <span className="font-semibold text-zinc-900 dark:text-white">Hybrid Color:</span>{' '}
+                    <span className="text-zinc-500 dark:text-zinc-400">B&amp;W pages stay at base rates</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 text-xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                  <div className="truncate">
+                    <span className="font-semibold text-zinc-900 dark:text-white">Zero-Retention:</span>{' '}
+                    <span className="text-zinc-500 dark:text-zinc-400">Files purged 15m after print</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Highlights Strip */}
-            <div className="grid grid-cols-3 gap-2.5">
-              <div className="flex items-center gap-2 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 text-xs">
-                <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                <div className="truncate">
-                  <span className="font-semibold text-zinc-900 dark:text-white">Auto Volume Tiers:</span>{' '}
-                  <span className="text-zinc-500 dark:text-zinc-400">Discounts unlock automatically</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 text-xs">
-                <span className="w-2 h-2 rounded-full bg-pink-500 shrink-0" />
-                <div className="truncate">
-                  <span className="font-semibold text-zinc-900 dark:text-white">Hybrid Color:</span>{' '}
-                  <span className="text-zinc-500 dark:text-zinc-400">B&amp;W pages stay at base rates</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 text-xs">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                <div className="truncate">
-                  <span className="font-semibold text-zinc-900 dark:text-white">Zero-Retention:</span>{' '}
-                  <span className="text-zinc-500 dark:text-zinc-400">Files purged 15m after print</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Desktop Footer */}
-            <div className="flex items-center justify-between border-t border-zinc-200 dark:border-zinc-800 pt-3 text-xs text-zinc-500">
+            {/* Desktop Footer - Pinned */}
+            <div className="flex items-center justify-between border-t border-zinc-200 dark:border-zinc-800 px-6 py-3 text-xs text-zinc-500 shrink-0 bg-white/95 dark:bg-[#0c0c0e]/95 backdrop-blur-md">
               <div className="flex items-center gap-3 sm:gap-4 text-[11px]">
                 <span>✓ 75 GSM Premium Paper</span>
-                <span>✓ Calibrated Duplex Alignment</span>
-                <span>✓ Instant Counter Pickup</span>
+                <span>✓ Calibrated Single &amp; Duplex</span>
+                <span>✓ Instant Hostel Counter Pickup</span>
               </div>
               <button
                 type="button"

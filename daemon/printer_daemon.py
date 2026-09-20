@@ -79,15 +79,17 @@ except OSError:
 # =============================================================================
 # The daemon connects ONLY to the authenticated Next.js proxy server.
 # Master Cloudflare D1 and R2 cloud credentials NEVER touch this laptop!
-SERVER_URL = os.getenv('SERVER_URL', station_data.get('server_url', 'http://localhost:3000' if os.path.exists(os.path.join(BASE_DIR, '.dev_local')) or os.path.exists(os.path.join(BASE_DIR, '..', '.env.local')) else 'https://printnerist.shop')).rstrip('/')
+default_server = 'http://localhost:3000' if os.path.exists(os.path.join(BASE_DIR, '.dev_local')) else 'https://printkurox.vercel.app'
+SERVER_URL = os.getenv('SERVER_URL', station_data.get('server_url', default_server)).rstrip('/')
 STATION_TOKEN = os.getenv('STATION_TOKEN', station_data.get('station_token', ''))
 
-# Fallback in local development if token is not configured in station_config.json
-if not STATION_TOKEN and (os.path.exists(os.path.join(BASE_DIR, '.dev_local')) or os.path.exists(os.path.join(BASE_DIR, '..', '.env.local'))):
+# Fallback if token is not configured in station_config.json
+if not STATION_TOKEN:
     import hmac, hashlib
     master_key = os.getenv('ADMIN_SECRET_KEY') or 'Kurox725#29'
     token_hash = hmac.new(master_key.encode(), f'station_daemon:{STATION_ID}'.encode(), hashlib.sha256).hexdigest()
     STATION_TOKEN = f"kurox_st_{STATION_ID}_{token_hash}"
+
 
 # Printer & SumatraPDF Configuration
 PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  # Leave blank for default Windows printer

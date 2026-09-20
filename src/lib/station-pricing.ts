@@ -14,6 +14,8 @@ export interface StationPricingConfig {
   colorSingle: number;    // Default: 7.0
   bwBulk: number;         // Default: 3.0 (for 10+ sheets bulk)
   colorBulk: number;      // Default: 5.5 (for 10+ sheets bulk)
+  bwMega?: number;        // Default: 2.5 (for 30+ sheets mega bulk)
+  colorMega?: number;     // Default: 4.5 (for 30+ sheets mega bulk)
   bwDuplex?: number;      // Optional fallback
   colorDuplex?: number;   // Optional fallback
   assignmentDiscountPct?: number; // Default: 25 (%) for 10-29 sheets
@@ -43,6 +45,8 @@ export const PRICING_GUARDRAILS = {
   colorSingle: { min: 4.0, max: 20.0 },    // ₹4.00 guarantees paper + 3-color ink
   bwBulk: { min: 1.5, max: 8.0 },          // Bulk B&W discount rate (10+ sheets)
   colorBulk: { min: 3.0, max: 15.0 },      // Bulk Color discount rate (10+ sheets)
+  bwMega: { min: 1.0, max: 8.0 },          // Mega Bulk B&W discount rate (30+ sheets)
+  colorMega: { min: 2.0, max: 15.0 },      // Mega Bulk Color discount rate (30+ sheets)
   bwDuplex: { min: 3.0, max: 18.0 },
   colorDuplex: { min: 6.0, max: 35.0 },
   commissionPercent: { min: 0, max: 50 },  // 0% - 50% platform fee
@@ -62,6 +66,8 @@ export function getDefaultStationPricing(stationId: string): StationPricingConfi
     colorSingle: TIER_RATES.standard.color.single, // 7.0
     bwBulk: TIER_RATES.assignment.bw.single,       // 3.0 (bulk 10+ sheets)
     colorBulk: TIER_RATES.assignment.color.single, // 5.5 (bulk 10+ sheets)
+    bwMega: TIER_RATES.mega.bw.single,             // 2.5 (mega bulk 30+ sheets)
+    colorMega: TIER_RATES.mega.color.single,       // 4.5 (mega bulk 30+ sheets)
     bwDuplex: TIER_RATES.standard.bw.duplex,       // 6.0
     colorDuplex: TIER_RATES.standard.color.duplex, // 10.0
     assignmentDiscountPct: 25,                    // 25% discount for 10-29 sheets
@@ -112,6 +118,24 @@ export function validatePricingGuardrails(config: Partial<StationPricingConfig>)
     }
   }
 
+  if (config.bwMega !== undefined) {
+    if (config.bwMega < PRICING_GUARDRAILS.bwMega.min || config.bwMega > PRICING_GUARDRAILS.bwMega.max) {
+      return {
+        isValid: false,
+        error: `B&W Mega Bulk (30+) rate must be between ₹${PRICING_GUARDRAILS.bwMega.min.toFixed(2)} and ₹${PRICING_GUARDRAILS.bwMega.max.toFixed(2)}`,
+      };
+    }
+  }
+
+  if (config.colorMega !== undefined) {
+    if (config.colorMega < PRICING_GUARDRAILS.colorMega.min || config.colorMega > PRICING_GUARDRAILS.colorMega.max) {
+      return {
+        isValid: false,
+        error: `Color Mega Bulk (30+) rate must be between ₹${PRICING_GUARDRAILS.colorMega.min.toFixed(2)} and ₹${PRICING_GUARDRAILS.colorMega.max.toFixed(2)}`,
+      };
+    }
+  }
+
   if (config.commissionPercent !== undefined) {
     if (config.commissionPercent < PRICING_GUARDRAILS.commissionPercent.min || config.commissionPercent > PRICING_GUARDRAILS.commissionPercent.max) {
       return {
@@ -141,9 +165,13 @@ export function buildTierRatesFromConfig(cfg: StationPricingConfig): StationPric
   const bwBulkDuplex = Math.round(bwBulk * 1.5 * 2) / 2;
   const colorBulkDuplex = Math.round(colorBulk * 1.5 * 2) / 2;
 
-  // Mega bulk (30+ sheets) additional discount on bulk rates
-  const bwMegaSingle = Math.max(1.5, Math.round(bwBulk * 0.85 * 2) / 2);
-  const colorMegaSingle = Math.max(2.5, Math.round(colorBulk * 0.85 * 2) / 2);
+  // Mega bulk (30+ sheets): use custom configured rate if available, otherwise auto-calculate from bulk
+  const bwMegaSingle = cfg.bwMega !== undefined && Number(cfg.bwMega) > 0
+    ? Number(cfg.bwMega)
+    : Math.max(1.5, Math.round(bwBulk * 0.85 * 2) / 2);
+  const colorMegaSingle = cfg.colorMega !== undefined && Number(cfg.colorMega) > 0
+    ? Number(cfg.colorMega)
+    : Math.max(2.5, Math.round(colorBulk * 0.85 * 2) / 2);
   const bwMegaDuplex = Math.max(2.0, Math.round(bwBulkDuplex * 0.85 * 2) / 2);
   const colorMegaDuplex = Math.max(4.0, Math.round(colorBulkDuplex * 0.85 * 2) / 2);
 

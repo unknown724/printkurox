@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   Printer,
@@ -27,14 +27,12 @@ import {
   Sparkles,
   Building2,
   ShieldCheck,
-  ChevronRight,
   IndianRupee,
-  Settings,
   Save,
 } from 'lucide-react';
 import { BorderBeam } from '@/components/ui/BorderBeam';
 import { PrinterStatusPill } from '@/components/PrinterStatusPill';
-import { STATIONS, StationConfig, getStationConfig } from '@/lib/stations';
+import { StationConfig, getStationConfig } from '@/lib/stations';
 
 interface JobItem {
   id: string;
@@ -56,7 +54,6 @@ interface JobItem {
 
 export default function StationOperatorPortal() {
   const params = useParams();
-  const router = useRouter();
   const rawStationId = (params?.stationId as string) || 'block_b';
   const station: StationConfig = getStationConfig(rawStationId);
 
@@ -88,13 +85,13 @@ export default function StationOperatorPortal() {
   const [pricingColor, setPricingColor] = useState<number>(7.0);
   const [pricingBwBulk, setPricingBwBulk] = useState<number>(3.0);
   const [pricingColorBulk, setPricingColorBulk] = useState<number>(5.5);
+  const [pricingBwMega, setPricingBwMega] = useState<number>(2.5);
+  const [pricingColorMega, setPricingColorMega] = useState<number>(4.5);
   const [razorpayAccountId, setRazorpayAccountId] = useState<string>('');
   const [commissionPercent, setCommissionPercent] = useState<number>(10);
-  const [pricingLoading, setPricingLoading] = useState<boolean>(false);
   const [pricingSaving, setPricingSaving] = useState<boolean>(false);
   const [pricingSuccess, setPricingSuccess] = useState<string | null>(null);
   const [pricingError, setPricingError] = useState<string | null>(null);
-  const [showPricingCard, setShowPricingCard] = useState<boolean>(true);
 
   // Check auth session
   const checkAuth = useCallback(async () => {
@@ -109,7 +106,6 @@ export default function StationOperatorPortal() {
   }, [station.id]);
 
   const fetchPricing = useCallback(async () => {
-    setPricingLoading(true);
     try {
       const res = await fetch(`/api/station-pricing?station_id=${encodeURIComponent(station.id)}`);
       const data = await res.json();
@@ -118,13 +114,13 @@ export default function StationOperatorPortal() {
         setPricingColor(Number(data.config.colorSingle) || 7.0);
         setPricingBwBulk(Number(data.config.bwBulk) || 3.0);
         setPricingColorBulk(Number(data.config.colorBulk) || 5.5);
+        setPricingBwMega(Number(data.config.bwMega) || 2.5);
+        setPricingColorMega(Number(data.config.colorMega) || 4.5);
         setRazorpayAccountId(data.config.razorpayAccountId || '');
         setCommissionPercent(Number(data.config.commissionPercent) ?? 10);
       }
     } catch (err) {
       console.warn('Failed fetching station pricing:', err);
-    } finally {
-      setPricingLoading(false);
     }
   }, [station.id]);
 
@@ -274,6 +270,8 @@ export default function StationOperatorPortal() {
           colorSingle: Number(pricingColor),
           bwBulk: Number(pricingBwBulk),
           colorBulk: Number(pricingColorBulk),
+          bwMega: Number(pricingBwMega),
+          colorMega: Number(pricingColorMega),
           pin: pin || undefined,
         }),
       });
@@ -587,7 +585,7 @@ export default function StationOperatorPortal() {
           )}
 
           <form onSubmit={handleSavePricing} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
               {/* B&W Single */}
               <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
                 <div className="flex items-center justify-between">
@@ -686,6 +684,56 @@ export default function StationOperatorPortal() {
                   />
                 </div>
                 <p className="text-[10px] text-slate-500">Standard: ₹5.50 (Guardrail: ₹3.00–₹15.00)</p>
+              </div>
+
+              {/* B&W Mega Bulk (30+) */}
+              <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    B&amp;W Mega (30+ pgs)
+                  </label>
+                  <span className="text-xs font-mono font-bold text-emerald-400">₹{pricingBwMega.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-bold">₹</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1.0"
+                    max="8.0"
+                    value={pricingBwMega}
+                    onChange={(e) => setPricingBwMega(parseFloat(e.target.value) || 1.0)}
+                    required
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">Standard: ₹2.50 (Guardrail: ₹1.00–₹8.00)</p>
+              </div>
+
+              {/* Color Mega Bulk (30+) */}
+              <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+                    Color Mega (30+ pgs)
+                  </label>
+                  <span className="text-xs font-mono font-bold text-teal-300">₹{pricingColorMega.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-bold">₹</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="2.0"
+                    max="15.0"
+                    value={pricingColorMega}
+                    onChange={(e) => setPricingColorMega(parseFloat(e.target.value) || 2.0)}
+                    required
+                    className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500">Standard: ₹4.50 (Guardrail: ₹2.00–₹15.00)</p>
               </div>
             </div>
 

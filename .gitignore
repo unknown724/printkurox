@@ -45,6 +45,7 @@ daemon/sumatra/
 daemon/temp_prints/
 daemon/printed_archive/
 daemon/.env
+daemon/station_config.json
 daemon/logs/
 walkthrough.md
 

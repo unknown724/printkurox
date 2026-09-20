@@ -910,6 +910,8 @@ export default function AdminKuroxPage() {
                     colorSingle: 7.0,
                     bwBulk: 3.0,
                     colorBulk: 5.5,
+                    bwMega: 2.5,
+                    colorMega: 4.5,
                     commissionPercent: 10,
                     razorpayAccountId: station.razorpayAccountId || '',
                   };
@@ -958,6 +960,8 @@ export default function AdminKuroxPage() {
                                 colorSingle: pricing.colorSingle,
                                 bwBulk: pricing.bwBulk ?? 3.0,
                                 colorBulk: pricing.colorBulk ?? 5.5,
+                                bwMega: pricing.bwMega ?? 2.5,
+                                colorMega: pricing.colorMega ?? 4.5,
                                 razorpayAccountId: pricing.razorpayAccountId || '',
                                 commissionPercent: pricing.commissionPercent ?? 10,
                               });
@@ -972,7 +976,7 @@ export default function AdminKuroxPage() {
                       {!isEditing ? (
                         /* Readonly Overview */
                         <div className="space-y-2.5">
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center">
                             <div className="p-2 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-800">
                               <span className="text-[9px] text-zinc-400 uppercase font-bold block">B&W Single</span>
                               <span className="text-xs font-mono font-bold text-zinc-900 dark:text-white">
@@ -995,6 +999,18 @@ export default function AdminKuroxPage() {
                               <span className="text-[9px] text-zinc-400 uppercase font-bold block">Color Bulk (10+)</span>
                               <span className="text-xs font-mono font-bold text-purple-600 dark:text-purple-400">
                                 ₹{(pricing.colorBulk ?? 5.5).toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-800">
+                              <span className="text-[9px] text-zinc-400 uppercase font-bold block">B&W Mega (30+)</span>
+                              <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                ₹{(pricing.bwMega ?? 2.5).toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-800">
+                              <span className="text-[9px] text-zinc-400 uppercase font-bold block">Color Mega (30+)</span>
+                              <span className="text-xs font-mono font-bold text-teal-600 dark:text-teal-400">
+                                ₹{(pricing.colorMega ?? 4.5).toFixed(2)}
                               </span>
                             </div>
                           </div>
@@ -1021,7 +1037,7 @@ export default function AdminKuroxPage() {
                           }}
                           className="space-y-3 pt-1"
                         >
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                             <div>
                               <label className="text-[10px] font-bold text-zinc-500 block">B&W Single (₹)</label>
                               <input
@@ -1080,6 +1096,38 @@ export default function AdminKuroxPage() {
                                 value={editForm.colorBulk ?? 5.5}
                                 onChange={(e) =>
                                   setEditForm((prev) => ({ ...prev, colorBulk: parseFloat(e.target.value) || 3.0 }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
+                                required
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">B&W Mega 30+ (₹)</label>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min={PRICING_GUARDRAILS.bwMega.min}
+                                max={PRICING_GUARDRAILS.bwMega.max}
+                                value={editForm.bwMega ?? 2.5}
+                                onChange={(e) =>
+                                  setEditForm((prev) => ({ ...prev, bwMega: parseFloat(e.target.value) || 1.0 }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
+                                required
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-500 block">Color Mega 30+ (₹)</label>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min={PRICING_GUARDRAILS.colorMega.min}
+                                max={PRICING_GUARDRAILS.colorMega.max}
+                                value={editForm.colorMega ?? 4.5}
+                                onChange={(e) =>
+                                  setEditForm((prev) => ({ ...prev, colorMega: parseFloat(e.target.value) || 2.0 }))
                                 }
                                 className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-zinc-700 text-xs font-mono font-bold text-zinc-900 dark:text-white"
                                 required

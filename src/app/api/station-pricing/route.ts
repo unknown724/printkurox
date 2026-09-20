@@ -109,6 +109,8 @@ export async function POST(req: NextRequest) {
       colorSingle,
       bwBulk,
       colorBulk,
+      bwMega,
+      colorMega,
       bwDuplex,
       colorDuplex,
       assignmentDiscountPct,
@@ -168,6 +170,8 @@ export async function POST(req: NextRequest) {
     if (colorSingle !== undefined) updates.colorSingle = Number(colorSingle);
     if (bwBulk !== undefined) updates.bwBulk = Number(bwBulk);
     if (colorBulk !== undefined) updates.colorBulk = Number(colorBulk);
+    if (bwMega !== undefined) updates.bwMega = Number(bwMega);
+    if (colorMega !== undefined) updates.colorMega = Number(colorMega);
     if (bwDuplex !== undefined) updates.bwDuplex = Number(bwDuplex);
     if (colorDuplex !== undefined) updates.colorDuplex = Number(colorDuplex);
     if (assignmentDiscountPct !== undefined) updates.assignmentDiscountPct = Number(assignmentDiscountPct);
