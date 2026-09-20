@@ -16,11 +16,12 @@ export async function convertDocxToPdfClient(
     return null;
   }
 
-  // Off-screen rendering container (visible to html2canvas behind main viewport)
+  // Off-screen rendering container completely outside viewport so it never bleeds onto user screen
   const container = document.createElement('div');
+  container.setAttribute('data-docx-render-container', 'true');
   container.setAttribute('aria-hidden', 'true');
   container.style.position = 'fixed';
-  container.style.left = '0';
+  container.style.left = '-10000px';
   container.style.top = '0';
   container.style.width = '794px';
   container.style.minHeight = '1123px';
@@ -124,6 +125,14 @@ export async function convertDocxToPdfClient(
         scrollX: 0,
         scrollY: 0,
         windowWidth: 820,
+        onclone: (clonedDoc: Document) => {
+          const clonedContainer = clonedDoc.querySelector('[data-docx-render-container]');
+          if (clonedContainer) {
+            (clonedContainer as HTMLElement).style.position = 'absolute';
+            (clonedContainer as HTMLElement).style.left = '0';
+            (clonedContainer as HTMLElement).style.top = '0';
+          }
+        },
       });
 
       const a4Ratio = A4_HEIGHT / A4_WIDTH;

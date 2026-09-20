@@ -14,6 +14,7 @@ import {
   Sparkles,
   ArrowRight,
   Camera,
+  ShieldCheck,
 } from 'lucide-react';
 import { convertDocxToPdfClient } from '@/lib/client-docx-converter';
 
@@ -497,21 +498,23 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
   // Status message for upload modal/bars
   const statusHeadline =
     uploadPhase === 'converting-docx'
-      ? `Converting Word DOCX to A4 PDF… ${docxProgress ? `(Page ${docxProgress.current}/${docxProgress.total})` : ''}`
+      ? `Processing Document… ${docxProgress && docxProgress.total > 1 ? `(Page ${docxProgress.current} of ${docxProgress.total})` : ''}`
       : uploadPhase === 'optimizing'
-      ? 'Optimizing Photos for A4 Print…'
+      ? 'Optimizing for Print…'
       : uploadPhase === 'processing'
       ? 'Preparing Print Documents…'
-      : `Uploading Files… ${uploadProgress}%`;
+      : uploadProgress > 0 && uploadProgress < 100
+      ? `Uploading Files… ${uploadProgress}%`
+      : 'Uploading Files…';
 
   const statusSubtext =
     uploadPhase === 'converting-docx'
-      ? 'Client-side vector conversion via docx-preview & pdf-lib'
+      ? 'Formatting typography, margins and high-resolution layout'
       : uploadPhase === 'optimizing'
-      ? 'Rendering typography, logos & scaling to 300 DPI print quality'
+      ? 'Enhancing resolution and color balance for standard A4'
       : uploadPhase === 'processing'
-      ? 'Merging documents and preparing print layout'
-      : 'Direct TLS edge upload in progress';
+      ? 'Organizing pages and preparing document preview'
+      : 'Securely uploading your files for printing';
 
   // If one or more files are uploaded
   if (uploadedBatch && uploadedBatch.fileItems && uploadedBatch.fileItems.length > 0) {
@@ -587,7 +590,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
                   aria-label="Add More Files"
                 />
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add Documents</span>
+                <span>Add Files</span>
               </label>
 
               <button
@@ -737,10 +740,10 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
               </p>
             </div>
 
-            {/* Structured Telemetry Progress Bar */}
+            {/* Structured Progress Bar */}
             <div className="w-full space-y-1.5 pt-1">
               <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-zinc-500 dark:text-zinc-400">Processing stream</span>
+                <span className="text-zinc-500 dark:text-zinc-400">Upload progress</span>
                 <span className="font-semibold text-zinc-900 dark:text-white">{uploadProgress}%</span>
               </div>
               <div className="w-full bg-zinc-200 dark:bg-white/[0.08] rounded-full h-1.5 overflow-hidden">
@@ -754,50 +757,32 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         ) : (
           <>
             {/* Icon Container - Stealth Frosted Glass */}
-            <div className="w-13 h-13 rounded-2xl bg-zinc-100 dark:bg-white/[0.06] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-800 dark:text-zinc-200 mb-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_12px_rgba(0,0,0,0.25)] group-hover:scale-105 group-hover:border-zinc-400 dark:group-hover:border-white/25 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-white/[0.06] border border-zinc-200 dark:border-white/10 flex items-center justify-center text-zinc-800 dark:text-zinc-200 mb-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_12px_rgba(0,0,0,0.25)] group-hover:scale-105 group-hover:border-zinc-400 dark:group-hover:border-white/25 transition-all">
               <UploadCloud className="w-6 h-6 text-zinc-700 dark:text-zinc-200 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors" />
             </div>
 
-            {/* Dual Action Buttons: Browse Documents & Instant Camera Scan */}
-            <div className="flex flex-wrap items-center justify-center gap-2.5 relative z-20">
+            {/* Single Professional Action Button */}
+            <div className="relative z-20">
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   fileInputRef.current?.click();
                 }}
-                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 text-xs sm:text-sm font-bold shadow-md shadow-black/15 dark:shadow-white/10 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                className="px-6 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 text-xs sm:text-sm font-semibold shadow-md shadow-black/15 dark:shadow-white/10 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
               >
-                <FileText className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
-                <span>Select PDF or Word (.docx)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  cameraInputRef.current?.click();
-                }}
-                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-bold shadow-md shadow-emerald-900/20 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-              >
-                <Camera className="w-4 h-4 text-emerald-200" />
-                <span>Scan with Camera</span>
+                <UploadCloud className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+                <span>Upload Files</span>
               </button>
             </div>
 
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-2.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 font-normal">
               or drag &amp; drop files anywhere here
             </p>
 
-            <div className="inline-flex items-center justify-center flex-wrap gap-2 mt-2.5 px-3.5 py-1.5 rounded-full bg-white/80 dark:bg-white/[0.05] border border-zinc-200/80 dark:border-white/10 text-[11px] text-zinc-600 dark:text-zinc-400 shadow-2xs max-w-full">
-              <span className="text-zinc-900 dark:text-white font-bold whitespace-nowrap">
-                PDF &amp; Word (.docx)
-              </span>
-              <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
-              <span className="font-medium whitespace-nowrap">Camera / Photos</span>
-              <span className="text-zinc-300 dark:text-zinc-600 select-none">•</span>
-              <span className="font-medium whitespace-nowrap">Up to 10 files</span>
-            </div>
+            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1 font-normal">
+              Supports PDF, Word (.docx), or photos · Up to 10 files
+            </p>
           </>
         )}
       </div>
@@ -808,13 +793,9 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           <span>Automatic A4 sizing</span>
         </span>
         <span className="text-zinc-300 dark:text-zinc-700 select-none">•</span>
-        <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-          <Sparkles className="w-3 h-3 text-emerald-500" />
-          <span>Word (.docx) converted client-side with 100% vector accuracy</span>
-        </span>
-        <span className="text-zinc-300 dark:text-zinc-700 select-none hidden sm:inline">•</span>
-        <span className="w-full sm:w-auto text-center text-[10px] text-zinc-500 dark:text-zinc-400 mt-1 sm:mt-0">
-          🔒 Zero-Trust Encrypted · 100% Private · Automatically purged after printing
+        <span className="inline-flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+          <span>Encrypted &amp; private · Files deleted after printing</span>
         </span>
       </div>
 

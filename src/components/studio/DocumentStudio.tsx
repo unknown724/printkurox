@@ -137,10 +137,10 @@ export function DocumentStudio({
           <div className="flex items-center justify-between gap-3 px-0.5 pt-1">
             <div className="min-w-0">
               <h2 className="text-base sm:text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                Upload PDF or Photos
+                Upload Files
               </h2>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
-                PDF &amp; Images · Automatic A4 layout
+                Select documents or photos to print
               </p>
             </div>
 
