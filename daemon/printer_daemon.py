@@ -154,10 +154,14 @@ _hb_session.headers.update({
     "User-Agent": f"PrintNERISTDaemon/2.0 ({STATION_ID})"
 })
 
+CF_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID', '')
+CF_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN', '')
+CF_D1_DB_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID', '')
+
 _wake_event = threading.Event()
 
 def update_job_status(job_id, status, pages_printed=None, sheets_used=None):
-    """Updates job status and supplies depletion via server proxy."""
+    """Updates job status and supplies depletion via server proxy with direct D1 fallback."""
     url = f"{SERVER_URL}/api/daemon/status"
     body = {
         "jobId": job_id,
@@ -169,14 +173,31 @@ def update_job_status(job_id, status, pages_printed=None, sheets_used=None):
         resp = _job_session.post(url, json=body, timeout=(3.0, 10.0))
         if resp.status_code == 200:
             log(f"Job {job_id[:8]} status updated -> {status}", "SUCCESS")
+            return
         else:
-            log(f"Failed to update status for {job_id[:8]} (HTTP {resp.status_code}): {resp.text}", "WARN")
+            log(f"Server status update notice for {job_id[:8]} (HTTP {resp.status_code}): {resp.text}", "WARN")
     except Exception as e:
-        log(f"Notice: Status update network glitch for {job_id[:8]}: {e}", "WARN")
+        log(f"Server status update network glitch for {job_id[:8]}: {e}", "WARN")
+
+    # Direct D1 status update fallback
+    try:
+        if CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID:
+            d1_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/d1/database/{CF_D1_DB_ID}/query"
+            safe_status = 'PRINTING_ODD' if status == 'PRINTING' else status
+            requests.post(
+                d1_url,
+                headers={"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"},
+                json={"sql": "UPDATE print_jobs SET status = ? WHERE id = ?", "params": [safe_status, job_id]},
+                timeout=5.0
+            )
+            log(f"Job {job_id[:8]} status updated via direct D1 fallback -> {safe_status}", "SUCCESS")
+    except Exception as d1_err:
+        log(f"Direct D1 status update fallback notice for {job_id[:8]}: {d1_err}", "WARN")
 
 def claim_paid_job(job_id):
     """
-    Atomically claims a PAID job via Compare-And-Swap (CAS) on server proxy.
+    Atomically claims a PAID job via Compare-And-Swap (CAS) on server proxy,
+    with an immediate direct Cloudflare D1 CAS fallback if server throws 500 or is unavailable.
     Returns True if claimed, False if already claimed.
     """
     url = f"{SERVER_URL}/api/daemon/claim"
@@ -188,10 +209,33 @@ def claim_paid_job(job_id):
             if data.get("claimed"):
                 log(f"Atomically claimed job {job_id[:8]} -> {data.get('status', 'PRINTING')}", "SUCCESS")
                 return True
-        return False
+            return False
     except Exception as e:
-        log(f"Failed to claim job {job_id[:8]}: {e}", "WARN")
-        return False
+        log(f"Server claim notice for {job_id[:8]}: {e}", "WARN")
+
+    # Direct D1 CAS fallback (ensures prints NEVER get stuck if server API throws 500 or is redeploying)
+    try:
+        if CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID:
+            d1_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/d1/database/{CF_D1_DB_ID}/query"
+            sql = "UPDATE print_jobs SET status = 'PRINTING_ODD' WHERE id = ? AND status = 'PAID'"
+            r = requests.post(
+                d1_url,
+                headers={"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"},
+                json={"sql": sql, "params": [job_id]},
+                timeout=5.0
+            )
+            if r.status_code == 200:
+                res_data = r.json()
+                results = res_data.get("result", [])
+                if results:
+                    changes = results[0].get("meta", {}).get("changes", 0)
+                    if res_data.get("success") and changes > 0:
+                        log(f"Direct D1 CAS claimed job {job_id[:8]} -> PRINTING_ODD", "SUCCESS")
+                        return True
+    except Exception as d1_err:
+        log(f"Direct D1 claim fallback notice: {d1_err}", "WARN")
+
+    return False
 
 def download_cloud_file(job_id, dest_path):
     """

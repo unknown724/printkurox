@@ -587,6 +587,8 @@ async function sendDedicatedPaymentCard({ sock, senderJid, senderName, session }
     } catch (rzpErr) {
       console.error('[WA-Bot] Razorpay link creation error:', rzpErr);
     }
+  }
+
   // Ensure background R2 upload has fully settled before creating order
   if (session.uploadPromise) {
     try {

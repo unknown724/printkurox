@@ -24,6 +24,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
     }
 
+    // D1 schema status check constraint does not contain 'PRINTING', only 'PRINTING_ODD'
+    const safeStatus = status === 'PRINTING' ? 'PRINTING_ODD' : status;
+
     const station = auth.station;
     const isMain = station.id === 'block_b' || station.id === 'main';
 
@@ -41,7 +44,7 @@ export async function POST(req: NextRequest) {
     const job = rows[0];
 
     // Update job status in D1
-    await executeD1(`UPDATE print_jobs SET status = ? WHERE id = ?`, [status, jobId]);
+    await executeD1(`UPDATE print_jobs SET status = ? WHERE id = ?`, [safeStatus, jobId]);
 
     // If completed and this is primary station, deplete supplies
     if (status === 'COMPLETED' && isMain) {

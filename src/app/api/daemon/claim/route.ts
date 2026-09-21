@@ -42,10 +42,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Atomic CAS update: Only use PRINTING_ODD for multi-page manual duplex jobs!
-    // For single-sided or 1-page jobs, set status to 'PRINTING'
-    const isDuplex = (Number(job.is_duplex) === 1) && ((job.total_pages || 1) > 1);
-    const targetStatus = isDuplex ? 'PRINTING_ODD' : 'PRINTING';
+    // D1 schema enforces CHECK constraint:
+    // status IN ('PENDING_PAYMENT', 'PAID', 'PRINTING_ODD', 'AWAITING_FLIP', 'PRINTING_EVEN', 'COMPLETED', 'FAILED')
+    // Initial active print status in D1 is 'PRINTING_ODD'. (UI renders 'PRINTING' when is_duplex = 0)
+    const targetStatus = 'PRINTING_ODD';
 
     const updateSuccess = await executeD1(
       `UPDATE print_jobs SET status = ? WHERE id = ? AND status = 'PAID'`,
