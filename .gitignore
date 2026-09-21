@@ -69,4 +69,6 @@ scratch/
 daemon/whatsapp_bot/session_auth/
 daemon/whatsapp_bot/node_modules/
 daemon/whatsapp_bot/.env
+daemon/whatsapp_bot/logs/
+
 
