@@ -69,7 +69,8 @@ export async function GET(req: Request) {
 
         const lastSeenDate = new Date(row.updated_at.replace(' ', 'T') + 'Z');
         const ageSeconds = Math.max(0, (now - lastSeenDate.getTime()) / 1000);
-        const online = ageSeconds <= 20;
+        // Robust 45s threshold prevents false "Offline" flickering during campus Wi-Fi jitter
+        const online = ageSeconds <= 45;
 
         return {
           stationId: station.id,
@@ -149,7 +150,7 @@ export async function GET(req: Request) {
     const lastSeen: string = rows[0].updated_at;
     const lastSeenDate = new Date(lastSeen.replace(' ', 'T') + 'Z');
     const ageSeconds = (Date.now() - lastSeenDate.getTime()) / 1000;
-    const daemonAlive = ageSeconds <= 20;
+    const daemonAlive = ageSeconds <= 45;
     const online = daemonAlive && hardwareOnline;
 
     return NextResponse.json(
