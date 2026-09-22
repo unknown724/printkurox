@@ -35,9 +35,18 @@ export async function POST(req: NextRequest) {
 
     const event = JSON.parse(rawBody);
 
-    if (event.event === 'payment.captured' || event.event === 'order.paid') {
-      const orderId = event.payload?.payment?.entity?.order_id || event.payload?.order?.entity?.id;
-      const paymentId = event.payload?.payment?.entity?.id;
+    if (
+      event.event === 'payment.captured' ||
+      event.event === 'order.paid' ||
+      event.event === 'payment_link.paid'
+    ) {
+      const orderId =
+        event.payload?.payment_link?.entity?.id ||
+        event.payload?.payment?.entity?.order_id ||
+        event.payload?.order?.entity?.id;
+      const paymentId =
+        event.payload?.payment?.entity?.id ||
+        event.payload?.payment_link?.entity?.payments?.[0]?.payment_id;
 
       if (orderId) {
         await executeD1(

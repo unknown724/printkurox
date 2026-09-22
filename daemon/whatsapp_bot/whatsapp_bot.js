@@ -53,9 +53,9 @@ const BOT_NAME = process.env.BOT_NAME || 'PrintKurox AutoPrint';
 
 // Campus Stations Registry
 const AVAILABLE_STATIONS = [
-  { id: 'block_b', name: 'Hostel Block B (Pare)', room: 'Room 29, 1st Floor', contact: '9362980761' },
-  { id: 'block_c', name: 'Hostel Block C (Dibang)', room: 'Ground Floor', contact: '9362980761' },
-  { id: 'romen_xerox', name: 'Romen Xerox', room: 'Main Gate / Off-Campus', contact: '9362980761' },
+  { id: 'block_b', name: 'Hostel Block B (Pare)', room: 'Room 29, 1st Floor', contact: '9362980761', allowCounterPayment: false },
+  { id: 'block_c', name: 'Hostel Block C (Dibang)', room: 'Ground Floor', contact: '9362980761', allowCounterPayment: false },
+  { id: 'romen_xerox', name: 'Romen Xerox', room: 'Main Gate / Off-Campus', contact: '9362980761', allowCounterPayment: true },
 ];
 
 // Default station auto-detected from station_config.json or environment
@@ -64,6 +64,7 @@ let defaultStation = {
   name: process.env.STATION_NAME || 'Hostel Block B (Pare)',
   room: process.env.STATION_ROOM || 'Room 29, 1st Floor',
   contact: process.env.STATION_CONTACT || '9362980761',
+  allowCounterPayment: false,
 };
 
 try {
@@ -74,6 +75,9 @@ try {
     if (rawCfg.station_name) defaultStation.name = rawCfg.station_name;
     if (rawCfg.room_info) defaultStation.room = rawCfg.room_info;
     if (rawCfg.contact) defaultStation.contact = rawCfg.contact;
+    if (rawCfg.allow_counter_payment !== undefined) {
+      defaultStation.allowCounterPayment = Boolean(rawCfg.allow_counter_payment);
+    }
   }
 } catch (cfgErr) {
   console.warn('[WA-Bot] station_config.json read notice:', cfgErr.message);
@@ -500,7 +504,15 @@ async function sendStep3CopiesButtons(sock, senderJid, session) {
  * Dispatch Step 4: Document Summary Card (Dedicated Step)
  * Natural orientation is automatically applied from the file's geometry
  */
-async function sendDocumentSummaryCard(sock, senderJid, session) {
+/**
+ * Dispatch Unified Order Summary & 1-Tap UPI Payment Card
+ * - Merges Step 4 summary with Step 5 instant payment
+ * - Auto-generates Razorpay UPI link (upi_link: true)
+ * - Inserts pending job in Cloudflare D1
+ * - Primary button is 1-Tap UPI payment; raw link included in body for 100% device compatibility
+ * - Starts active background polling (3s interval, 10 min window)
+ */
+async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName = 'Student', session }) {
   const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
   const currentStation = session.station || defaultStation;
   const ratePerPage = session.colorMode === 'color' ? 7 : 4;
@@ -512,50 +524,20 @@ async function sendDocumentSummaryCard(sock, senderJid, session) {
   const isLandscape = session.isLandscapeDefault;
   session.orientation = isLandscape ? 'landscape' : 'portrait';
   const orientLabel = isLandscape ? 'Landscape (Wide)' : 'Portrait (Vertical)';
-  const printTypeLabel = session.colorMode === 'color' ? 'Color' : 'Black & White';
+  const printTypeLabel = session.colorMode === 'color' ? '🎨 Color' : '⚫ Black & White';
 
-  const summaryBody =
-    `📄 *Document:* ${session.fileName}\n` +
-    `🖨️ *Print Mode:* ${printTypeLabel} (₹${ratePerPage}/p)\n` +
-    `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
-    `🔢 *Copies:* ${session.copies || 1} ${session.copies === 1 ? 'copy' : 'copies'}\n` +
-    `📐 *Orientation:* ${orientLabel} (Natural)\n` +
-    `📍 *Pickup Station:* ${currentStation.name} (${currentStation.room})\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `💳 *Total Payable:* *₹${totalAmount}*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `Verify your settings to proceed:`;
-
-  session.stage = 'AWAITING_SUMMARY_CONFIRMATION';
-
-  await sendInteractiveButtons({
-    sock,
-    jid: senderJid,
-    title: '*PrintKurox* · Order Summary',
-    body: summaryBody,
-    footer: 'PrintKurox AutoPrint',
-    buttons: SUMMARY_CONFIRM_BUTTONS,
-  });
-}
-
-/**
- * Dispatch Step 5: Dedicated Payment Card (Online UPI vs Cash at Counter)
- */
-async function sendDedicatedPaymentCard({ sock, senderJid, senderName, session }) {
-  const currentStation = session.station || defaultStation;
-  const totalAmount = session.totalPrice;
-  const pickupCode = generateRandomPickupCode();
-  const jobId = crypto.randomUUID();
+  const pickupCode = session.pickupCode || generateRandomPickupCode();
+  const jobId = session.jobId || crypto.randomUUID();
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-  let paymentLinkUrl = '';
-  let paymentLinkId = '';
+  let paymentLinkUrl = session.paymentLinkUrl || '';
+  let paymentLinkId = session.paymentLinkId || '';
 
   // Auto-resolve phone number for Razorpay to skip phone input screen
   const prefillPhone = await resolveUserPhone(sock, senderJid);
 
-  if (razorpay) {
+  if (razorpay && !paymentLinkUrl) {
     try {
       const rzpLink = await razorpay.paymentLink.create({
         amount: totalAmount * 100,
@@ -632,6 +614,7 @@ async function sendDedicatedPaymentCard({ sock, senderJid, senderName, session }
   session.jobId = jobId;
   session.pickupCode = pickupCode;
   session.paymentLinkId = paymentLinkId;
+  session.paymentLinkUrl = paymentLinkUrl;
 
   if (paymentLinkId) {
     monitorPaymentLink({
@@ -644,39 +627,67 @@ async function sendDedicatedPaymentCard({ sock, senderJid, senderName, session }
     });
   }
 
-  const paymentCardBody =
-    `📄 *Order:* ${session.fileName}\n` +
-    `💰 *Total Amount:* *₹${totalAmount}*\n` +
+  const summaryBody =
+    `📄 *Document:* ${session.fileName}\n` +
+    `🖨️ *Print Mode:* ${printTypeLabel} (₹${ratePerPage}/p)\n` +
+    `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
+    `🔢 *Copies:* ${session.copies || 1} ${session.copies === 1 ? 'copy' : 'copies'}\n` +
+    `📐 *Orientation:* ${orientLabel} (Natural)\n` +
     `📍 *Release Station:* ${currentStation.name} (${currentStation.room})\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `Choose your payment option:`;
+    `💰 *Total Amount:* *₹${totalAmount}*\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `👉 *Tap below to pay via UPI (GPay / PhonePe / Paytm).*\n` +
+    `🖨️ Your document will print automatically once paid!\n\n` +
+    (paymentLinkUrl ? `🔗 *Direct UPI Payment Link:*\n${paymentLinkUrl}\n\n` : '') +
+    `_Code: ${pickupCode} · Valid for 30 minutes._`;
 
-  const paymentButtons = [];
+  const actionButtons = [];
   if (paymentLinkUrl) {
-    paymentButtons.push({
-      text: `💳 Pay ₹${totalAmount} Online (UPI)`,
+    actionButtons.push({
+      text: `💳 Pay ₹${totalAmount} (1-Tap UPI)`,
       url: paymentLinkUrl,
     });
   }
-  paymentButtons.push({
-    id: 'btn_pay_cash',
-    text: '💵 Pay Cash at Counter',
+  // Only offer counter cash payment if explicitly allowed for this station (e.g. Romen Xerox)
+  if (currentStation.allowCounterPayment) {
+    actionButtons.push({
+      id: 'btn_pay_cash',
+      text: '💵 Pay Cash at Counter',
+    });
+  }
+  actionButtons.push({
+    id: 'btn_view_preview',
+    text: '👁️ Preview Document',
+  });
+  actionButtons.push({
+    id: 'btn_reset',
+    text: '🔄 Reset / Change Settings',
   });
 
   await sendInteractiveButtons({
     sock,
     jid: senderJid,
-    title: '*PrintKurox* · Payment Method',
-    body: paymentCardBody,
+    title: '*PrintKurox* · Order Summary & Payment',
+    body: summaryBody,
     footer: 'PrintKurox AutoPrint',
-    buttons: paymentButtons,
+    buttons: actionButtons,
   });
 
-  console.log(`[WA-Bot] Sent Step 5 Dedicated Payment Card to ${senderName} (Total: ₹${totalAmount})`);
+  console.log(`[WA-Bot] Sent Order Summary & 1-Tap Payment Card to ${senderName || 'Student'} (Total: ₹${totalAmount})`);
+}
+
+// Backward-compatible wrappers
+async function sendDocumentSummaryCard(sock, senderJid, session, senderName = 'Student') {
+  return sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+}
+
+async function sendDedicatedPaymentCard({ sock, senderJid, senderName = 'Student', session }) {
+  return sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
 }
 
 /**
- * Monitor a pending Razorpay Payment Link every 3 seconds for 5 minutes
+ * Monitor a pending Razorpay Payment Link every 3 seconds for 10 minutes
  */
 function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode, fileName }) {
   if (!razorpay || !paymentLinkId) return;
@@ -687,7 +698,7 @@ function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode,
   }
 
   const startTime = Date.now();
-  const maxDurationMs = 5 * 60 * 1000;
+  const maxDurationMs = 10 * 60 * 1000;
 
   const interval = setInterval(async () => {
     try {
@@ -757,6 +768,22 @@ async function handleCashOrder({ sock, senderJid, session }) {
     return;
   }
 
+  const currentStation = session.station || defaultStation;
+
+  // Enforce station policy: autonomous hostel kiosks do NOT allow counter cash
+  if (!currentStation.allowCounterPayment) {
+    const payLinkText = session.paymentLinkUrl ? `\n\n🔗 *Direct UPI Payment Link:*\n${session.paymentLinkUrl}` : '';
+    await sock.sendMessage(senderJid, {
+      text:
+        `*PrintKurox AutoPrint*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `ℹ️ *Counter cash payment is not available at ${currentStation.name}*.\n\n` +
+        `This is a 24/7 autonomous self-service kiosk with no cashier desk.\n` +
+        `Please pay *₹${session.totalPrice || 0}* via the 1-Tap UPI button above to trigger instant automated printing!${payLinkText}`,
+    });
+    return;
+  }
+
   if (session.uploadPromise) {
     try {
       await session.uploadPromise;
@@ -765,7 +792,6 @@ async function handleCashOrder({ sock, senderJid, session }) {
     }
   }
 
-  const currentStation = session.station || defaultStation;
   session.stage = 'COMPLETED';
 
   fetch('http://127.0.0.1:7250/poll-now', { signal: AbortSignal.timeout(300) }).catch(() => {});
@@ -1305,12 +1331,12 @@ async function startBot() {
             session.orientation = session.isLandscapeDefault ? 'landscape' : 'portrait';
             session.timestamp = Date.now();
 
-            console.log(`[WA-Bot] ${senderName} selected ${copies} ${copies === 1 ? 'Copy' : 'Copies'}, advancing to Step 4 Summary`);
-            await sendDocumentSummaryCard(sock, senderJid, session);
+            console.log(`[WA-Bot] ${senderName} selected ${copies} ${copies === 1 ? 'Copy' : 'Copies'}, advancing to Summary & 1-Tap UPI`);
+            await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
             return;
           }
 
-          // --- STEP 4 BUTTON: VIEW PREVIEW ---
+          // --- BUTTON: VIEW PREVIEW ---
           if (buttonId === 'btn_view_preview') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
@@ -1330,7 +1356,7 @@ async function startBot() {
                   `🖨️ *Print Mode:* ${colorLabel}\n` +
                   `📑 *Pages:* ${session.pageRangeStr || 'All'}\n` +
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `_Tap "Proceed to Payment" above to print!_`,
+                  `_Tap "Pay via UPI" above to print!_`,
               });
             } else {
               const previewUrl = `${PUBLIC_KIOSK_URL}/preview?key=${encodeURIComponent(session.fileKey)}&name=${encodeURIComponent(session.fileName)}&pages=${session.totalPages}&mode=${session.colorMode}`;
@@ -1345,20 +1371,20 @@ async function startBot() {
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                   `🔍 *Tap below to view full 2-column preview:*\n` +
                   `${previewUrl}\n\n` +
-                  `_Tap "Proceed to Payment" above to print!_`,
+                  `_Tap "Pay via UPI" above to print!_`,
               });
             }
             return;
           }
 
-          // --- STEP 4 BUTTON: PROCEED TO PAYMENT ---
+          // --- BUTTON: PROCEED TO PAYMENT (COMPATIBILITY) ---
           if (buttonId === 'btn_proceed_payment') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
               return;
             }
-            console.log(`[WA-Bot] ${senderName} confirmed summary, sending Step 5 Payment Options`);
-            await sendDedicatedPaymentCard({ sock, senderJid, senderName, session });
+            console.log(`[WA-Bot] ${senderName} tapped proceed to payment, re-dispatching 1-Tap UPI Card`);
+            await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
             return;
           }
 
@@ -1368,11 +1394,19 @@ async function startBot() {
               await sendSessionExpiredMessage(sock, senderJid);
               return;
             }
+            if (session.jobId && activePollers.has(session.jobId)) {
+              clearInterval(activePollers.get(session.jobId));
+              activePollers.delete(session.jobId);
+            }
             session.stage = 'AWAITING_COLOR_MODE';
             session.colorMode = null;
             session.copies = 1;
             session.selectedPages = null;
             session.pageRangeStr = 'All';
+            session.paymentLinkUrl = null;
+            session.paymentLinkId = null;
+            session.jobId = null;
+            session.pickupCode = null;
             session.timestamp = Date.now();
 
             console.log(`[WA-Bot] ${senderName} tapped RESET / CHANGE. Re-dispatching Step 1.`);
@@ -1597,13 +1631,13 @@ async function startBot() {
             session.orientation = session.isLandscapeDefault ? 'landscape' : 'portrait';
             session.timestamp = Date.now();
 
-            console.log(`[WA-Bot] ${senderName} selected ${copies} copies, advancing to Summary`);
-            await sendDocumentSummaryCard(sock, senderJid, session);
+            console.log(`[WA-Bot] ${senderName} selected ${copies} copies, advancing to Summary & 1-Tap UPI`);
+            await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
             return;
           }
 
-          // --- TYPED FALLBACK: STEP 4 (SUMMARY & PREVIEW) ---
-          if (session && session.stage === 'AWAITING_SUMMARY_CONFIRMATION') {
+          // --- TYPED FALLBACK: SUMMARY, PREVIEW & PAYMENT ---
+          if (session && (session.stage === 'AWAITING_SUMMARY_CONFIRMATION' || session.stage === 'AWAITING_PAYMENT')) {
             if (clean.includes('preview') || clean.includes('view') || clean.includes('show')) {
               const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
               const orientLabel = session.orientation === 'landscape' ? 'Landscape (Wide)' : 'Portrait (Vertical)';
@@ -1619,7 +1653,7 @@ async function startBot() {
                     `🖨️ *Print Mode:* ${colorLabel}\n` +
                     `📑 *Pages:* ${session.pageRangeStr || 'All'}\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `_Tap "Proceed to Payment" to print!_`,
+                    `_Tap "Pay via UPI" above to print!_`,
                 });
               } else {
                 const previewUrl = `${PUBLIC_KIOSK_URL}/preview?key=${encodeURIComponent(session.fileKey)}&name=${encodeURIComponent(session.fileName)}&pages=${session.totalPages}&mode=${session.colorMode}`;
@@ -1634,14 +1668,26 @@ async function startBot() {
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                     `🔍 *Tap below to view full 2-column preview:*\n` +
                     `${previewUrl}\n\n` +
-                    `_Tap "Proceed to Payment" to print!_`,
+                    `_Tap "Pay via UPI" above to print!_`,
                 });
               }
               return;
             }
 
-            if (clean === 'proceed' || clean === 'pay' || clean === 'ok' || clean === 'yes') {
-              await sendDedicatedPaymentCard({ sock, senderJid, senderName, session });
+            if (clean === 'proceed' || clean === 'pay' || clean === 'ok' || clean === 'yes' || clean === 'link' || clean === 'upi') {
+              if (session.paymentLinkUrl) {
+                await sock.sendMessage(senderJid, {
+                  text:
+                    `*PrintKurox AutoPrint*\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `📄 *Document:* ${session.fileName}\n` +
+                    `💰 *Amount Due:* *₹${session.totalPrice || 0}*\n\n` +
+                    `🔗 *Direct 1-Tap UPI Link:*\n${session.paymentLinkUrl}\n\n` +
+                    `_Tap the link above to complete your UPI payment. Your document will print automatically._`,
+                });
+                return;
+              }
+              await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
               return;
             }
           }
