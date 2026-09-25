@@ -505,7 +505,16 @@ export async function mergeFilesToPdf(
   } 
   // Case 2: 2 Pages Per Sheet (2-Up / Booklet Folded Spread / 2-in-1 Full Sheet)
   else if (layoutMode === '2-up' || layoutMode === 'booklet') {
-    const isLandscapeSheet = layoutMode === 'booklet' ? true : autoRotate ? orientation === 'portrait' : orientation === 'landscape';
+    const isLandscapeSheet =
+      layoutMode === 'booklet'
+        ? true
+        : orientation === 'landscape'
+        ? true
+        : orientation === 'portrait'
+        ? false
+        : autoRotate
+        ? (activeSequence[0]?.item.width <= activeSequence[0]?.item.height)
+        : true;
     const sheetW = isLandscapeSheet ? A4_PORTRAIT_H : A4_PORTRAIT_W;
     const sheetH = isLandscapeSheet ? A4_PORTRAIT_W : A4_PORTRAIT_H;
     const margin = 20;
@@ -558,17 +567,29 @@ export async function mergeFilesToPdf(
     layoutMode === '16-up' ||
     layoutMode === 'custom'
   ) {
+    // Determine sheet orientation first (explicit orientation takes priority, then optimal layout default)
+    const isLandscapeSheet =
+      orientation === 'landscape'
+        ? true
+        : orientation === 'portrait'
+        ? false
+        : (layoutMode === '6-up' || layoutMode === '8-up')
+        ? true
+        : (layoutMode === 'custom' && customCols && customRows)
+        ? customCols > customRows
+        : false;
+
     let cols = 2;
     let rows = 2;
     if (layoutMode === 'custom') {
       cols = Math.max(1, customCols || 2);
       rows = Math.max(1, customRows || 2);
     } else if (layoutMode === '6-up') {
-      cols = 2;
-      rows = 3;
+      cols = isLandscapeSheet ? 3 : 2;
+      rows = isLandscapeSheet ? 2 : 3;
     } else if (layoutMode === '8-up') {
-      cols = 2;
-      rows = 4;
+      cols = isLandscapeSheet ? 4 : 2;
+      rows = isLandscapeSheet ? 2 : 4;
     } else if (layoutMode === '9-up') {
       cols = 3;
       rows = 3;
@@ -576,13 +597,6 @@ export async function mergeFilesToPdf(
       cols = 4;
       rows = 4;
     }
-
-    const isLandscapeSheet =
-      orientation === 'landscape'
-        ? true
-        : orientation === 'portrait'
-        ? false
-        : cols > rows;
 
     const sheetW = isLandscapeSheet ? A4_PORTRAIT_H : A4_PORTRAIT_W;
     const sheetH = isLandscapeSheet ? A4_PORTRAIT_W : A4_PORTRAIT_H;

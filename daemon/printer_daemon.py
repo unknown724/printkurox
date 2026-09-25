@@ -18,6 +18,7 @@ import socket
 import json
 import re
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import threading
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -634,17 +635,89 @@ def wait_for_spooler_completion(target_printer_name=None, timeout_seconds=45):
     log("Spooler wait timeout reached; proceeding to complete job.", "INFO")
     return True
 
+def set_printer_hardware_orientation(printer_name, target_orientation):
+    """
+    Dynamically aligns the Windows printer driver hardware orientation (DEVMODE / PrintTicket)
+    to 'psk:Landscape' or 'psk:Portrait' via PowerShell Set-PrintConfiguration.
+    Ensures true hardware landscape orientation without content squishing.
+    """
+    target = (printer_name or PRINTER_NAME or "").strip()
+    if not target:
+        return False
+
+    opt = "psk:Landscape" if target_orientation.lower() == "landscape" else "psk:Portrait"
+    opp_opt = "psk:Portrait" if target_orientation.lower() == "landscape" else "psk:Landscape"
+
+    ps_script = f"""
+$pName = '{target.replace("'", "''")}'
+try {{
+    $cfg = Get-PrintConfiguration -PrinterName $pName -ErrorAction Stop
+    $xml = $cfg.PrintTicketXml
+    if ($xml -and ($xml -match '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opp_opt}"/>')) {{
+        $newXml = $xml -replace '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opp_opt}"/>', '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opt}"/>'
+        Set-PrintConfiguration -PrinterName $pName -PrintTicketXml $newXml -ErrorAction Stop
+        Write-Output "CHANGED"
+    }} elseif ($xml -and ($xml -match '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opt}"/>')) {{
+        Write-Output "ALREADY_SET"
+    }} else {{
+        Write-Output "NOT_SUPPORTED"
+    }}
+}} catch {{
+    Write-Output ("ERR: " + $_.Exception.Message)
+}}
+"""
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            timeout=8
+        )
+        out = (res.stdout or "").strip()
+        if "CHANGED" in out or "ALREADY_SET" in out:
+            log(f"Printer hardware driver orientation aligned to {target_orientation.upper()} ({out})", "DEBUG")
+            return True
+        else:
+            log(f"Printer hardware orientation notice for '{target}': {out}", "DEBUG")
+            return False
+    except Exception as e:
+        log(f"set_printer_hardware_orientation exception: {e}", "DEBUG")
+        return False
+
+_in_orientation_scope = False
+
+@contextmanager
+def printer_hardware_orientation_scope(printer_name, target_orientation):
+    """
+    Context manager to temporarily configure the Windows printer driver hardware orientation
+    (e.g., switching to 'psk:Landscape' for landscape jobs), and guaranteeing that the driver
+    is restored to 'psk:Portrait' upon job completion or error.
+    """
+    global _in_orientation_scope
+    target = (target_orientation or "portrait").lower()
+    needs_switch = (target == "landscape")
+    prev_scope = _in_orientation_scope
+    _in_orientation_scope = True
+    if needs_switch:
+        set_printer_hardware_orientation(printer_name, "landscape")
+    try:
+        yield
+    finally:
+        _in_orientation_scope = prev_scope
+        if needs_switch and not _in_orientation_scope:
+            set_printer_hardware_orientation(printer_name, "portrait")
+
 def resolve_effective_orientation(job, local_pdf_path):
     """
     Determines if a document should be printed as Landscape or Portrait.
     Checks:
-    1. job['orientation'] ('landscape' or 'portrait')
+    1. job['orientation'] ('landscape' or 'portrait' -> explicit user choice takes priority)
     2. job['page_configs'] JSON array for any page explicitly set to landscape or rotated 90/270
     3. pypdf inspection of the actual PDF pages: if width > height, it's naturally landscape!
     """
     orient = (job.get("orientation") or "").strip().lower()
-    if orient == "landscape":
-        return "landscape"
+    if orient in ["landscape", "portrait"]:
+        return orient
 
     # Check page_configs JSON string or object
     page_configs_raw = job.get("page_configs")
@@ -694,24 +767,32 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
         time.sleep(2)
         return True
 
-    # If orientation wasn't explicitly supplied, check PDF geometry
-    if not orientation or orientation not in ["portrait", "landscape"]:
-        try:
-            import pypdf
-            reader = pypdf.PdfReader(file_path)
-            if len(reader.pages) > 0:
-                p0 = reader.pages[0]
-                w = float(p0.mediabox.width)
-                h = float(p0.mediabox.height)
-                rot = int(p0.get('/Rotate', 0) or 0)
-                if rot in [90, 270]:
-                    w, h = h, w
-                if w > h:
-                    orientation = "landscape"
-                else:
-                    orientation = "portrait"
-        except Exception:
-            pass
+    # Inspect PDF geometry via pypdf
+    pdf_is_landscape = False
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(file_path)
+        if len(reader.pages) > 0:
+            p0 = reader.pages[0]
+            w = float(p0.mediabox.width)
+            h = float(p0.mediabox.height)
+            rot = int(p0.get('/Rotate', 0) or 0)
+            if rot in [90, 270]:
+                w, h = h, w
+            if w > h:
+                pdf_is_landscape = True
+    except Exception:
+        pass
+
+    target_orientation = (orientation or ("landscape" if pdf_is_landscape else "portrait")).lower()
+    if target_orientation not in ["portrait", "landscape"]:
+        target_orientation = "landscape" if pdf_is_landscape else "portrait"
+
+    # If standalone invocation outside printer_hardware_orientation_scope, align driver
+    standalone_switch = False
+    if not _in_orientation_scope and target_orientation == "landscape":
+        standalone_switch = True
+        set_printer_hardware_orientation(PRINTER_NAME, "landscape")
 
     # Build print settings
     settings_list = []
@@ -723,11 +804,36 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
         settings_list.append("monochrome")
     else:
         settings_list.append("color")
+
     # Always specify exact copies explicitly so SumatraPDF never uses persistent printer driver defaults
     target_copies = max(1, int(copies or 1))
     settings_list.append(f"{target_copies}x")
-    if orientation in ["portrait", "landscape"]:
-        settings_list.append(orientation)
+
+    # IMPORTANT ORIENTATION HANDLING FOR SUMATRAPDF ON DESKTOP PRINTERS:
+    # Desktop printers (Epson, HP, Canon, etc.) physically feed A4 paper short-edge first (Portrait 210x297mm).
+    # SumatraPDF by default automatically rotates pages that are wider than tall by 90 degrees to fit the paper tray.
+    #
+    # 1. Target Landscape:
+    #    - If PDF is already Landscape (wider than tall):
+    #      Do NOT pass 'disable-auto-rotation' (which would freeze it unrotated across the 210mm width and shrink it by ~70%)!
+    #      Do NOT pass 'landscape' (which would add a redundant second 90-deg rotation)!
+    #      Letting SumatraPDF's default auto-rotation engage rotates the 297mm width into the 297mm paper length,
+    #      scaling to 100% full-bleed landscape across the entire sheet!
+    #    - If PDF is Portrait (taller than wide) but requested as Landscape:
+    #      Pass 'landscape' so SumatraPDF rotates the upright content 90 degrees onto the landscape sheet.
+    #
+    # 2. Target Portrait:
+    #    - If PDF is Landscape (wider than tall) but user explicitly requested Portrait:
+    #      Pass 'disable-auto-rotation' so SumatraPDF will NOT rotate it, printing it upright (letterboxed) across the portrait page.
+    #    - If PDF is Portrait (taller than wide):
+    #      SumatraPDF prints it upright 1:1.
+    if target_orientation == "landscape":
+        if not pdf_is_landscape:
+            settings_list.append("landscape")
+    else:
+        if pdf_is_landscape:
+            settings_list.append("disable-auto-rotation")
+
     if duplex:
         settings_list.append("duplex")
     settings_list.append("fit") # Fit printable area cleanly
@@ -746,11 +852,16 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     cmd.extend(["-silent", file_path])
 
     log(f"Executing: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        log(f"SumatraPDF exited with code {result.returncode}: {result.stderr}", "ERROR")
-        return False
-    return True
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            log(f"SumatraPDF exited with code {result.returncode}: {result.stderr}", "ERROR")
+            return False
+        return True
+    finally:
+        if standalone_switch:
+            time.sleep(1.0)
+            set_printer_hardware_orientation(PRINTER_NAME, "portrait")
 
 # =============================================================================
 # JOB EXECUTION LOGIC
@@ -767,22 +878,23 @@ def process_auto_duplex_job(job, local_file_path):
 
     printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
-    success = print_file_silent(
-        printable_path,
-        page_range=page_range,
-        color_mode=job["color_mode"],
-        copies=job["copies"],
-        orientation=orientation,
-        duplex=True
-    )
-    if success:
-        wait_for_spooler_completion(PRINTER_NAME)
-        update_job_status(job["id"], "COMPLETED")
-        record_supplies_depletion(job)
-        archive_printed_file(job, printable_path)
-        log(f"Job completed successfully (Hardware Duplex): {job['pickup_code']}", "SUCCESS")
-    else:
-        update_job_status(job["id"], "FAILED")
+    with printer_hardware_orientation_scope(PRINTER_NAME, orientation):
+        success = print_file_silent(
+            printable_path,
+            page_range=page_range,
+            color_mode=job["color_mode"],
+            copies=job["copies"],
+            orientation=orientation,
+            duplex=True
+        )
+        if success:
+            wait_for_spooler_completion(PRINTER_NAME)
+            update_job_status(job["id"], "COMPLETED")
+            record_supplies_depletion(job)
+            archive_printed_file(job, printable_path)
+            log(f"Job completed successfully (Hardware Duplex): {job['pickup_code']}", "SUCCESS")
+        else:
+            update_job_status(job["id"], "FAILED")
 
 def process_single_sided_job(job, local_file_path):
     """Standard 1-sided printing."""
@@ -796,21 +908,22 @@ def process_single_sided_job(job, local_file_path):
 
     printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
 
-    success = print_file_silent(
-        printable_path,
-        page_range=page_range,
-        color_mode=job["color_mode"],
-        copies=job["copies"],
-        orientation=orientation
-    )
-    if success:
-        wait_for_spooler_completion(PRINTER_NAME)
-        update_job_status(job["id"], "COMPLETED")
-        record_supplies_depletion(job)
-        archive_printed_file(job, printable_path)
-        log(f"Job completed successfully: {job['pickup_code']}", "SUCCESS")
-    else:
-        update_job_status(job["id"], "FAILED")
+    with printer_hardware_orientation_scope(PRINTER_NAME, orientation):
+        success = print_file_silent(
+            printable_path,
+            page_range=page_range,
+            color_mode=job["color_mode"],
+            copies=job["copies"],
+            orientation=orientation
+        )
+        if success:
+            wait_for_spooler_completion(PRINTER_NAME)
+            update_job_status(job["id"], "COMPLETED")
+            record_supplies_depletion(job)
+            archive_printed_file(job, printable_path)
+            log(f"Job completed successfully: {job['pickup_code']}", "SUCCESS")
+        else:
+            update_job_status(job["id"], "FAILED")
 
 def parse_page_range_list(range_str, total_pages):
     """Parses range string like '1-3, 5' or '1,1,2' into ordered list of page numbers, preserving copies."""
@@ -864,39 +977,40 @@ def process_manual_duplex_job(job, local_file_path):
     odd_range_str = ",".join(odd_list) if odd_list else None
     even_range_str = ",".join(even_list) if even_list else None
 
-    # Print copy-by-copy so front & back pages stay grouped and aligned per copy
-    for copy_idx in range(1, copies + 1):
-        copy_suffix = f" (Copy {copy_idx}/{copies})" if copies > 1 else ""
+    with printer_hardware_orientation_scope(PRINTER_NAME, orientation):
+        # Print copy-by-copy so front & back pages stay grouped and aligned per copy
+        for copy_idx in range(1, copies + 1):
+            copy_suffix = f" (Copy {copy_idx}/{copies})" if copies > 1 else ""
 
-        # -------------------------------------------------------------
-        # Pass 1: Print Odd Pages
-        # -------------------------------------------------------------
-        update_job_status(job["id"], "PRINTING_ODD")
-        log(f"Pass 1: Printing Front pages ({odd_range_str}) for Job {job['pickup_code']}{copy_suffix}...", "INFO")
+            # -------------------------------------------------------------
+            # Pass 1: Print Odd Pages
+            # -------------------------------------------------------------
+            update_job_status(job["id"], "PRINTING_ODD")
+            log(f"Pass 1: Printing Front pages ({odd_range_str}) for Job {job['pickup_code']}{copy_suffix}...", "INFO")
 
-        odd_success = print_file_silent(
-            printable_path,
-            page_range=odd_range_str,
-            color_mode=color_mode,
-            copies=1,
-            orientation=orientation
-        )
+            odd_success = print_file_silent(
+                printable_path,
+                page_range=odd_range_str,
+                color_mode=color_mode,
+                copies=1,
+                orientation=orientation
+            )
 
-        if not odd_success:
-            update_job_status(job["id"], "FAILED")
-            return
+            if not odd_success:
+                update_job_status(job["id"], "FAILED")
+                return
 
-        # If there are no even pages (e.g. single page job mistakenly queued as duplex)
-        if not even_range_str:
-            continue
+            # If there are no even pages (e.g. single page job mistakenly queued as duplex)
+            if not even_range_str:
+                continue
 
-        # -------------------------------------------------------------
-        # Operator Flip Alert & Prompt
-        # -------------------------------------------------------------
-        update_job_status(job["id"], "AWAITING_FLIP")
-        play_chime()
+            # -------------------------------------------------------------
+            # Operator Flip Alert & Prompt
+            # -------------------------------------------------------------
+            update_job_status(job["id"], "AWAITING_FLIP")
+            play_chime()
 
-        banner = f"""
+            banner = f"""
 ========================================================================
 [ACTION REQUIRED] FLIP PAPER STACK -- JOB {job['pickup_code']}{copy_suffix}
 ------------------------------------------------------------------------
@@ -907,40 +1021,37 @@ def process_manual_duplex_job(job, local_file_path):
 > Press [ENTER] when ready to print the reverse sides (Pass 2)...
 ========================================================================
 """
-        print(banner)
-        try:
-            input()
-        except EOFError:
-            log("Running in non-interactive background mode; waiting 25s for paper flip before Pass 2...", "INFO")
-            time.sleep(25)
+            print(banner)
+            try:
+                input()
+            except EOFError:
+                log("Running in non-interactive background mode; waiting 25s for paper flip before Pass 2...", "INFO")
+                time.sleep(25)
 
-        # -------------------------------------------------------------
-        # Pass 2: Print Even Pages (Reverse sequence)
-        # -------------------------------------------------------------
-        update_job_status(job["id"], "PRINTING_EVEN")
-        log(f"Pass 2: Printing Reverse pages ({even_range_str}) for Job {job['pickup_code']}{copy_suffix}...", "INFO")
+            # -------------------------------------------------------------
+            # Pass 2: Print Even Pages (Reverse sequence)
+            # -------------------------------------------------------------
+            update_job_status(job["id"], "PRINTING_EVEN")
+            log(f"Pass 2: Printing Reverse pages ({even_range_str}) for Job {job['pickup_code']}{copy_suffix}...", "INFO")
 
-        even_success = print_file_silent(
-            printable_path,
-            page_range=even_range_str,
-            color_mode=color_mode,
-            copies=1,
-            orientation=orientation
-        )
+            even_success = print_file_silent(
+                printable_path,
+                page_range=even_range_str,
+                color_mode=color_mode,
+                copies=1,
+                orientation=orientation
+            )
 
-        if not even_success:
-            update_job_status(job["id"], "FAILED")
-            return
+            if not even_success:
+                update_job_status(job["id"], "FAILED")
+                return
 
-    if True:
         wait_for_spooler_completion(PRINTER_NAME)
         update_job_status(job["id"], "COMPLETED")
         record_supplies_depletion(job)
         archive_printed_file(job, printable_path)
         log(f"Job {job['pickup_code']} manual duplex finished successfully!", "SUCCESS")
         play_chime()
-    else:
-        update_job_status(job["id"], "FAILED")
 
 # =============================================================================
 # LOCAL ARCHIVING & CACHE CLEANER
@@ -1098,6 +1209,16 @@ class LocalArchiveHTTPHandler(BaseHTTPRequestHandler):
                 "archive_dir": ARCHIVE_DIR,
                 "temp_dir": TEMP_DIR,
             }).encode('utf-8'))
+            return
+        if parsed.path in ('/restart', '/reload'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"success": true, "message": "Restarting PrintKurox daemon..."}')
+            def _delayed_exit():
+                time.sleep(0.5)
+                os._exit(0)
+            threading.Thread(target=_delayed_exit, daemon=True).start()
             return
 
         if parsed.path == '/open-folder':

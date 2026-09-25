@@ -17,7 +17,9 @@ import {
   ShieldCheck,
   MessageCircle,
   Zap,
+  QrCode,
 } from 'lucide-react';
+import Link from 'next/link';
 import { convertDocxToPdfClient } from '@/lib/client-docx-converter';
 
 export interface FileItem {
@@ -765,15 +767,25 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           </div>
         </div>
 
-        <a
-          href="https://wa.me/919362980761?text=Hi%20PrintKurox%2C%20I%20want%20to%20print%20a%20document"
-          target="_blank"
-          rel="noreferrer"
-          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-all hover:scale-[1.02] active:scale-95 shrink-0"
-        >
-          <MessageCircle className="w-3.5 h-3.5 fill-white" />
-          <span>Open Chat</span>
-        </a>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Link
+            href="/whatsapp"
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-all hover:scale-[1.02] active:scale-95"
+            title="Scan WhatsApp QR Code or download poster"
+          >
+            <QrCode className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden sm:inline">QR Code</span>
+          </Link>
+          <a
+            href="https://wa.me/919362980761?text=Hi%20PrintKurox%2C%20I%20want%20to%20print%20a%20document"
+            target="_blank"
+            rel="noreferrer"
+            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-all hover:scale-[1.02] active:scale-95 shrink-0"
+          >
+            <MessageCircle className="w-3.5 h-3.5 fill-white" />
+            <span>Open Chat</span>
+          </a>
+        </div>
       </div>
 
       <div
