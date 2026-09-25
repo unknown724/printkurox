@@ -61,7 +61,7 @@ function HomePageContent() {
   // Photo & Page Layout Settings (Windows Photo & Adobe Acrobat style)
   const [layoutSettings, setLayoutSettings] = useState<PhotoLayoutSettings>({
     layoutMode: '1-up',
-    fitMode: 'fill', // Windows "Fit picture to frame" default: fills A4 page cleanly!
+    fitMode: 'fit', // Professional document default: fits inside printable margins without clipping!
     drawBorder: false,
     orientation: 'auto',
     textOverlay: {

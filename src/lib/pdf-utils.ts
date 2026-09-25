@@ -380,13 +380,17 @@ export async function mergeFilesToPdf(
 
     const effectiveScale = pageScaleMultiplier !== undefined ? pageScaleMultiplier : customScaleMultiplier;
 
+    // CRITICAL: PDF document pages contain text, tables, margins, and headers/footers.
+    // They must NEVER be cropped with Math.max ('fill'). 'fill' is strictly for borderless photos/images.
+    const isImageFill = isFill && item.type === 'image';
+
     let scale = 1;
     if (fitMode === 'actual') {
       scale = 1 * effectiveScale;
     } else if (fitMode === 'custom' || effectiveScale !== 1) {
-      const baseScale = isFill ? Math.max(boxW / w, boxH / h) : Math.min(boxW / w, boxH / h);
+      const baseScale = isImageFill ? Math.max(boxW / w, boxH / h) : Math.min(boxW / w, boxH / h);
       scale = baseScale * effectiveScale;
-    } else if (isFill) {
+    } else if (isImageFill) {
       scale = Math.max(boxW / w, boxH / h);
     } else {
       scale = Math.min(boxW / w, boxH / h);
@@ -711,7 +715,9 @@ export async function mergeFilesToPdf(
       const pageH = isLandscape ? A4_PORTRAIT_W : A4_PORTRAIT_H;
       const page = mergedPdf.addPage([pageW, pageH]);
 
-      const margin = fitMode === 'fill' ? 14 : 20;
+      // For 1-Up document pages, maintain a safe printable margin (18pt = 6.35mm)
+      // to ensure physical printer hardware margins never clip content.
+      const margin = (item.type === 'image' && fitMode === 'fill') ? 14 : 18;
       drawItemInBox(
         page,
         item,

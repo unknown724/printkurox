@@ -199,7 +199,7 @@ export function PageVisualizer({
   orientation = 'auto',
   onOrientationChange,
   enhanceMode = 'none',
-  fitMode = 'fill',
+  fitMode = 'fit',
   scaling = 'fit',
   customScale = 100,
   layoutMode = '1-up',

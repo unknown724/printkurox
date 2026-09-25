@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
     const layoutMode = (formData.get('layoutMode') as PrintLayoutOptions['layoutMode']) || '1-up';
     const customCols = parseInt(formData.get('customCols') as string, 10) || 2;
     const customRows = parseInt(formData.get('customRows') as string, 10) || 2;
-    const fitMode = (formData.get('fitMode') as PrintLayoutOptions['fitMode']) || 'fill';
+    const fitMode = (formData.get('fitMode') as PrintLayoutOptions['fitMode']) || 'fit';
     const drawBorder = formData.get('drawBorder') === 'true';
     const orientation = (formData.get('orientation') as PrintLayoutOptions['orientation']) || 'auto';
     const autoRotate = formData.get('autoRotate') !== 'false';

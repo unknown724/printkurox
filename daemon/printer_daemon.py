@@ -970,7 +970,6 @@ def find_local_archived_file(pickup_code, job_id=None, file_name=None):
     Enables instant reprinting & local PDF previewing of finished/purged jobs from local disk with 0 cloud dependencies.
     """
     clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code or '').upper()
-    clean_name = re.sub(r'[^a-zA-Z0-9]', '', (file_name or '').replace('.pdf', '')).lower()
 
     # 1. Search in working TEMP_DIR
     if os.path.exists(TEMP_DIR):
@@ -982,8 +981,6 @@ def find_local_archived_file(pickup_code, job_id=None, file_name=None):
                     return fpath
                 if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
                     return fpath
-                if clean_name and len(clean_name) >= 6 and clean_name in fname.lower():
-                    return fpath
 
     # 2. Search in date-organized ARCHIVE_DIR
     if os.path.exists(ARCHIVE_DIR):
@@ -993,8 +990,6 @@ def find_local_archived_file(pickup_code, job_id=None, file_name=None):
                 if clean_pickup and (f_upper.startswith(f"{clean_pickup}_") or f"_{clean_pickup}_" in f_upper or f_upper.startswith(clean_pickup)):
                     return os.path.join(root, fname)
                 if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
-                    return os.path.join(root, fname)
-                if clean_name and len(clean_name) >= 6 and clean_name in fname.lower():
                     return os.path.join(root, fname)
 
     return None
