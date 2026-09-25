@@ -125,10 +125,23 @@ if (RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET) {
 }
 
 // Interactive Action Buttons Definitions
-const STEP1_BUTTONS = [
+const QUEUE_STAGING_BUTTONS = [
+  { id: 'btn_queue_add_more', text: '➕ Upload More Files' },
+  { id: 'btn_queue_continue', text: '➡️ Continue to Print' },
+  { id: 'btn_queue_clear', text: '🗑️ Clear Queue' },
+];
+
+const STEP1_BUTTONS_STANDARD = [
   { id: 'btn_bw', text: '1️⃣ Black & White (₹4/p)' },
   { id: 'btn_color', text: '2️⃣ Color (₹7/p)' },
 ];
+
+const STEP1_BUTTONS_BULK = [
+  { id: 'btn_bw', text: '1️⃣ Black & White (₹3/p - Offer)' },
+  { id: 'btn_color', text: '2️⃣ Color (₹5/p - Offer)' },
+];
+
+const STEP1_BUTTONS = STEP1_BUTTONS_STANDARD;
 
 const STEP3_COPIES_BUTTONS = [
   { id: 'btn_copies_1', text: '1️⃣ 1 Copy' },
@@ -429,12 +442,20 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
  * Dispatch Step 1: Color Selection (Single Card, Zero Spam)
  */
 async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeMb) {
+  const isBulk = totalPages >= 10;
   const title = `*PrintKurox* · Color Selection`;
   const body =
     `📄 *File:* ${fileName}\n` +
     `📊 *Pages:* ${totalPages} ${totalPages === 1 ? 'page' : 'pages'} (${fileSizeMb} MB)\n` +
     `📍 *Station:* ${defaultStation.name} (${defaultStation.room})\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    (isBulk
+      ? `🎉 *Special Volume Offer Applied (10+ pages)!*\n` +
+        `⚡ *B&W:* ₹3/page · 🎨 *Color:* ₹5/page\n` +
+        `_(Applies to single pages only)_\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
+      : `💡 *Tip:* 10+ pages unlock B&W for ₹3/p & Color for ₹5/p (single page)!\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`) +
     `Select print color below:`;
 
   await sendInteractiveButtons({
@@ -443,7 +464,7 @@ async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeM
     title,
     body,
     footer: 'PrintKurox AutoPrint',
-    buttons: STEP1_BUTTONS,
+    buttons: isBulk ? STEP1_BUTTONS_BULK : STEP1_BUTTONS_STANDARD,
   });
 }
 
@@ -478,13 +499,21 @@ async function sendStep2PageButtons(sock, senderJid, session) {
  * Dispatch Step 3: Copies Selection (Separated)
  */
 async function sendStep3CopiesButtons(sock, senderJid, session) {
-  const modeLabel = session.colorMode === 'color' ? 'Color (₹7/p)' : 'Black & White (₹4/p)';
+  const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
+  const isBulk = activePagesCount >= 10;
+  const bwRate = isBulk ? 3 : 4;
+  const colorRate = isBulk ? 5 : 7;
+  const modeRate = session.colorMode === 'color' ? colorRate : bwRate;
+  const modeLabel = session.colorMode === 'color'
+    ? `Color (₹${colorRate}/p${isBulk ? ' - Offer' : ''})`
+    : `Black & White (₹${bwRate}/p${isBulk ? ' - Offer' : ''})`;
   const pagesLabel = session.pageRangeStr || `All (${session.totalPages}p)`;
   const title = `*PrintKurox* · Number of Copies`;
   const body =
     `📄 *File:* ${session.fileName}\n` +
     `📑 *Pages:* ${pagesLabel}\n` +
     `🖨️ *Mode:* ${modeLabel}\n` +
+    (isBulk ? `🎉 *10+ Page Offer Active:* ₹${modeRate}/p applied (single page only)\n` : '') +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `Select copies below, or reply with any number (e.g. *5*, *10*):`;
 
@@ -515,9 +544,13 @@ async function sendStep3CopiesButtons(sock, senderJid, session) {
 async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName = 'Student', session }) {
   const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
   const currentStation = session.station || defaultStation;
-  const ratePerPage = session.colorMode === 'color' ? 7 : 4;
+  const isBulk = activePagesCount >= 10;
+  const standardRate = session.colorMode === 'color' ? 7 : 4;
+  const ratePerPage = session.colorMode === 'color' ? (isBulk ? 5 : 7) : (isBulk ? 3 : 4);
+  const totalCopies = session.copies || 1;
   const subtotal = activePagesCount * ratePerPage;
-  const totalAmount = Math.max(1, subtotal * (session.copies || 1));
+  const totalAmount = Math.max(1, subtotal * totalCopies);
+  const totalSavings = isBulk ? (standardRate - ratePerPage) * activePagesCount * totalCopies : 0;
   session.totalPrice = totalAmount;
 
   // Natural orientation: follows uploaded file's geometry directly
@@ -629,13 +662,15 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
 
   const summaryBody =
     `📄 *Document:* ${session.fileName}\n` +
-    `🖨️ *Print Mode:* ${printTypeLabel} (₹${ratePerPage}/p)\n` +
+    `🖨️ *Print Mode:* ${printTypeLabel} (₹${ratePerPage}/p${isBulk ? ' · Special Offer' : ''})\n` +
     `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
-    `🔢 *Copies:* ${session.copies || 1} ${session.copies === 1 ? 'copy' : 'copies'}\n` +
+    `🔢 *Copies:* ${totalCopies} ${totalCopies === 1 ? 'copy' : 'copies'}\n` +
     `📐 *Orientation:* ${orientLabel} (Natural)\n` +
     `📍 *Release Station:* ${currentStation.name} (${currentStation.room})\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `💰 *Total Amount:* *₹${totalAmount}*\n` +
+    `💰 *Total Amount:* *₹${totalAmount}*` +
+    (isBulk ? ` _(🎉 Saved ₹${totalSavings}!)_` : '') + `\n` +
+    (isBulk ? `⚡ _Applied ₹${ratePerPage}/p volume offer (10+ pages, single page only)_\n` : '') +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `👉 *Tap below to pay via UPI (GPay / PhonePe / Paytm).*\n` +
     `🖨️ Your document will print automatically once paid!\n\n` +
@@ -844,14 +879,74 @@ function detectImageLandscape(buffer) {
 }
 
 /**
- * Ingestion Debounce Processor: Merges multi-file batches into a single unified print job
+ * Dispatch Staging Queue Card (Allows students to add more files or continue)
  */
-async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName }) {
-  const entry = incomingFileBuffers.get(normalizedJid);
-  if (!entry || entry.files.length === 0) return;
-  const files = [...entry.files];
-  incomingFileBuffers.delete(normalizedJid);
+async function sendQueueStagingCard({ sock, senderJid, session, justAddedFileNames = [] }) {
+  if (!session || !session.queuedFiles || session.queuedFiles.length === 0) return;
 
+  const count = session.queuedFiles.length;
+  const totalPages = session.queuedFiles.reduce((acc, f) => acc + (f.pages || 1), 0);
+  const totalSizeMb = session.queuedFiles.reduce((acc, f) => acc + parseFloat(f.sizeMb || 0), 0).toFixed(2);
+  const currentStation = session.station || defaultStation;
+
+  // Build the list of files (up to 4 items displayed cleanly)
+  let fileListLines = '';
+  const displayFiles = session.queuedFiles.slice(0, 4);
+  displayFiles.forEach((f, idx) => {
+    const pStr = f.pages === 1 ? '1 page' : `${f.pages} pages`;
+    fileListLines += `${idx + 1}. *${f.fileName.slice(0, 26)}* (${pStr}, ${f.sizeMb} MB)\n`;
+  });
+  if (count > 4) {
+    fileListLines += `... and *${count - 4} more* document(s)\n`;
+  }
+
+  const addedNotice = justAddedFileNames.length > 0
+    ? `📥 *File Added:* ${justAddedFileNames.map(n => `"${n.slice(0, 24)}"`).join(', ')}\n\n`
+    : '';
+
+  const title = `*PrintKurox* · Print Queue (${count} ${count === 1 ? 'File' : 'Files'})`;
+  const isBulk = totalPages >= 10;
+  const body =
+    `${addedNotice}` +
+    `📚 *Current Print Queue:*\n` +
+    `${fileListLines}` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📊 *Total:* *${totalPages}* ${totalPages === 1 ? 'page' : 'pages'} (${totalSizeMb} MB)\n` +
+    (isBulk
+      ? `🎉 *Special Offer Unlocked (10+ pages)!* B&W ₹3/p · Color ₹5/p (Single page only)\n`
+      : `💡 *Tip:* Add ${10 - totalPages} more page(s) to unlock B&W ₹3/p & Color ₹5/p!\n`) +
+    `📍 *Station:* ${currentStation.name} (${currentStation.room})\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `*Would you like to add more files or proceed to print?*`;
+
+  const buttons = [
+    { id: 'btn_queue_add_more', text: '➕ Upload More Files' },
+    { id: 'btn_queue_continue', text: `➡️ Continue (${count} ${count === 1 ? 'File' : 'Files'})` },
+    { id: 'btn_queue_clear', text: '🗑️ Clear Queue' },
+  ];
+
+  await sendInteractiveButtons({
+    sock,
+    jid: senderJid,
+    title,
+    body,
+    footer: 'PrintKurox AutoPrint · Multi-File Queue',
+    buttons,
+  });
+}
+
+/**
+ * Finalize Queued Files: Merge if multi-file, upload to Cloudflare R2, and dispatch Step 1 (Color Selection)
+ */
+async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 'Student' }) {
+  if (!session || !session.queuedFiles || session.queuedFiles.length === 0) {
+    await sock.sendMessage(senderJid, {
+      text: `ℹ️ Your print queue is empty. Please attach or forward a PDF or photo first!`,
+    });
+    return;
+  }
+
+  const files = session.queuedFiles;
   let finalBuffer = null;
   let finalFileName = '';
   let finalMimeType = 'application/pdf';
@@ -859,28 +954,16 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
   let isLandscapeDefault = false;
   let isMergedBatch = false;
 
-  if (files.length === 1) {
-    const file = files[0];
-    finalBuffer = file.buffer;
-    finalFileName = file.fileName;
-    finalMimeType = file.mimeType;
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
 
-    if (file.isPdf) {
-      try {
-        const pdfDoc = await PDFDocument.load(finalBuffer, { ignoreEncryption: true });
-        totalPages = pdfDoc.getPageCount();
-        const firstPage = pdfDoc.getPages()[0];
-        if (firstPage) {
-          const { width, height } = firstPage.getSize();
-          isLandscapeDefault = width > height;
-        }
-      } catch (err) {
-        totalPages = 1;
-      }
-    } else if (file.isImg) {
-      totalPages = 1;
-      isLandscapeDefault = detectImageLandscape(finalBuffer);
-    }
+  if (files.length === 1) {
+    const f = files[0];
+    finalBuffer = f.buffer;
+    finalFileName = f.fileName;
+    finalMimeType = f.mimeType;
+    totalPages = f.pages;
+    isLandscapeDefault = f.isLandscape;
+    isMergedBatch = false;
   } else {
     // Multi-file batch! Merge all files into 1 clean A4 PDF document
     isMergedBatch = true;
@@ -944,7 +1027,7 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
 
       const mergedBytes = await mergedPdf.save();
       finalBuffer = Buffer.from(mergedBytes);
-      finalFileName = `Merged_${files.length}_items.pdf`;
+      finalFileName = `Merged_${files.length}_files.pdf`;
       finalMimeType = 'application/pdf';
       isLandscapeDefault = false;
     } catch (mergeErr) {
@@ -952,7 +1035,7 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
       finalBuffer = files[0].buffer;
       finalFileName = files[0].fileName;
       finalMimeType = files[0].mimeType;
-      totalPages = 1;
+      totalPages = files[0].pages || 1;
       isMergedBatch = false;
     }
   }
@@ -975,42 +1058,133 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
 
   const fileSizeMb = (finalBuffer.length / (1024 * 1024)).toFixed(2);
 
-  const newSession = {
-    stage: 'AWAITING_COLOR_MODE',
-    fileKey: r2Key,
-    fileName: finalFileName,
-    totalPages,
-    fileSizeMb,
-    mimeType: finalMimeType,
-    isLandscapeDefault,
-    orientation: isLandscapeDefault ? 'landscape' : 'portrait',
-    station: defaultStation,
-    senderJid,
-    senderName,
-    timestamp: Date.now(),
-    imageBuffer: (!isMergedBatch && finalMimeType.startsWith('image/')) ? finalBuffer : null,
-    isMergedBatch,
-    batchCount: files.length,
-    uploadPromise: r2UploadPromise,
-  };
-
-  userSessions.set(senderJid, newSession);
-  userSessions.set(normalizedJid, newSession);
+  session.stage = 'AWAITING_COLOR_MODE';
+  session.fileKey = r2Key;
+  session.fileName = finalFileName;
+  session.totalPages = totalPages;
+  session.fileSizeMb = fileSizeMb;
+  session.mimeType = finalMimeType;
+  session.isLandscapeDefault = isLandscapeDefault;
+  session.orientation = isLandscapeDefault ? 'landscape' : 'portrait';
+  session.timestamp = Date.now();
+  session.imageBuffer = (!isMergedBatch && finalMimeType.startsWith('image/')) ? finalBuffer : null;
+  session.isMergedBatch = isMergedBatch;
+  session.batchCount = files.length;
+  session.uploadPromise = r2UploadPromise;
 
   if (isMergedBatch) {
     await sock.sendMessage(senderJid, {
       text:
-        `📦 *Batch Received: Auto-Merged ${files.length} Files into 1 Document!*\n` +
+        `📦 *Batch Ready: Combined ${files.length} Files into 1 Document!*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📑 Total Pages: *${totalPages}*\n` +
-        `💾 File Size: *${fileSizeMb} MB*\n` +
+        `💾 Combined Size: *${fileSizeMb} MB*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `_Your files are combined into one print job so you pay and pick up in one go!_`,
+        `_All files will print together in sequence under 1 single pickup code._`,
     });
   }
 
   await sendStep1Buttons(sock, senderJid, finalFileName, totalPages, fileSizeMb);
-  console.log(`[WA-Bot] Dispatched Step 1 Action Buttons instantly to ${senderName} for ${finalFileName} (${totalPages}p)`);
+  console.log(`[WA-Bot] Queue finalized for ${senderName}: ${finalFileName} (${totalPages}p)`);
+}
+
+/**
+ * Ingestion Debounce Processor: Appends buffered files to the user's print queue
+ */
+async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName }) {
+  const entry = incomingFileBuffers.get(normalizedJid);
+  if (!entry || entry.files.length === 0) return;
+  const files = [...entry.files];
+  incomingFileBuffers.delete(normalizedJid);
+
+  let session = userSessions.get(senderJid) || userSessions.get(normalizedJid);
+
+  // If session expired or completed, start a fresh session
+  if (!session || (isSessionExpired(session) && session.stage !== 'COMPLETED') || session.stage === 'COMPLETED') {
+    session = {
+      stage: 'QUEUE_STAGING',
+      senderJid,
+      senderName,
+      station: defaultStation,
+      timestamp: Date.now(),
+      queuedFiles: [],
+    };
+    userSessions.set(senderJid, session);
+    userSessions.set(normalizedJid, session);
+  }
+
+  // Ensure queuedFiles array exists
+  if (!session.queuedFiles) {
+    session.queuedFiles = [];
+  }
+
+  // If user was already waiting for payment, notify them about their pending order
+  if (session.stage === 'AWAITING_PAYMENT') {
+    await sock.sendMessage(senderJid, {
+      text:
+        `⚠️ *Pending Order in Progress*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `You already have an unpaid order for *${session.fileName}* (₹${session.totalPrice || 0}).\n\n` +
+        (session.paymentLinkUrl ? `🔗 *UPI Payment Link:* ${session.paymentLinkUrl}\n\n` : '') +
+        `• To print this new file instead, reply with *cancel* to discard the old order.\n` +
+        `• To proceed with the pending order, tap the payment link above!`,
+    });
+    return;
+  }
+
+  const justAddedNames = [];
+
+  for (const file of files) {
+    if (session.queuedFiles.length >= 15) {
+      await sock.sendMessage(senderJid, {
+        text: `⚠️ *Queue Limit:* Maximum 15 files per print batch reached. Please continue to print these files first!`,
+      });
+      break;
+    }
+
+    let pages = 1;
+    let isLandscape = false;
+
+    if (file.isPdf) {
+      try {
+        const pdfDoc = await PDFDocument.load(file.buffer, { ignoreEncryption: true });
+        pages = pdfDoc.getPageCount();
+        const firstPage = pdfDoc.getPages()[0];
+        if (firstPage) {
+          const { width, height } = firstPage.getSize();
+          isLandscape = width > height;
+        }
+      } catch (err) {
+        pages = 1;
+      }
+    } else if (file.isImg) {
+      pages = 1;
+      isLandscape = detectImageLandscape(file.buffer);
+    }
+
+    const sizeMb = (file.buffer.length / (1024 * 1024)).toFixed(2);
+
+    session.queuedFiles.push({
+      fileName: file.fileName,
+      buffer: file.buffer,
+      mimeType: file.mimeType,
+      pages,
+      isLandscape,
+      sizeMb,
+      isPdf: file.isPdf,
+      isImg: file.isImg,
+    });
+
+    justAddedNames.push(file.fileName);
+  }
+
+  session.stage = 'QUEUE_STAGING';
+  session.timestamp = Date.now();
+  session.senderName = senderName;
+
+  // Render the Queue Staging Card with options to add more files or continue
+  await sendQueueStagingCard({ sock, senderJid, session, justAddedFileNames: justAddedNames });
+  console.log(`[WA-Bot] Added ${justAddedNames.length} file(s) to queue for ${senderName}. Total queued: ${session.queuedFiles.length}`);
 }
 
 // ============================================================================
@@ -1211,9 +1385,8 @@ async function startBot() {
             isPdf: fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf'),
           });
 
-          // Fast adaptive debounce: 250ms for single docs (PDF/Word), 500ms for photos (merging burst)
-          const isSingleDoc = !!documentMsg || fileName.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.docx');
-          const debounceDelay = isSingleDoc ? 250 : 500;
+          // Adaptive debounce: 600ms to allow multi-file burst packets to settle cleanly
+          const debounceDelay = 600;
 
           if (entry.timer) clearTimeout(entry.timer);
           entry.timer = setTimeout(async () => {
@@ -1236,6 +1409,69 @@ async function startBot() {
             userSessions.delete(senderJid);
             userSessions.delete(normalizedJid);
             await sendSessionExpiredMessage(sock, senderJid);
+            return;
+          }
+
+          // --- QUEUE STAGING BUTTON: ADD MORE FILES ---
+          if (buttonId === 'btn_queue_add_more') {
+            if (!session || !session.queuedFiles || session.queuedFiles.length === 0) {
+              await sock.sendMessage(senderJid, {
+                text: `📎 *Please forward or attach a PDF or photo to start!*`,
+              });
+              return;
+            }
+            session.stage = 'AWAITING_MORE_FILES';
+            session.timestamp = Date.now();
+            await sock.sendMessage(senderJid, {
+              text:
+                `📎 *Ready for Your Next File!*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Forward or send another PDF, Word doc, or photo here.\n` +
+                `It will be added to your print queue (*${session.queuedFiles.length}* files currently).\n\n` +
+                `_Tap below whenever you are done!_`,
+            });
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '*PrintKurox* · Current Queue',
+              body: `You currently have *${session.queuedFiles.length} file(s)* queued.\nSend more files now, or tap below to proceed:`,
+              footer: 'PrintKurox AutoPrint',
+              buttons: [
+                { id: 'btn_queue_continue', text: `➡️ Continue (${session.queuedFiles.length} ${session.queuedFiles.length === 1 ? 'File' : 'Files'})` },
+                { id: 'btn_queue_clear', text: '🗑️ Clear Queue' },
+              ],
+            });
+            return;
+          }
+
+          // --- QUEUE STAGING BUTTON: CONTINUE TO PRINT ---
+          if (buttonId === 'btn_queue_continue') {
+            if (!session) {
+              await sendSessionExpiredMessage(sock, senderJid);
+              return;
+            }
+            await continueWithQueuedFiles({ sock, senderJid, session, senderName });
+            return;
+          }
+
+          // --- QUEUE STAGING BUTTON: CLEAR QUEUE ---
+          if (buttonId === 'btn_queue_clear') {
+            if (session) {
+              if (session.jobId && activePollers.has(session.jobId)) {
+                clearInterval(activePollers.get(session.jobId));
+                activePollers.delete(session.jobId);
+              }
+              session.queuedFiles = [];
+              userSessions.delete(senderJid);
+              userSessions.delete(normalizedJid);
+            }
+            await sock.sendMessage(senderJid, {
+              text:
+                `🗑️ *Print Queue Cleared*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Your print queue has been emptied.\n` +
+                `Whenever you're ready, forward or send any document or photo to start fresh!`,
+            });
             return;
           }
 
@@ -1398,7 +1634,7 @@ async function startBot() {
               clearInterval(activePollers.get(session.jobId));
               activePollers.delete(session.jobId);
             }
-            session.stage = 'AWAITING_COLOR_MODE';
+            session.stage = 'QUEUE_STAGING';
             session.colorMode = null;
             session.copies = 1;
             session.selectedPages = null;
@@ -1409,8 +1645,12 @@ async function startBot() {
             session.pickupCode = null;
             session.timestamp = Date.now();
 
-            console.log(`[WA-Bot] ${senderName} tapped RESET / CHANGE. Re-dispatching Step 1.`);
-            await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb);
+            console.log(`[WA-Bot] ${senderName} tapped RESET / CHANGE. Re-dispatching Queue Staging.`);
+            if (session.queuedFiles && session.queuedFiles.length > 0) {
+              await sendQueueStagingCard({ sock, senderJid, session });
+            } else if (session.fileName) {
+              await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb);
+            }
             return;
           }
 
@@ -1461,6 +1701,7 @@ async function startBot() {
                 clearInterval(activePollers.get(session.jobId));
                 activePollers.delete(session.jobId);
               }
+              if (session.queuedFiles) session.queuedFiles = [];
               userSessions.delete(senderJid);
               userSessions.delete(normalizedJid);
             }
@@ -1468,11 +1709,48 @@ async function startBot() {
               text:
                 `❌ *Print Order Cancelled*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Your active print session has been cleared.\n` +
+                `Your active print session and queue have been cleared.\n` +
                 `No payment has been charged.\n\n` +
                 `_Whenever you're ready, simply send or forward a new document or photo to start fresh!_`,
             });
             return;
+          }
+
+          // --- QUEUE ACTIONS: ADD MORE / CONTINUE / CLEAR / VIEW QUEUE ---
+          if (session && (session.stage === 'QUEUE_STAGING' || session.stage === 'AWAITING_MORE_FILES')) {
+            if (clean === 'more' || clean === 'add' || clean === 'add more' || clean === 'upload' || clean === 'upload more' || clean === 'attach') {
+              session.stage = 'AWAITING_MORE_FILES';
+              session.timestamp = Date.now();
+              await sock.sendMessage(senderJid, {
+                text:
+                  `📎 *Send your next file here!*\n` +
+                  `I will add it to your queue (${session.queuedFiles?.length || 0} files currently).\n\n` +
+                  `_Reply *continue* or *done* when you are finished!_`,
+              });
+              return;
+            }
+
+            if (clean === 'continue' || clean === 'done' || clean === 'print' || clean === 'next' || clean === 'ok' || clean === 'proceed') {
+              await continueWithQueuedFiles({ sock, senderJid, session, senderName });
+              return;
+            }
+
+            if (clean === 'clear' || clean === 'empty' || clean === 'delete') {
+              if (session) {
+                session.queuedFiles = [];
+                userSessions.delete(senderJid);
+                userSessions.delete(normalizedJid);
+              }
+              await sock.sendMessage(senderJid, {
+                text: `🗑️ *Print queue cleared!* Forward or send a new document to start fresh.`,
+              });
+              return;
+            }
+
+            if (clean === 'queue' || clean === 'files' || clean === 'list') {
+              await sendQueueStagingCard({ sock, senderJid, session });
+              return;
+            }
           }
 
           // --- HELP & OPERATOR COMMAND ---
@@ -1488,24 +1766,35 @@ async function startBot() {
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `*How to Print:*\n` +
                 `1. Send your PDF, Word doc, or photo here.\n` +
-                `2. Choose Color, Pages, and Copies.\n` +
-                `3. Pay via UPI or Cash at counter.\n` +
-                `4. Enter your Pickup Code on the printer screen!\n\n` +
-                `_Tip: Send multiple photos together to auto-merge them into 1 document._`,
+                `2. Add more files or continue to settings.\n` +
+                `3. Choose Color, Pages, and Copies.\n` +
+                `4. Pay via UPI or Cash at counter.\n` +
+                `5. Enter your Pickup Code on the printer screen!\n\n` +
+                `_Tip: Send multiple files to bundle them under 1 single pickup code._`,
             });
             return;
           }
 
           // --- RESET COMMAND ---
           if (clean === 'reset' || clean === 'restart' || clean === 'change') {
-            if (session && session.fileKey) {
-              session.stage = 'AWAITING_COLOR_MODE';
+            if (session) {
+              session.stage = 'QUEUE_STAGING';
               session.colorMode = null;
               session.copies = 1;
-              session.orientation = null;
+              session.selectedPages = null;
+              session.pageRangeStr = 'All';
+              session.paymentLinkUrl = null;
+              session.paymentLinkId = null;
+              session.jobId = null;
+              session.pickupCode = null;
               session.timestamp = Date.now();
-              await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb);
-              return;
+              if (session.queuedFiles && session.queuedFiles.length > 0) {
+                await sendQueueStagingCard({ sock, senderJid, session });
+                return;
+              } else if (session.fileName) {
+                await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb);
+                return;
+              }
             }
           }
 
@@ -1746,19 +2035,29 @@ async function startBot() {
             clean === 'help' ||
             clean === 'start' ||
             clean.includes('price') ||
-            clean.includes('rate');
+            clean.includes('rate') ||
+            clean.includes('offer') ||
+            clean.includes('discount');
 
           if (!session || session.stage === 'COMPLETED' || isGreetingOrPrintIntent) {
             const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
             const onboardingPrompt =
-              `*PrintKurox AutoPrint*\n` +
+              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
               `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `Hello${displayName}! Welcome to the automated campus print service.\n\n` +
-              `📎 *To Print:* Attach or forward your *PDF* or *Photo* here.\n\n` +
-              `📍 *Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
-              `⚡ *Rates:* B&W ₹4/page · Color ₹7/page\n` +
+              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
+              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
+              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)_\n` +
+              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)_\n` +
+              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
+              `📄 *Standard Rates (1–9 pages):*\n` +
+              `• B&W Single: ₹4/page\n` +
+              `• Color Single: ₹7/page\n\n` +
               `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `_Color, copies, and orientation options will appear as soon as your file arrives._`;
+              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
+              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
+              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `_Send your file now to start!_`;
 
             await sock.sendMessage(senderJid, { text: onboardingPrompt }, { quoted: msg });
             return;

@@ -592,12 +592,12 @@ export function DocumentStudio({
                 </div>
               </div>
 
-              {/* Assignment Saver Tier */}
+              {/* Bulk Offer Tier (10+ Sheets, Single-Sided) */}
               <div className="p-3 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-900/40 space-y-2 flex flex-col justify-between">
                 <div className="space-y-0.5">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-blue-950 dark:text-blue-200 text-xs">
-                      Assignment Saver (10 – 29 sheets)
+                      Bulk Offer (10+ sheets, Single-Sided)
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-600 text-white font-bold shadow-2xs">
                       ₹{activeTiers.assignment.bw.single.toFixed(2)} / pg
@@ -606,47 +606,17 @@ export function DocumentStudio({
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
-                    <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
+                    <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W Single</p>
                     <p className="text-zinc-500">Web: <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">₹{activeTiers.assignment.bw.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">
+                    <p className="text-[10px] text-emerald-600 font-mono font-bold">
                       Save ₹{(activeTiers.standard.bw.single - activeTiers.assignment.bw.single).toFixed(2)}/pg
                     </p>
                   </div>
                   <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-blue-200/60 dark:border-blue-900/30 space-y-0.5">
-                    <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
+                    <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color Single</p>
                     <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{activeTiers.assignment.color.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">
+                    <p className="text-[10px] text-emerald-600 font-mono font-bold">
                       Save ₹{(activeTiers.standard.color.single - activeTiers.assignment.color.single).toFixed(2)}/pg
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Mega Bulk Saver Tier */}
-              <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/70 dark:border-emerald-900/40 space-y-2 flex flex-col justify-between">
-                <div className="space-y-0.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-emerald-950 dark:text-emerald-200 text-xs">
-                      Mega Bulk Saver (30+ sheets)
-                    </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold shadow-2xs">
-                      ₹{activeTiers.mega.bw.single.toFixed(2)} / pg!
-                    </span>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[11px]">
-                  <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
-                    <p className="font-semibold text-zinc-700 dark:text-zinc-300">B&amp;W</p>
-                    <p className="text-zinc-500">Web: <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">₹{activeTiers.mega.bw.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">
-                      Save ₹{(activeTiers.standard.bw.single - activeTiers.mega.bw.single).toFixed(2)}/pg
-                    </p>
-                  </div>
-                  <div className="p-2 rounded-lg bg-white dark:bg-zinc-950 border border-emerald-200/60 dark:border-emerald-900/30 space-y-0.5">
-                    <p className="font-semibold text-pink-600 dark:text-pink-400">Full Color</p>
-                    <p className="text-zinc-500">Web: <span className="font-bold text-pink-600 dark:text-pink-400 font-mono">₹{activeTiers.mega.color.single.toFixed(2)}</span>/sheet</p>
-                    <p className="text-[10px] text-emerald-600 font-mono">
-                      Save ₹{(activeTiers.standard.color.single - activeTiers.mega.color.single).toFixed(2)}/pg
                     </p>
                   </div>
                 </div>
@@ -752,17 +722,17 @@ export function DocumentStudio({
                       </td>
                     </tr>
 
-                    {/* Tier 2: Assignment Saver */}
+                    {/* Tier 2: Bulk Offer (10+ sheets, Single-Sided) */}
                     <tr className="bg-sky-50/40 dark:bg-sky-950/20 hover:bg-sky-50/70 dark:hover:bg-sky-950/30 transition-colors">
                       <td className="py-2.5 px-4">
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-sm text-sky-950 dark:text-sky-200">Assignment Saver</span>
+                            <span className="font-bold text-sm text-sky-950 dark:text-sky-200">Bulk Offer</span>
                             <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-700 dark:text-sky-300 font-bold border border-sky-500/40">
-                              Bulk 10+
+                              Bulk 10+ (Single-Sided)
                             </span>
                           </div>
-                          <div className="text-[11px] text-sky-700 dark:text-sky-300/90 font-mono font-semibold">10 – 29 sheets</div>
+                          <div className="text-[11px] text-sky-700 dark:text-sky-300/90 font-mono font-semibold">10+ sheets</div>
                         </div>
                       </td>
                       <td className="py-2.5 px-4">
@@ -779,37 +749,6 @@ export function DocumentStudio({
                       <td className="py-2.5 px-4">
                         <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
                           Save ₹{(activeTiers.standard.bw.single - activeTiers.assignment.bw.single).toFixed(2)}/pg
-                        </span>
-                      </td>
-                    </tr>
-
-                    {/* Tier 3: Mega Bulk Saver */}
-                    <tr className="bg-emerald-50/40 dark:bg-emerald-950/20 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30 transition-colors">
-                      <td className="py-2.5 px-4">
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-sm text-emerald-950 dark:text-emerald-200">Mega Bulk Saver</span>
-                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/40">
-                              Bulk 30+
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-emerald-700 dark:text-emerald-300/90 font-mono font-semibold">30+ sheets</div>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <div className="font-bold text-base sm:text-lg font-mono text-emerald-700 dark:text-emerald-300">₹{activeTiers.mega.bw.single.toFixed(2)}</div>
-                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">₹{activeTiers.mega.bw.single.toFixed(2)} / pg!</div>
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <div className="font-bold text-base sm:text-lg font-mono text-pink-600 dark:text-pink-400">₹{activeTiers.mega.color.single.toFixed(2)}</div>
-                        <div className="text-[10px] text-zinc-500">₹{activeTiers.mega.color.single.toFixed(2)} / pg</div>
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-medium">Mega Discount</span>
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                          Save ₹{(activeTiers.standard.bw.single - activeTiers.mega.bw.single).toFixed(2)}/pg
                         </span>
                       </td>
                     </tr>

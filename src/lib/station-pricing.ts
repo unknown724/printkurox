@@ -13,13 +13,13 @@ export interface StationPricingConfig {
   bwSingle: number;       // Default: 4.0
   colorSingle: number;    // Default: 7.0
   bwBulk: number;         // Default: 3.0 (for 10+ sheets bulk)
-  colorBulk: number;      // Default: 5.5 (for 10+ sheets bulk)
-  bwMega?: number;        // Default: 2.5 (for 30+ sheets mega bulk)
-  colorMega?: number;     // Default: 4.5 (for 30+ sheets mega bulk)
+  colorBulk: number;      // Default: 5.0 (for 10+ sheets bulk)
+  bwMega?: number;        // Default: 3.0 (floor ₹3.00, no rate lower)
+  colorMega?: number;     // Default: 5.0 (floor ₹5.00, no rate lower)
   bwDuplex?: number;      // Optional fallback
   colorDuplex?: number;   // Optional fallback
-  assignmentDiscountPct?: number; // Default: 25 (%) for 10-29 sheets
-  megaDiscountPct?: number;       // Default: 37.5 (%) for 30+ sheets
+  assignmentDiscountPct?: number; // Default: 25 (%) for 10+ sheets
+  megaDiscountPct?: number;       // Default: 25 (%) (floor at bulk rate)
   razorpayAccountId?: string;    // e.g. 'acc_xxxxxxxxxxxxxx'
   commissionPercent: number;     // Default: 10 (%) platform commission
   updatedAt?: string;
@@ -43,10 +43,10 @@ export interface StationPricingTierRates {
 export const PRICING_GUARDRAILS = {
   bwSingle: { min: 2.0, max: 10.0 },       // ₹2.00 guarantees paper + toner cost
   colorSingle: { min: 4.0, max: 20.0 },    // ₹4.00 guarantees paper + 3-color ink
-  bwBulk: { min: 1.5, max: 8.0 },          // Bulk B&W discount rate (10+ sheets)
-  colorBulk: { min: 3.0, max: 15.0 },      // Bulk Color discount rate (10+ sheets)
-  bwMega: { min: 1.0, max: 8.0 },          // Mega Bulk B&W discount rate (30+ sheets)
-  colorMega: { min: 2.0, max: 15.0 },      // Mega Bulk Color discount rate (30+ sheets)
+  bwBulk: { min: 3.0, max: 8.0 },          // Bulk B&W discount rate (10+ sheets, floor ₹3.00)
+  colorBulk: { min: 5.0, max: 15.0 },      // Bulk Color discount rate (10+ sheets, floor ₹5.00)
+  bwMega: { min: 3.0, max: 8.0 },          // Floor ₹3.00, no discount below ₹3
+  colorMega: { min: 5.0, max: 15.0 },      // Floor ₹5.00, no discount below ₹5
   bwDuplex: { min: 3.0, max: 18.0 },
   colorDuplex: { min: 6.0, max: 35.0 },
   commissionPercent: { min: 0, max: 50 },  // 0% - 50% platform fee
@@ -65,13 +65,13 @@ export function getDefaultStationPricing(stationId: string): StationPricingConfi
     bwSingle: TIER_RATES.standard.bw.single,       // 4.0
     colorSingle: TIER_RATES.standard.color.single, // 7.0
     bwBulk: TIER_RATES.assignment.bw.single,       // 3.0 (bulk 10+ sheets)
-    colorBulk: TIER_RATES.assignment.color.single, // 5.5 (bulk 10+ sheets)
-    bwMega: TIER_RATES.mega.bw.single,             // 2.5 (mega bulk 30+ sheets)
-    colorMega: TIER_RATES.mega.color.single,       // 4.5 (mega bulk 30+ sheets)
+    colorBulk: TIER_RATES.assignment.color.single, // 5.0 (bulk 10+ sheets)
+    bwMega: TIER_RATES.mega.bw.single,             // 3.0 (no offer less than 3.0)
+    colorMega: TIER_RATES.mega.color.single,       // 5.0 (no offer less than 5.0)
     bwDuplex: TIER_RATES.standard.bw.duplex,       // 6.0
     colorDuplex: TIER_RATES.standard.color.duplex, // 10.0
-    assignmentDiscountPct: 25,                    // 25% discount for 10-29 sheets
-    megaDiscountPct: 37.5,                         // 37.5% discount for 30+ sheets
+    assignmentDiscountPct: 25,                    // 25% discount for 10+ sheets (B&W)
+    megaDiscountPct: 25,                           // 25% discount (same as bulk, no rate less than 3/5)
     razorpayAccountId: station?.razorpayAccountId || '',
     commissionPercent: station?.commissionPercent ?? 10,
     updatedAt: new Date().toISOString(),
@@ -165,13 +165,13 @@ export function buildTierRatesFromConfig(cfg: StationPricingConfig): StationPric
   const bwBulkDuplex = Math.round(bwBulk * 1.5 * 2) / 2;
   const colorBulkDuplex = Math.round(colorBulk * 1.5 * 2) / 2;
 
-  // Mega bulk (30+ sheets): use custom configured rate if available, otherwise auto-calculate from bulk
+  // Mega bulk tier (capped so no rate is less than the 10+ bulk rate)
   const bwMegaSingle = cfg.bwMega !== undefined && Number(cfg.bwMega) > 0
-    ? Number(cfg.bwMega)
-    : Math.max(1.5, Math.round(bwBulk * 0.85 * 2) / 2);
+    ? Math.max(bwBulk, Number(cfg.bwMega))
+    : bwBulk;
   const colorMegaSingle = cfg.colorMega !== undefined && Number(cfg.colorMega) > 0
-    ? Number(cfg.colorMega)
-    : Math.max(2.5, Math.round(colorBulk * 0.85 * 2) / 2);
+    ? Math.max(colorBulk, Number(cfg.colorMega))
+    : colorBulk;
   const bwMegaDuplex = Math.max(2.0, Math.round(bwBulkDuplex * 0.85 * 2) / 2);
   const colorMegaDuplex = Math.max(4.0, Math.round(colorBulkDuplex * 0.85 * 2) / 2);
 

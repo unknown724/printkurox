@@ -8,13 +8,11 @@
  *    - B&W Duplex: ₹6.00 (₹3.00/side)
  *    - Color Duplex: ₹10.00 (₹5.00/side)
  * 
- * 2. Assignment Saver (10 – 29 sheets):
- *    - B&W Single: ₹3.00 (Save extra on labs & assignments)
- *    - Color Single: ₹5.50
- * 
- * 3. Mega Bulk Saver (30+ sheets - Notes, Manuals, Projects):
- *    - B&W Single: ₹2.50
- *    - Color Single: ₹4.50
+ * 2. Volume Bulk Saver (10+ sheets, Single-Sided Only):
+ *    - B&W Single: ₹3.00 (vs ₹4.00 standard rate)
+ *    - Color Single: ₹5.00 (vs ₹7.00 standard rate)
+ *    - Duplex: Standard duplex rate applies (₹6.00 B&W, ₹10.00 Color)
+ *    - Floor rate: Minimum rate is ₹3.00 (B&W) and ₹5.00 (Color)
  */
 
 export interface PageConfig {
@@ -88,12 +86,12 @@ export const TIER_RATES = {
     color: { single: 7, duplex: 10 },
   },
   assignment: {
-    bw: { single: 3.0, duplex: 5 },
-    color: { single: 5.5, duplex: 8.5 },
+    bw: { single: 3.0, duplex: 6 },
+    color: { single: 5.0, duplex: 10 },
   },
   mega: {
-    bw: { single: 2.5, duplex: 4.0 },
-    color: { single: 4.5, duplex: 7.0 },
+    bw: { single: 3.0, duplex: 6 },
+    color: { single: 5.0, duplex: 10 },
   },
 } as const;
 
@@ -101,22 +99,13 @@ export const RATES = TIER_RATES.standard;
 
 function getActiveTier(sheetCount: number, customRates?: CustomTierRates) {
   const activeTiers = customRates || TIER_RATES;
-  if (sheetCount >= 30) {
-    return {
-      tierKey: 'mega' as const,
-      tierName: 'Mega Bulk Saver' as const,
-      rates: activeTiers.mega,
-      nextTierSheetsNeeded: 0,
-      nextTierName: null,
-    };
-  }
   if (sheetCount >= 10) {
     return {
       tierKey: 'assignment' as const,
       tierName: 'Assignment Saver' as const,
       rates: activeTiers.assignment,
-      nextTierSheetsNeeded: 30 - sheetCount,
-      nextTierName: `Mega Bulk Saver (₹${activeTiers.mega.bw.single.toFixed(2)}/pg)`,
+      nextTierSheetsNeeded: 0,
+      nextTierName: null,
     };
   }
   return {
@@ -124,7 +113,7 @@ function getActiveTier(sheetCount: number, customRates?: CustomTierRates) {
     tierName: 'Standard' as const,
     rates: activeTiers.standard,
     nextTierSheetsNeeded: 10 - sheetCount,
-    nextTierName: `Assignment Saver (₹${activeTiers.assignment.bw.single.toFixed(2)}/pg)`,
+    nextTierName: `Bulk Offer (₹${activeTiers.assignment.bw.single.toFixed(2)}/pg)`,
   };
 }
 
@@ -170,7 +159,7 @@ export function calculatePricing(input: PricingInput): PricingResult {
         savings: 0,
         tierName: 'Standard',
         nextTierSheetsNeeded: 10,
-        nextTierName: 'Assignment Saver (₹2.50/pg)',
+        nextTierName: 'Bulk Offer (₹3.00/pg)',
         breakdown: 'No pages selected',
         bwPagesCount: 0,
         colorPagesCount: 0,
