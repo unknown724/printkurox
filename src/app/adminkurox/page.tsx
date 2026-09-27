@@ -64,6 +64,7 @@ interface Job {
   total_price: number;
   status: string;
   payment_id: string | null;
+  order_id?: string | null;
   created_at: string;
   station_id?: string | null;
   is_purged?: boolean;
@@ -2185,6 +2186,8 @@ export default function AdminKuroxPage() {
                                   <span className="text-amber-500 font-medium">👑 Admin Free</span>
                                 ) : j.payment_id?.startsWith('CASH_') ? (
                                   <span className="text-emerald-500 font-medium">💵 Cash Paid</span>
+                                ) : j.order_id === 'DIRECT_CTRL_P' || j.payment_id?.startsWith('CTRLP_') || j.payment_id?.startsWith('DIRECT_') || j.payment_id?.startsWith('SERVER_') || (j.total_price === 0 && !j.payment_id?.startsWith('pay_')) ? (
+                                  <span className="text-sky-400 font-medium">🖥️ Server Print (Free)</span>
                                 ) : j.payment_id ? (
                                   <span className="text-emerald-500 font-medium">💳 Razorpay Paid</span>
                                 ) : (

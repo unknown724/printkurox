@@ -42,6 +42,8 @@ CAMPUS_PORTAL_ENABLED = os.getenv('CAMPUS_PORTAL_ENABLED', 'true').lower() in ('
 CAMPUS_PORTAL_URL = os.getenv('CAMPUS_PORTAL_URL', 'http://10.10.200.1:8090').rstrip('/')
 CAMPUS_WIFI_USER = os.getenv('CAMPUS_WIFI_USER', '')
 CAMPUS_WIFI_PASS = os.getenv('CAMPUS_WIFI_PASS', '')
+TARGET_WIFI_PROFILE = os.getenv('TARGET_WIFI_PROFILE', 'BLOCK-B')
+
 
 
 STATION_SLOTS = {
@@ -228,14 +230,75 @@ def keepalive_campus_portal():
     except Exception:
         pass
 
-def auto_reconnect_wifi():
-    """Attempts to re-associate Wi-Fi if network interface dropped."""
+def get_wifi_interface_info():
+    """
+    Returns (state, connected_ssid, connected_profile) from netsh wlan show interfaces.
+    """
+    if sys.platform != 'win32':
+        return "unknown", None, None
     try:
-        if sys.platform == 'win32':
-            subprocess.run(["netsh", "wlan", "connect"], capture_output=True, timeout=5)
-            time.sleep(3)
+        res = subprocess.run(["netsh", "wlan", "show", "interfaces"], capture_output=True, text=True, timeout=5)
+        state = None
+        ssid = None
+        profile = None
+        for line in res.stdout.splitlines():
+            line_strip = line.strip()
+            if line_strip.startswith("State") and ":" in line_strip:
+                state = line_strip.split(":", 1)[1].strip().lower()
+            elif line_strip.startswith("SSID") and not line_strip.startswith("BSSID") and ":" in line_strip:
+                ssid = line_strip.split(":", 1)[1].strip()
+            elif line_strip.startswith("Profile") and ":" in line_strip:
+                profile = line_strip.split(":", 1)[1].strip()
+        return state or "unknown", ssid, profile
     except Exception:
-        pass
+        return "error", None, None
+
+def auto_reconnect_wifi(target_profile=TARGET_WIFI_PROFILE):
+    """
+    Actively checks, searches, and reconnects to target Wi-Fi (e.g. BLOCK-B).
+    Returns: (success: bool, status_msg: str)
+    """
+    if sys.platform != 'win32':
+        return False, "Non-Windows OS"
+    
+    try:
+        state, current_ssid, current_profile = get_wifi_interface_info()
+        
+        # If already connected to target profile or SSID
+        if state == "connected" and (current_profile == target_profile or current_ssid == target_profile):
+            return True, f"Connected to {target_profile}"
+        
+        print(f"[Wi-Fi Watchdog] Wi-Fi is '{state}'. Searching and connecting to '{target_profile}'...")
+        
+        # 1. Ensure WLAN interface is enabled
+        try:
+            subprocess.run(["netsh", "interface", "set", "interface", "name=Wi-Fi", "admin=ENABLED"],
+                           capture_output=True, timeout=3)
+        except Exception:
+            pass
+
+        # 2. Trigger scan by querying available networks
+        try:
+            subprocess.run(["netsh", "wlan", "show", "networks"], capture_output=True, timeout=5)
+        except Exception:
+            pass
+            
+        # 3. Request connection to the target profile
+        cmd = ["netsh", "wlan", "connect"]
+        if target_profile:
+            cmd.append(f"name={target_profile}")
+        subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+        
+        # 4. Wait up to 10 seconds for association
+        for _ in range(10):
+            time.sleep(1)
+            state, current_ssid, current_profile = get_wifi_interface_info()
+            if state == "connected":
+                return True, f"Connected to {current_profile or target_profile}"
+        
+        return False, f"Timeout connecting to {target_profile} (state: {state})"
+    except Exception as e:
+        return False, f"Wi-Fi reconnect error: {e}"
 
 # =============================================================================
 # 4. SERVICE MONITOR & AUTO-HEAL
@@ -285,6 +348,17 @@ def main():
     print("[INIT] Activating Windows Anti-Sleep Keepalive Mode...")
     set_windows_anti_sleep(True)
 
+    print(f"[INIT] Checking Wi-Fi link to '{TARGET_WIFI_PROFILE}'...")
+    wifi_ok, wifi_msg = auto_reconnect_wifi(TARGET_WIFI_PROFILE)
+    print(f"[INIT] Wi-Fi: {wifi_msg}")
+    
+    # If captive portal detected right away on boot, authenticate immediately
+    has_internet, net_reason = check_internet_probe()
+    if net_reason == "CAPTIVE_PORTAL":
+        print("[INIT] Campus portal detected. Logging in...")
+        ok, msg = login_campus_portal()
+        print(f"[INIT] Portal Login: {msg}")
+
     print("[INIT] Starting Always-Online Watchdog loop...")
     heartbeat_count = 0
     fail_count = 0
@@ -297,18 +371,27 @@ def main():
             has_internet, net_reason = check_internet_probe()
 
             if net_reason == "CAPTIVE_PORTAL":
-                portal_status_msg = "Logging in..."
+                portal_status_msg = "Logging in to Campus Portal..."
                 ok, msg = login_campus_portal()
                 portal_status_msg = msg
                 time.sleep(1)
                 has_internet, net_reason = check_internet_probe()
             elif net_reason == "NO_CONNECTION":
                 fail_count += 1
-                if fail_count >= 2:
-                    auto_reconnect_wifi()
-                    ok, msg = login_campus_portal()
-                    portal_status_msg = msg
+                portal_status_msg = f"Reconnecting to {TARGET_WIFI_PROFILE}..."
+                wifi_ok, reconn_msg = auto_reconnect_wifi(TARGET_WIFI_PROFILE)
+                if wifi_ok:
+                    fail_count = 0
+                    time.sleep(1)
                     has_internet, net_reason = check_internet_probe()
+                    if net_reason == "CAPTIVE_PORTAL":
+                        portal_status_msg = "Logging in to Campus Portal..."
+                        ok, msg = login_campus_portal()
+                        portal_status_msg = msg
+                        time.sleep(1)
+                        has_internet, net_reason = check_internet_probe()
+                else:
+                    portal_status_msg = reconn_msg
             else:
                 fail_count = 0
                 portal_status_msg = f"Authenticated ({CAMPUS_WIFI_USER})"

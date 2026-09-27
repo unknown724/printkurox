@@ -1,0 +1,7 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Classes\*\shell\PrintToRoommateEpson]
+@="Print on Roommate EPSON L3210"
+
+[HKEY_CURRENT_USER\Software\Classes\*\shell\PrintToRoommateEpson\command]
+@="cmd.exe /k node \"C:\\Users\\Richard Konsam\\Desktop\\DEVANANDA\\autoprint\\scripts\\direct_print.js\" \"%1\""

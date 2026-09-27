@@ -20,6 +20,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "worker.js",
     "daemon/**",
+    "scripts/**",
     "scratch/**",
   ]),
 ]);

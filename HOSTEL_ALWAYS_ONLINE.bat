@@ -10,5 +10,8 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+:: Quick Wi-Fi Auto-Connect probe for Block B
+netsh wlan connect name="BLOCK-B" >nul 2>&1
+
 python station_keepalive.py
 pause
