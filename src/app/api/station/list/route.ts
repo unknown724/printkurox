@@ -1,13 +1,17 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
+import crypto from 'crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    // Ensure table exists (fail-safe if register hasn't been called yet)
+    const { searchParams } = new URL(req.url);
+    const includeAll = searchParams.get('all') === 'true';
+
+    // Ensure table exists
     const createTableSql = `
       CREATE TABLE IF NOT EXISTS stations (
           id TEXT PRIMARY KEY,
@@ -27,20 +31,12 @@ export async function GET() {
     `;
     await executeD1(createTableSql);
 
-    // Fetch all public stations
-    const rows = await queryD1(`
-      SELECT 
-        id, 
-        name, 
-        short_name as shortName, 
-        station_type as type, 
-        status, 
-        last_heartbeat, 
-        duplex_enabled as duplexEnabled
-      FROM stations 
-      WHERE is_public = 1
-      ORDER BY created_at ASC
-    `);
+    // Fetch stations (public only for students, or all if requested by admin)
+    const sql = includeAll
+      ? `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, admin_pin as adminPin, station_token as stationToken, status, last_heartbeat, duplex_enabled as duplexEnabled, created_at as createdAt FROM stations ORDER BY created_at ASC`
+      : `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, status, last_heartbeat, duplex_enabled as duplexEnabled FROM stations WHERE is_public = 1 ORDER BY created_at ASC`;
+
+    const rows = await queryD1(sql);
 
     // Process rows to determine accurate online/offline status based on last_heartbeat
     const stations = rows.map((row: any) => {
@@ -48,12 +44,10 @@ export async function GET() {
       let offlineMinutes = 0;
 
       if (row.last_heartbeat) {
-        // Parse UTC datetime string to Date object
         const heartbeatTime = new Date(row.last_heartbeat + 'Z').getTime();
         const now = Date.now();
         const diffSeconds = Math.floor((now - heartbeatTime) / 1000);
-        
-        // If we heard from them in the last 60 seconds, they are online
+
         if (diffSeconds < 60) {
           isOnline = true;
         } else {
@@ -65,17 +59,112 @@ export async function GET() {
         id: row.id,
         name: row.name,
         shortName: row.shortName,
-        type: row.type,
+        type: row.type || 'hostel',
+        isPublic: row.isPublic === 1,
+        whatsappNumber: row.whatsappNumber,
+        stationToken: row.stationToken,
         status: isOnline ? 'online' : 'offline',
         offlineText: isOnline ? null : (offlineMinutes > 0 ? `Offline for ${offlineMinutes} min` : 'Offline'),
-        duplexEnabled: row.duplexEnabled === 1
+        duplexEnabled: row.duplexEnabled === 1,
+        createdAt: row.createdAt,
       };
     });
 
     return NextResponse.json({ success: true, stations });
-
   } catch (err: any) {
     console.error('Failed to list stations:', err);
     return NextResponse.json({ error: 'Failed to fetch stations' }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const {
+      name,
+      shortName,
+      stationType = 'hostel',
+      whatsappNumber = '+919863013886',
+      adminPin = '1234',
+      isPublic = 1,
+      duplexEnabled = 1,
+    } = body;
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return NextResponse.json({ error: 'Station name is required' }, { status: 400 });
+    }
+
+    const cleanName = name.trim();
+    const stationId = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const stationToken = `kurox_st_${stationId}_${crypto.randomBytes(16).toString('hex')}`;
+
+    const insertSql = `
+      INSERT INTO stations 
+        (id, name, short_name, station_type, is_public, whatsapp_number, admin_pin, station_token, status, duplex_enabled, created_at)
+      VALUES 
+        (?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        short_name = excluded.short_name,
+        station_type = excluded.station_type,
+        is_public = excluded.is_public,
+        whatsapp_number = excluded.whatsapp_number,
+        admin_pin = excluded.admin_pin,
+        duplex_enabled = excluded.duplex_enabled;
+    `;
+
+    const success = await executeD1(insertSql, [
+      stationId,
+      cleanName,
+      shortName ? shortName.trim().toUpperCase() : null,
+      stationType,
+      isPublic ? 1 : 0,
+      whatsappNumber,
+      adminPin,
+      stationToken,
+      duplexEnabled ? 1 : 0,
+    ]);
+
+    if (!success) {
+      return NextResponse.json({ error: 'Failed to create station in database' }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      station_id: stationId,
+      station_token: stationToken,
+      message: `Station '${cleanName}' created successfully`,
+    });
+  } catch (err: any) {
+    console.error('Create station error:', err);
+    return NextResponse.json({ error: err.message || 'Failed to create station' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const body = await req.json().catch(() => ({}));
+    const stationId = (body.stationId || searchParams.get('stationId') || '').toLowerCase().trim();
+
+    if (!stationId) {
+      return NextResponse.json({ error: 'Missing stationId to delete' }, { status: 400 });
+    }
+
+    const deleteSql = `DELETE FROM stations WHERE id = ?`;
+    const success = await executeD1(deleteSql, [stationId]);
+
+    if (!success) {
+      return NextResponse.json({ error: 'Failed to delete station from database' }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      stationId,
+      message: `Station '${stationId}' has been deleted successfully.`,
+    });
+  } catch (err: any) {
+    console.error('Delete station error:', err);
+    return NextResponse.json({ error: err.message || 'Failed to delete station' }, { status: 500 });
   }
 }

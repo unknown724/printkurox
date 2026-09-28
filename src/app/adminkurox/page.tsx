@@ -209,6 +209,21 @@ export default function AdminKuroxPage() {
   const [stationPricingSuccess, setStationPricingSuccess] = useState<string | null>(null);
   const [stationPricingError, setStationPricingError] = useState<string | null>(null);
 
+  // Dynamic D1 Station Management
+  const [dbStations, setDbStations] = useState<any[]>([]);
+  const [loadingStations, setLoadingStations] = useState<boolean>(false);
+  const [showAddStationModal, setShowAddStationModal] = useState<boolean>(false);
+  const [stationToDelete, setStationToDelete] = useState<any | null>(null);
+  const [deletingStation, setDeletingStation] = useState<boolean>(false);
+  const [addStationForm, setAddStationForm] = useState({
+    name: '',
+    shortName: '',
+    stationType: 'hostel',
+    adminPin: '1234',
+    whatsappNumber: '+919863013886',
+  });
+  const [addingStation, setAddingStation] = useState<boolean>(false);
+
   // Hardware Calibration Inputs
   const [calibTotal, setCalibTotal] = useState<number>(24741);
   const [calibBw, setCalibBw] = useState<number>(13845);
@@ -425,6 +440,80 @@ export default function AdminKuroxPage() {
     }
   };
 
+  const fetchDbStations = useCallback(async () => {
+    try {
+      setLoadingStations(true);
+      const res = await fetch('/api/station/list?all=true');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.stations)) {
+          setDbStations(data.stations);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch stations:', err);
+    } finally {
+      setLoadingStations(false);
+    }
+  }, []);
+
+  const handleAddStation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addStationForm.name.trim()) return;
+    setAddingStation(true);
+    try {
+      const res = await fetch('/api/station/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(addStationForm),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to add station');
+      }
+      setStationPricingSuccess(`Station '${addStationForm.name}' registered successfully!`);
+      setShowAddStationModal(false);
+      setAddStationForm({
+        name: '',
+        shortName: '',
+        stationType: 'hostel',
+        adminPin: '1234',
+        whatsappNumber: '+919863013886',
+      });
+      await fetchDbStations();
+      await fetchStationsPricing();
+      setTimeout(() => setStationPricingSuccess(null), 3500);
+    } catch (err: any) {
+      setStationPricingError(err.message || 'Failed to add station');
+      setTimeout(() => setStationPricingError(null), 4000);
+    } finally {
+      setAddingStation(false);
+    }
+  };
+
+  const handleDeleteStation = async (stationId: string) => {
+    setDeletingStation(true);
+    try {
+      const res = await fetch(`/api/station/list?stationId=${encodeURIComponent(stationId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete station');
+      }
+      setStationPricingSuccess(`Station '${stationId}' deleted from database.`);
+      setStationToDelete(null);
+      await fetchDbStations();
+      await fetchStationsPricing();
+      setTimeout(() => setStationPricingSuccess(null), 3500);
+    } catch (err: any) {
+      setStationPricingError(err.message || 'Failed to delete station');
+      setTimeout(() => setStationPricingError(null), 4000);
+    } finally {
+      setDeletingStation(false);
+    }
+  };
+
   const checkAuthAndLoad = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/auth?action=devices');
@@ -438,6 +527,7 @@ export default function AdminKuroxPage() {
         fetchStats('all');
         fetchSettings();
         fetchStationsPricing();
+        fetchDbStations();
       } else {
         setIsAdmin(false);
       }
@@ -848,38 +938,50 @@ export default function AdminKuroxPage() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
-                      Campus Hostel Stations & Razorpay Route Splits
+                      Registered Print Stations & Pricing
                     </h3>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                      Multi-Station Marketplace
+                      {dbStations.length} Active Stations
                     </span>
                   </div>
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    Customize print rates per hostel and link Razorpay Sub-Merchant IDs (<code>acc_...</code>) for automated 90/10 bank revenue splits.
+                    Live database stations in Cloudflare D1. Add new stations, adjust print rates, or delete any station.
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowAddStationModal(true)}
+                  className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Station</span>
+                </button>
+
                 <a
                   href="https://dashboard.razorpay.com/app/partners/client-onboarding"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-[#131314] hover:bg-zinc-200 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-[#282a2c] text-zinc-700 dark:text-zinc-300 text-[11px] font-bold flex items-center gap-1.5 transition-colors"
+                  className="hidden sm:flex px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-[#131314] hover:bg-zinc-200 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-[#282a2c] text-zinc-700 dark:text-zinc-300 text-[11px] font-bold items-center gap-1.5 transition-colors"
                   title="Open Razorpay Partner Dashboard to invite co-hostellers and view their Account IDs"
                 >
                   <ExternalLink className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Razorpay Onboarding</span>
+                  <span>Razorpay Split</span>
                 </a>
 
                 <button
                   type="button"
-                  onClick={fetchStationsPricing}
-                  disabled={loadingPricing}
+                  onClick={() => {
+                    fetchDbStations();
+                    fetchStationsPricing();
+                  }}
+                  disabled={loadingPricing || loadingStations}
                   className="p-1.5 rounded-xl border border-zinc-200 dark:border-[#282a2c] hover:bg-zinc-100 dark:hover:bg-[#131314] text-zinc-600 dark:text-zinc-300 transition-colors cursor-pointer"
-                  title="Refresh Station Pricing"
+                  title="Refresh Stations & Pricing"
                 >
-                  <RotateCcw className={`w-3.5 h-3.5 ${loadingPricing ? 'animate-spin' : ''}`} />
+                  <RotateCcw className={`w-3.5 h-3.5 ${loadingPricing || loadingStations ? 'animate-spin' : ''}`} />
                 </button>
               </div>
             </div>
@@ -900,12 +1002,27 @@ export default function AdminKuroxPage() {
 
             {/* Stations Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(() => {
-                const uniqueStations = Object.values(STATIONS).filter(
-                  (s, idx, arr) => arr.findIndex((x) => x.id === s.id) === idx
-                );
-
-                return uniqueStations.map((station) => {
+              {dbStations.length === 0 ? (
+                <div className="col-span-full p-8 rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-400 flex items-center justify-center mx-auto">
+                    <Building2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-zinc-900 dark:text-white">No registered stations found</h4>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Click &quot;Add Station&quot; above to create one, or run PrintKurox_Setup.exe on any hostel laptop.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddStationModal(true)}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-xs"
+                  >
+                    + Add Print Station
+                  </button>
+                </div>
+              ) : (
+                dbStations.map((station) => {
                   const pricing = stationsPricing[station.id] || {
                     bwSingle: 4.0,
                     colorSingle: 7.0,
@@ -914,11 +1031,12 @@ export default function AdminKuroxPage() {
                     bwMega: 2.5,
                     colorMega: 4.5,
                     commissionPercent: 10,
-                    razorpayAccountId: station.razorpayAccountId || '',
+                    razorpayAccountId: '',
                   };
 
                   const isEditing = editingStationId === station.id;
                   const isSaving = savingStationPricing && editingStationId === station.id;
+                  const isOnline = station.status === 'online';
 
                   return (
                     <div
@@ -932,45 +1050,69 @@ export default function AdminKuroxPage() {
                       {/* Station Header */}
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold text-zinc-900 dark:text-white">
                               {station.name}
                             </span>
+                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-zinc-200/70 dark:bg-white/10 text-zinc-700 dark:text-zinc-300">
+                              {station.shortName || (station.id.includes('block_') ? station.id.replace('hostel_', '').toUpperCase() : 'STATION')}
+                            </span>
                             <span
-                              className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                                station.status === 'active'
+                              className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 ${
+                                isOnline
                                   ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                                  : station.status === 'standby'
-                                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
-                                  : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
                               }`}
                             >
-                              {station.status}
+                              <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                              <span>{isOnline ? 'ONLINE' : station.offlineText || 'OFFLINE'}</span>
                             </span>
                           </div>
-                          <p className="text-[10px] text-zinc-400 mt-0.5">{station.tagline}</p>
+                          <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">
+                            ID: {station.id} {station.whatsappNumber ? `• WA: ${station.whatsappNumber}` : ''}
+                          </p>
                         </div>
 
                         {!isEditing && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingStationId(station.id);
-                              setEditForm({
-                                bwSingle: pricing.bwSingle,
-                                colorSingle: pricing.colorSingle,
-                                bwBulk: pricing.bwBulk ?? 3.0,
-                                colorBulk: pricing.colorBulk ?? 5.5,
-                                bwMega: pricing.bwMega ?? 2.5,
-                                colorMega: pricing.colorMega ?? 4.5,
-                                razorpayAccountId: pricing.razorpayAccountId || '',
-                                commissionPercent: pricing.commissionPercent ?? 10,
-                              });
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-[10px] font-bold transition-all cursor-pointer"
-                          >
-                            Edit Station
-                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Link
+                              href={`/admin/${station.id}${station.stationToken ? `?token=${station.stationToken}` : ''}`}
+                              target="_blank"
+                              className="p-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[10px] font-bold transition-all"
+                              title="Open Station Earnings Dashboard"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </Link>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingStationId(station.id);
+                                setEditForm({
+                                  bwSingle: pricing.bwSingle,
+                                  colorSingle: pricing.colorSingle,
+                                  bwBulk: pricing.bwBulk ?? 3.0,
+                                  colorBulk: pricing.colorBulk ?? 5.5,
+                                  bwMega: pricing.bwMega ?? 2.5,
+                                  colorMega: pricing.colorMega ?? 4.5,
+                                  razorpayAccountId: pricing.razorpayAccountId || '',
+                                  commissionPercent: pricing.commissionPercent ?? 10,
+                                });
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-[10px] font-bold transition-all cursor-pointer"
+                            >
+                              Edit Rates
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setStationToDelete(station)}
+                              className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                              title="Delete Station"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -1201,8 +1343,8 @@ export default function AdminKuroxPage() {
                       )}
                     </div>
                   );
-                });
-              })()}
+                })
+              )}
             </div>
           </div>
 
@@ -2608,6 +2750,164 @@ export default function AdminKuroxPage() {
               >
                 {refilling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 <span>Save Hardware Baseline</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD NEW PRINT STATION MODAL */}
+      {showAddStationModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-[#1e1f20] border border-zinc-200 dark:border-[#282a2c] rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-scale-in">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-[#282a2c]">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-500" />
+                <h3 className="font-bold text-sm text-zinc-900 dark:text-white">Add New Print Station</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddStationModal(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs font-bold cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddStation} className="space-y-3.5">
+              <div>
+                <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                  Station Full Name *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Hostel Block C (Dibang)"
+                  value={addStationForm.name}
+                  onChange={(e) => setAddStationForm((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-medium text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                    Short Badge Code
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. BLOCK_C"
+                    value={addStationForm.shortName}
+                    onChange={(e) => setAddStationForm((prev) => ({ ...prev, shortName: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-mono text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                    Station Type
+                  </label>
+                  <select
+                    value={addStationForm.stationType}
+                    onChange={(e) => setAddStationForm((prev) => ({ ...prev, stationType: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-medium text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="hostel">Hostel (Campus)</option>
+                    <option value="shop">Print Shop (Off-Campus)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                    Station PIN / Passcode
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 1234"
+                    value={addStationForm.adminPin}
+                    onChange={(e) => setAddStationForm((prev) => ({ ...prev, adminPin: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-mono text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                    WhatsApp Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="+91..."
+                    value={addStationForm.whatsappNumber}
+                    onChange={(e) => setAddStationForm((prev) => ({ ...prev, whatsappNumber: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] text-xs font-mono text-zinc-900 dark:text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <p className="text-[10px] text-zinc-400 leading-relaxed">
+                Adding this station registers it in Cloudflare D1. It will immediately appear in the student kiosk selector and this console.
+              </p>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddStationModal(false)}
+                  className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingStation}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {addingStation ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  <span>Create Station</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE STATION CONFIRMATION MODAL */}
+      {stationToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-[#1e1f20] border border-rose-500/30 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl animate-scale-in text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto border border-rose-500/20">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div>
+              <h3 className="font-bold text-base text-zinc-900 dark:text-white">Delete Print Station?</h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1.5 leading-relaxed">
+                Are you sure you want to permanently delete{' '}
+                <strong className="text-zinc-900 dark:text-white">{stationToDelete.name}</strong> (<code>{stationToDelete.id}</code>)?
+              </p>
+              <p className="text-[11px] text-rose-500 mt-2 font-medium">
+                This will remove the station from the student kiosk catalog and the admin console immediately.
+              </p>
+            </div>
+
+            <div className="pt-2 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setStationToDelete(null)}
+                className="w-full px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteStation(stationToDelete.id)}
+                disabled={deletingStation}
+                className="w-full px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {deletingStation ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>Delete Station</span>
               </button>
             </div>
           </div>

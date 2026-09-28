@@ -413,32 +413,18 @@ export function HostelSelectorModal({
           </div>
         </div>
 
-        {/* Modal Footer / Host a Station in your Block (Always visible, shrink-0) */}
-        <div className="shrink-0 p-3.5 sm:p-4 bg-zinc-50 dark:bg-white/[0.02] border-t border-zinc-100 dark:border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs">
-          <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400 text-[11px]">
-            <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            <span>
-              Want a print station in your hostel block? Quick turnkey setup available for block custodians.
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-full sm:w-auto px-3.5 py-1.5 rounded-xl border border-zinc-200 dark:border-white/10 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5 font-medium text-xs transition-colors cursor-pointer"
-            >
-              Close
-            </button>
-            <a
-              href="https://wa.me/919863013886?text=Hi%20Devananda%2C%20I%20want%20to%20host%20a%20PrintKurox%20station%20in%20my%20NERIST%20Hostel%20Block!"
-              target="_blank"
-              rel="noreferrer"
-              className="w-full sm:w-auto px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-center text-xs transition-colors shadow-xs cursor-pointer"
-            >
-              Host a Station
-            </a>
-          </div>
+        {/* Modal Footer (Clean & minimal) */}
+        <div className="shrink-0 p-3 sm:p-3.5 bg-zinc-50 dark:bg-white/[0.02] border-t border-zinc-100 dark:border-white/[0.08] flex items-center justify-between text-xs">
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            Real-time campus availability updates live every 20s
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-1.5 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/[0.06] hover:bg-zinc-100 dark:hover:bg-white/10 text-zinc-800 dark:text-zinc-200 font-semibold text-xs transition-colors cursor-pointer"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>

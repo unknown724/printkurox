@@ -49,6 +49,15 @@ export function FooterLegal() {
           </button>
           <span>•</span>
           <a
+            href="https://wa.me/919863013886?text=Hi%20Devananda%2C%20I%20want%20to%20host%20a%20PrintKurox%20station%20in%20my%20NERIST%20Hostel%20Block!"
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors underline-offset-2 hover:underline"
+          >
+            Host a Station
+          </a>
+          <span>•</span>
+          <a
             href="https://wa.me/919362980761?text=Hi%20PrintKurox%2C%20I%20want%20to%20print%20a%20document"
             target="_blank"
             rel="noreferrer"
