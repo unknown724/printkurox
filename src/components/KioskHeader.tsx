@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -19,12 +19,30 @@ function HeaderContent() {
 
   const isRomenPath = pathname?.startsWith('/romen');
   const stationParam = searchParams.get('station') || searchParams.get('station_id');
-  const isRomenStation = stationParam === 'romen' || stationParam === 'romen_xerox' || isRomenPath;
 
-  const station = isRomenStation ? getStationConfig('romen_xerox') : getStationConfig(stationParam || 'block_b');
+  const [preferredStation, setPreferredStation] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('printkurox_preferred_station') || localStorage.getItem('nerist_selected_station');
+      if (stored) setPreferredStation(stored);
+    }
+  }, [stationParam]);
+
+  const activeStationKey = stationParam || preferredStation || 'block_b';
+  const isRomenStation = activeStationKey === 'romen' || activeStationKey === 'romen_xerox' || isRomenPath;
+
+  const station = isRomenStation ? getStationConfig('romen_xerox') : getStationConfig(activeStationKey);
   const isRomen = station.id === 'romen_xerox';
 
   const [showHostelModal, setShowHostelModal] = useState(false);
+
+  const getSubtitle = () => {
+    if (isRomen) return 'Near Main Gate · Self-Service';
+    if (station.id.includes('block_b')) return `${station.shortName || 'Block B · Pare'} (Room 29)`;
+    if (station.id.includes('block_c')) return `${station.shortName || 'Block C · Dibang'} (Ground Floor)`;
+    return `${station.name} · Common Area`;
+  };
 
   return (
     <header className="relative z-30 border-b border-zinc-200 dark:border-white/10 bg-white/80 dark:bg-[#000000]/80 backdrop-blur-xl sticky top-0 transition-colors duration-200">
@@ -64,7 +82,7 @@ function HeaderContent() {
                   <ChevronDown className="w-3 h-3 text-zinc-400 group-hover/station:text-red-500 transition-colors" />
                 </div>
                 <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-normal -mt-0.5 truncate max-w-[170px] sm:max-w-[210px]">
-                  {`${station.shortName || 'Block B · Pare'} (Room 29)`}
+                  {getSubtitle()}
                 </span>
               </div>
             </button>
@@ -86,9 +104,7 @@ function HeaderContent() {
                   </span>
                 </div>
                 <span className="block text-[10px] text-zinc-500 dark:text-zinc-400 font-normal -mt-0.5 truncate max-w-[170px] sm:max-w-[210px]">
-                  {isRomen
-                    ? 'Near Main Gate · Self-Service'
-                    : `${station.shortName || 'Block B · Pare'} (Room 29)`}
+                  {getSubtitle()}
                 </span>
               </div>
             </div>

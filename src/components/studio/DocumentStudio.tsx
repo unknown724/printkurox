@@ -156,10 +156,10 @@ export function DocumentStudio({
           </div>
 
           {/* Target Hostel Print Station Card - Prominent, Generous & Highly Legible */}
-          <div className="p-3.5 sm:p-4 rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-zinc-50/80 dark:bg-white/[0.03] backdrop-blur-xl flex items-center justify-between gap-3 shadow-xs">
+          <div className="p-3.5 sm:p-4 rounded-2xl border-2 border-blue-500/30 dark:border-blue-500/40 bg-gradient-to-r from-blue-50/40 via-zinc-50/80 to-transparent dark:from-blue-950/25 dark:via-white/[0.03] dark:to-transparent backdrop-blur-xl flex items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
-              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 dark:bg-white/[0.08] text-zinc-800 dark:text-white flex items-center justify-center shrink-0 border border-zinc-200 dark:border-white/10 shadow-xs">
-                <Building2 className="w-5 h-5 text-zinc-700 dark:text-zinc-200" />
+              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/25 shadow-xs">
+                <Building2 className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -190,7 +190,13 @@ export function DocumentStudio({
                 </h3>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1 mt-0.5">
                   <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-                  <span>Room 29 (1st Floor) · Pare Hostel</span>
+                  <span>
+                    {currentStation.id.includes('block_b') || currentStation.id === 'main'
+                      ? 'Room 29 (1st Floor) · Pare Hostel'
+                      : currentStation.id.includes('block_c')
+                      ? 'Ground Floor Common Area · Dibang Hostel'
+                      : currentStation.address || `${currentStation.name} · Common Area`}
+                  </span>
                 </p>
               </div>
             </div>
@@ -199,7 +205,7 @@ export function DocumentStudio({
               <button
                 type="button"
                 onClick={() => setShowStationModal(true)}
-                className="h-8 px-3 rounded-xl border border-zinc-200 dark:border-white/15 bg-white hover:bg-zinc-100 dark:bg-white/[0.08] dark:hover:bg-white/[0.15] text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all shadow-2xs cursor-pointer active:scale-95"
+                className="h-8 px-3 rounded-xl border border-blue-500/30 dark:border-blue-500/40 bg-white hover:bg-zinc-100 dark:bg-white/[0.08] dark:hover:bg-white/[0.15] text-blue-600 dark:text-blue-400 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all shadow-2xs cursor-pointer active:scale-95"
                 title="Change station"
               >
                 <span>Change</span>

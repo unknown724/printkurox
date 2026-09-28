@@ -13,18 +13,21 @@ import {
   AlertCircle,
   Lock,
 } from 'lucide-react';
-import { getCampusStations, StationConfig } from '@/lib/stations';
+import { getCampusStations, StationConfig, isStationMatch, normalizeStationId } from '@/lib/stations';
+
+interface DynamicStation {
+  id: string;
+  name: string;
+  shortName: string | null;
+  type: string;
+  status: 'online' | 'offline';
+  offlineText: string | null;
+  duplexEnabled: boolean;
+}
 
 interface StationLiveStatus {
   stationId: string;
-  name: string;
-  shortName: string;
-  blockCode: string;
-  riverName: string;
   online: boolean;
-  status: 'active' | 'standby' | 'expansion_planned';
-  lastSeen: string | null;
-  ageSeconds: number | null;
 }
 
 interface HostelSelectorModalProps {
@@ -34,11 +37,14 @@ interface HostelSelectorModalProps {
   onStationSelect?: (stationId: string) => void;
 }
 
-function getCleanRoomLocation(st: StationConfig): string {
-  if (st.id === 'block_b' || st.id === 'main') return 'Room 29 (1st Fl)';
-  if (st.id === 'block_c') return 'Ground Floor';
-  if (st.id === 'girls_hostel') return 'Girls Complex';
-  if (st.id === 'romen' || st.id === 'romen_xerox') return 'Near Main Gate';
+function getCleanRoomLocation(stId: string): string {
+  const norm = stId.toLowerCase();
+  if (norm.includes('block_b') || norm === 'main') return 'Room 29 (1st Fl)';
+  if (norm.includes('block_c')) return 'Ground Floor';
+  if (norm.includes('girls_hostel')) return 'Girls Complex';
+  if (norm.includes('romen')) return 'Near Main Gate';
+  const blockMatch = norm.match(/block[_-]?([a-z0-9]+)/i);
+  if (blockMatch) return `Block ${blockMatch[1].toUpperCase()} Common Area`;
   return 'Common Area';
 }
 
@@ -56,32 +62,26 @@ export function HostelSelectorModal({
   const activeId = currentStationId || searchParams.get('station') || 'block_b';
 
   const [mounted, setMounted] = useState(false);
-  const [liveStatuses, setLiveStatuses] = useState<Record<string, StationLiveStatus>>({});
+  const [dynamicStations, setDynamicStations] = useState<DynamicStation[]>([]);
   const [stationPricingMap, setStationPricingMap] = useState<
     Record<string, { bwSingle: number; colorSingle: number; bwBulk?: number }>
   >({});
-  const [_isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-
-  const campusStations = getCampusStations();
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Fetch real-time status for all campus stations
-  const fetchAllStatuses = async () => {
+  // Fetch real-time status and list from the new database API
+  const fetchDynamicStations = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/printer-status?all=true', { cache: 'no-store' });
+      const res = await fetch('/api/station/list', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        if (data.stations && Array.isArray(data.stations)) {
-          const map: Record<string, StationLiveStatus> = {};
-          data.stations.forEach((st: StationLiveStatus) => {
-            map[st.stationId] = st;
-          });
-          setLiveStatuses(map);
+        if (data.success && Array.isArray(data.stations)) {
+          setDynamicStations(data.stations);
         }
       }
     } catch {
@@ -117,9 +117,9 @@ export function HostelSelectorModal({
 
   useEffect(() => {
     if (isOpen) {
-      fetchAllStatuses();
+      fetchDynamicStations();
       fetchAllPricing();
-      const interval = setInterval(fetchAllStatuses, 20_000);
+      const interval = setInterval(fetchDynamicStations, 20_000);
       return () => clearInterval(interval);
     }
   }, [isOpen]);
@@ -147,35 +147,19 @@ export function HostelSelectorModal({
 
   if (!isOpen || !mounted) return null;
 
-  const handleSelectStation = (station: StationConfig) => {
-    if (station.status === 'expansion_planned') {
-      setNotice(
-        `Station Not Added Yet: ${station.name} is planned for expansion. Please print via Hostel Block B (Pare, Room 29) for immediate printing!`
-      );
-      setTimeout(() => setNotice(null), 5000);
-      return;
-    }
+  const handleSelectStation = (stationId: string) => {
+    try {
+      localStorage.setItem('nerist_selected_station', stationId);
+      localStorage.setItem('printkurox_preferred_station', stationId);
+    } catch {}
 
-    if (station.status === 'standby') {
-      setNotice(
-        `Station Setup In Progress: ${station.name} hardware pairing is underway. Please print via Hostel Block B (Pare, Room 29) for instant pickup!`
-      );
-      setTimeout(() => setNotice(null), 5000);
-      return;
-    }
-
-    // Active station selection
     if (onStationSelect) {
-      onStationSelect(station.id);
+      onStationSelect(stationId);
     } else {
       const params = new URLSearchParams(searchParams.toString());
-      params.set('station', station.id);
+      params.set('station', stationId);
       router.push(`/?${params.toString()}`);
     }
-
-    try {
-      localStorage.setItem('nerist_selected_station', station.id);
-    } catch {}
 
     onClose();
   };
@@ -310,7 +294,7 @@ export function HostelSelectorModal({
         <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 scrollbar-thin">
           <div className="flex items-center justify-between mb-2.5 px-1">
             <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-              Choose Hostel Block ({campusStations.length})
+              Choose Print Station ({dynamicStations.length})
             </span>
             <span className="text-[10px] text-zinc-400 font-mono">
               2 per row · tap to select
@@ -318,118 +302,107 @@ export function HostelSelectorModal({
           </div>
 
           <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
-            {campusStations.map((st) => {
-              const live = liveStatuses[st.id];
-              const isOnline = live ? live.online : st.status === 'active';
-              const isSelected = activeId === st.id || (activeId === 'main' && st.id === 'block_b');
+            {dynamicStations.map((st) => {
+              const isOnline = st.status === 'online';
+              const isSelected = isStationMatch(activeId, st.id);
+              const badgeText = st.shortName || (st.id.includes('block_') ? st.id.replace(/^hostel_/, '').toUpperCase() : (st.type === 'shop' ? 'SHOP' : 'STATION'));
 
               return (
                 <button
                   key={st.id}
                   type="button"
-                  onClick={() => handleSelectStation(st)}
-                  className={`group text-left p-3 sm:p-3.5 rounded-2xl border transition-all relative flex flex-col justify-between overflow-hidden cursor-pointer ${
+                  onClick={() => handleSelectStation(st.id)}
+                  className={`group text-left p-3 sm:p-3.5 rounded-2xl border-2 transition-all relative flex flex-col justify-between overflow-hidden cursor-pointer ${
                     isSelected
-                      ? 'bg-blue-50/90 dark:bg-blue-950/40 border-blue-500 shadow-md ring-2 ring-blue-500/30 dark:ring-blue-500/40'
-                      : st.status === 'active'
-                      ? 'bg-white dark:bg-zinc-900/60 border-zinc-200 dark:border-white/10 hover:border-blue-400 dark:hover:border-blue-500/50 hover:shadow-md'
-                      : 'bg-zinc-50/50 dark:bg-white/[0.02] border-zinc-200/60 dark:border-white/5 opacity-75 hover:opacity-100 hover:border-zinc-300 dark:hover:border-white/15'
+                      ? 'bg-gradient-to-br from-blue-50/95 to-indigo-50/80 dark:from-blue-950/60 dark:to-indigo-950/40 border-blue-500 dark:border-blue-400 shadow-xl shadow-blue-500/20 ring-4 ring-blue-500/20'
+                      : 'bg-white dark:bg-zinc-900/60 border-zinc-200/90 dark:border-white/10 hover:border-blue-400 dark:hover:border-blue-500/50 hover:shadow-md'
                   }`}
                 >
-                  {/* Selected Indicator Glow */}
+                  {/* Selected Indicator Glow & Corner Accent */}
                   {isSelected && (
-                    <div className="absolute top-0 right-0 w-12 h-12 bg-blue-500/10 dark:bg-blue-400/15 rounded-bl-full pointer-events-none" />
+                    <>
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-500/20 via-indigo-500/10 to-transparent rounded-bl-full pointer-events-none" />
+                      <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-blue-500 via-indigo-400 to-blue-500" />
+                    </>
                   )}
 
-                  {/* Header: Hostel Block Badge + Checkmark or Slot */}
+                  {/* Header: Hostel Block Badge + Selected Badge / Slot */}
                   <div>
-                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                    <div className="flex items-center justify-between gap-1 mb-2">
                       <span className={`text-[10px] sm:text-[11px] font-mono font-bold px-2 py-0.5 rounded-md border ${
                         isSelected
-                          ? 'bg-blue-600 text-white border-blue-600'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                           : 'bg-zinc-100 dark:bg-white/10 text-zinc-800 dark:text-zinc-200 border-zinc-200 dark:border-white/10'
                       }`}>
-                        {st.blockCode}
+                        {badgeText}
                       </span>
 
                       {isSelected ? (
-                        <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-600 text-white font-bold text-[10px] tracking-wide shadow-sm animate-fade-in">
                           <Check className="w-3 h-3 stroke-[3]" />
-                        </div>
+                          <span>Selected</span>
+                        </span>
                       ) : (
-                        <span className="text-[10px] font-mono text-zinc-400">
-                          #{st.slot}
+                        <span className="text-[10px] text-zinc-400 font-medium group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors">
+                          Select →
                         </span>
                       )}
                     </div>
 
                     {/* River Name & Room */}
                     <div className="mt-1">
-                      <div className="font-bold text-sm sm:text-base text-zinc-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors leading-snug truncate">
-                        {st.riverName}
+                      <div className={`font-bold text-sm sm:text-base leading-snug truncate transition-colors ${
+                        isSelected ? 'text-blue-600 dark:text-blue-400 font-extrabold' : 'text-zinc-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400'
+                      }`}>
+                        {st.name}
                       </div>
                       <div className="text-[11px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1 mt-0.5 truncate">
                         <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-                        <span className="truncate">{getCleanRoomLocation(st)}</span>
+                        <span className="truncate">{getCleanRoomLocation(st.id)}</span>
                       </div>
 
-                      {/* Compact Live Price Badge or Setup Notice */}
-                      {st.status === 'active' ? (
-                        (() => {
-                          const stPricing = stationPricingMap[st.id];
-                          const bw = stPricing?.bwSingle ?? 4;
-                          const col = stPricing?.colorSingle ?? 7;
-                          return (
-                            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-mono flex-wrap">
-                              <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-white/[0.08] text-zinc-700 dark:text-zinc-300 font-semibold border border-zinc-200/80 dark:border-white/10">
-                                ₹{bw} B&amp;W
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
-                                ₹{col} Color
-                              </span>
-                            </div>
-                          );
-                        })()
-                      ) : (
-                        <div className="mt-1.5 flex items-center">
-                          <span className="text-[10px] font-mono font-medium text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-white/[0.06] px-2 py-0.5 rounded border border-zinc-200/80 dark:border-white/10">
-                            To be Updated
-                          </span>
-                        </div>
-                      )}
+                      {/* Compact Live Price Badge */}
+                      {(() => {
+                        const stPricing = stationPricingMap[st.id] || stationPricingMap[normalizeStationId(st.id)];
+                        const bw = stPricing?.bwSingle ?? 4;
+                        const col = stPricing?.colorSingle ?? 7;
+                        return (
+                          <div className="mt-2 flex items-center gap-1.5 text-[10px] font-mono flex-wrap">
+                            <span className={`px-1.5 py-0.5 rounded font-semibold border ${
+                              isSelected 
+                                ? 'bg-blue-100/80 dark:bg-blue-900/40 text-blue-900 dark:text-blue-200 border-blue-300 dark:border-blue-700/50' 
+                                : 'bg-zinc-100 dark:bg-white/[0.08] text-zinc-700 dark:text-zinc-300 border-zinc-200/80 dark:border-white/10'
+                            }`}>
+                              ₹{bw} B&amp;W
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
+                              ₹{col} Color
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
-                  {/* Footer: Printer Availability Status */}
+                  {/* Footer: Printer Availability Status & Active Badge */}
                   <div className="pt-2 mt-2.5 border-t border-zinc-100 dark:border-white/[0.08] flex items-center justify-between">
-                    {st.status === 'active' ? (
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-[10px] sm:text-[11px] font-bold ${
+                        isOnline
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-amber-600 dark:text-amber-400'
+                      }`}
+                    >
                       <span
-                        className={`inline-flex items-center gap-1.5 text-[10px] sm:text-[11px] font-bold ${
-                          isOnline
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : 'text-amber-600 dark:text-amber-400'
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
                         }`}
-                      >
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${
-                            isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
-                          }`}
-                        />
-                        <span>{isOnline ? 'Printer Ready' : 'Standby'}</span>
-                      </span>
-                    ) : st.status === 'standby' ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                        <Clock className="w-2.5 h-2.5 shrink-0" />
-                        <span>In Setup</span>
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500">
-                        Expansion Planned
-                      </span>
-                    )}
+                      />
+                      <span>{isOnline ? 'Printer Ready' : st.offlineText || 'Offline'}</span>
+                    </span>
 
                     {isSelected && (
-                      <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider font-mono">
                         Active
                       </span>
                     )}

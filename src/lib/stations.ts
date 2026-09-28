@@ -259,15 +259,123 @@ export const STATIONS: Record<string, StationConfig> = {
     isPublicCampus: false, // HIDDEN on campus web app UI
     slot: 154,
   },
+  hostel_block_b_pare: {
+    id: 'hostel_block_b_pare',
+    name: 'Hostel Block B (Pare)',
+    shortName: 'Block B · Pare',
+    blockCode: 'Block B',
+    riverName: 'Pare',
+    tagline: 'Autonomous Hostel Print Station · Room 29',
+    whatsappNumber: '+919362980761',
+    adminPin: process.env.ADMIN_SECRET_KEY || 'Kurox725#29',
+    operatorName: 'Devananda / Custodian',
+    allowOnlinePayment: true,
+    allowCounterPayment: false,
+    requireCounterApproval: false,
+    address: 'Room 29, 1st Floor, Block B (Pare Hostel), NERIST',
+    status: 'active',
+    isPublicCampus: true,
+    slot: 1,
+  },
+  romen_xerox_main_gate: {
+    id: 'romen_xerox_main_gate',
+    name: 'Romen Xerox',
+    shortName: 'Romen Xerox',
+    blockCode: 'Off-Campus',
+    riverName: 'Main Gate',
+    tagline: 'Fast Photocopy, Printing & Stationery Services',
+    whatsappNumber: '+916909228847',
+    adminPin: 'Romen69092#',
+    operatorName: 'Romen',
+    allowOnlinePayment: false,
+    allowCounterPayment: true,
+    requireCounterApproval: true,
+    address: 'Near Main Gate, Nirjuli',
+    status: 'active',
+    isPublicCampus: false,
+    slot: 154,
+  },
 };
 
 /**
- * Returns station config for a given ID. Defaults to Block B (Pare).
+ * Normalizes station IDs across legacy, D1, and URL variations.
+ */
+export function normalizeStationId(stationId?: string | null): string {
+  if (!stationId) return DEFAULT_STATION_ID;
+  const key = stationId.toLowerCase().trim();
+  if (key === 'block_b' || key === 'main' || key === 'hostel_block_b_pare' || key === 'pare') {
+    return 'block_b';
+  }
+  if (key === 'romen' || key === 'romen_xerox' || key === 'romen_xerox_main_gate') {
+    return 'romen_xerox';
+  }
+  return key;
+}
+
+/**
+ * Robust check if two station IDs refer to the same station.
+ */
+export function isStationMatch(idA?: string | null, idB?: string | null): boolean {
+  if (!idA || !idB) return false;
+  const a = idA.toLowerCase().trim();
+  const b = idB.toLowerCase().trim();
+  if (a === b) return true;
+  if (normalizeStationId(a) === normalizeStationId(b)) return true;
+
+  const cleanA = a.replace(/^hostel_/, '').replace(/_pare$/, '').replace(/_main_gate$/, '');
+  const cleanB = b.replace(/^hostel_/, '').replace(/_pare$/, '').replace(/_main_gate$/, '');
+  return cleanA === cleanB;
+}
+
+const dynamicStationsCache: Record<string, StationConfig> = {};
+
+export function registerDynamicStation(station: StationConfig) {
+  if (station && station.id) {
+    dynamicStationsCache[station.id.toLowerCase().trim()] = station;
+  }
+}
+
+/**
+ * Returns station config for a given ID.
+ * Dynamically synthesizes config for newly registered D1 stations (like Hostel Block K).
  */
 export function getStationConfig(stationId?: string | null): StationConfig {
   if (!stationId) return STATIONS.block_b;
   const key = stationId.toLowerCase().trim();
-  return STATIONS[key] || STATIONS.block_b;
+  const normKey = normalizeStationId(key);
+
+  if (STATIONS[key]) return STATIONS[key];
+  if (STATIONS[normKey]) return STATIONS[normKey];
+  if (dynamicStationsCache[key]) return dynamicStationsCache[key];
+  if (dynamicStationsCache[normKey]) return dynamicStationsCache[normKey];
+
+  // Synthesize dynamic StationConfig for custom/D1 stations
+  const isHostel = key.includes('hostel') || key.includes('block');
+  const prettyName = key
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  const blockMatch = key.match(/block[_-]?([a-z0-9]+)/i);
+  const blockCode = blockMatch ? `Block ${blockMatch[1].toUpperCase()}` : (isHostel ? 'Hostel' : 'Station');
+
+  return {
+    id: key,
+    name: prettyName,
+    shortName: blockCode,
+    blockCode: blockCode,
+    riverName: blockCode,
+    tagline: 'Autonomous Campus Print Station',
+    whatsappNumber: DEFAULT_DEVELOPER_WHATSAPP,
+    adminPin: '',
+    operatorName: 'Station Custodian',
+    allowOnlinePayment: true,
+    allowCounterPayment: false,
+    requireCounterApproval: false,
+    address: `Common Area, ${prettyName}, NERIST`,
+    status: 'active',
+    isPublicCampus: true,
+    slot: 50,
+  };
 }
 
 /**

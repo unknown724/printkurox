@@ -13,7 +13,7 @@ import { BorderBeam } from '@/components/ui/BorderBeam';
 import { Crown, ChevronRight, MessageCircle } from 'lucide-react';
 import { PhotoLayoutSettings } from '@/components/studio/PhotoLayoutSelector';
 import { EnhanceMode } from '@/lib/image-enhancer';
-import { getStationConfig, DEFAULT_STATION_ID } from '@/lib/stations';
+import { getStationConfig, DEFAULT_STATION_ID, registerDynamicStation } from '@/lib/stations';
 
 function HomePageContent() {
   const router = useRouter();
@@ -22,20 +22,56 @@ function HomePageContent() {
 
   const [preferredStation, setPreferredStation] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('printkurox_preferred_station') || DEFAULT_STATION_ID;
+      return localStorage.getItem('printkurox_preferred_station') || localStorage.getItem('nerist_selected_station') || DEFAULT_STATION_ID;
     }
     return DEFAULT_STATION_ID;
   });
 
   const activeStationId = stationParam || preferredStation;
-  const station = getStationConfig(activeStationId);
+  const [station, setStation] = useState(() => getStationConfig(activeStationId));
 
   useEffect(() => {
     if (stationParam && typeof window !== 'undefined') {
       localStorage.setItem('printkurox_preferred_station', stationParam);
+      localStorage.setItem('nerist_selected_station', stationParam);
       setPreferredStation(stationParam);
     }
-  }, [stationParam]);
+    setStation(getStationConfig(activeStationId));
+  }, [stationParam, activeStationId]);
+
+  // Sync dynamic stations from database
+  useEffect(() => {
+    fetch('/api/station/list')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.stations)) {
+          data.stations.forEach((st: any) => {
+            const blockMatch = st.id.match(/block[_-]?([a-z0-9]+)/i);
+            const blockCode = blockMatch ? `Block ${blockMatch[1].toUpperCase()}` : (st.type === 'shop' ? 'Shop' : 'Station');
+            registerDynamicStation({
+              id: st.id,
+              name: st.name,
+              shortName: st.shortName || blockCode,
+              blockCode: blockCode,
+              riverName: blockCode,
+              tagline: 'Autonomous Campus Print Station',
+              whatsappNumber: '+919863013886',
+              adminPin: '',
+              operatorName: 'Station Custodian',
+              allowOnlinePayment: true,
+              allowCounterPayment: false,
+              requireCounterApproval: false,
+              address: `${blockCode} Common Area, NERIST`,
+              status: st.status === 'online' ? 'active' : 'standby',
+              isPublicCampus: true,
+              slot: 50,
+            });
+          });
+          setStation(getStationConfig(activeStationId));
+        }
+      })
+      .catch(() => {});
+  }, [activeStationId]);
 
   const [stationTierRates, setStationTierRates] = useState<CustomTierRates | undefined>(undefined);
 
@@ -311,6 +347,7 @@ function HomePageContent() {
           onStationSelect={(newStationId) => {
             if (typeof window !== 'undefined') {
               localStorage.setItem('printkurox_preferred_station', newStationId);
+              localStorage.setItem('nerist_selected_station', newStationId);
               setPreferredStation(newStationId);
             }
             const params = new URLSearchParams(searchParams.toString());
