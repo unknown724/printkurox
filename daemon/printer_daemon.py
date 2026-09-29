@@ -26,6 +26,25 @@ from dotenv import load_dotenv
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
 
+# Ensure pythonw does not crash on print() or log()
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+    except Exception:
+        class _DummyStream:
+            def write(self, *a, **k): pass
+            def flush(self, *a, **k): pass
+        sys.stdout = _DummyStream()
+
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+    except Exception:
+        class _DummyStream:
+            def write(self, *a, **k): pass
+            def flush(self, *a, **k): pass
+        sys.stderr = _DummyStream()
+
 try:
     import ctypes
     import ctypes.wintypes
@@ -1178,11 +1197,13 @@ class LocalArchiveHTTPHandler(BaseHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-File-Extension, X-Original-Filename, Range')
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
+        self.send_header('Access-Control-Max-Age', '86400')
         super().end_headers()
 
     def do_OPTIONS(self):
-        self.send_response(200)
+        self.send_response(204)
         self.end_headers()
 
     def do_POST(self):

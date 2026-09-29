@@ -17,6 +17,25 @@ import time
 import socket
 import subprocess
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
+
+# Ensure pythonw does not crash on print()
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+    except Exception:
+        class _DummyStream:
+            def write(self, *a, **k): pass
+            def flush(self, *a, **k): pass
+        sys.stdout = _DummyStream()
+
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+    except Exception:
+        class _DummyStream:
+            def write(self, *a, **k): pass
+            def flush(self, *a, **k): pass
+        sys.stderr = _DummyStream()
 import requests
 import json
 import ctypes

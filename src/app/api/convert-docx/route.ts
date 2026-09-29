@@ -88,10 +88,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { pdfBuffer, pageCount } = await convertDocxToPdf(buffer, ext, true);
+    // Try native LibreOffice or Microsoft Word. If not available on serverless (Vercel),
+    // do NOT return degraded 2-page mammoth plain-text output. Return 503 so client-side
+    // docx-preview converter renders all authentic pages, styling, tables, and images in browser.
+    const { pdfBuffer, pageCount } = await convertDocxToPdf(buffer, ext, false);
 
     if (!pdfBuffer || pdfBuffer.length === 0) {
-      return NextResponse.json({ error: 'Conversion produced empty output' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'No native conversion engine available on server', fallbackToClient: true },
+        { status: 503 }
+      );
     }
 
     const outName = fileName.replace(/\.(docx|doc)$/i, '.pdf');
@@ -106,11 +112,11 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err: unknown) {
-    console.warn('[API /api/convert-docx] Server-side DOCX conversion error:', err);
-    const message = err instanceof Error ? err.message : 'DOCX conversion failed';
+    console.warn('[API /api/convert-docx] Server-side DOCX conversion notice (falling back to client):', err);
+    const message = err instanceof Error ? err.message : 'Server native engine not available';
     return NextResponse.json(
       { error: message, fallbackToClient: true },
-      { status: 500 }
+      { status: 503 }
     );
   }
 }
