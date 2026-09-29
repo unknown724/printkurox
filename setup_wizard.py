@@ -351,12 +351,14 @@ class UninstallProgressDialog(tk.Toplevel):
         self.parent = parent
         self.delete_cloud = delete_cloud
         self.station_id = station_id
+        self._done_fired = False  # Guard against double-fire from timer + button
 
         self.title("PrintKurox Cleaner")
         self.geometry("480x300")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", lambda: None)  # Prevent closing mid-cleanup
 
         self.update_idletasks()
         try:
@@ -443,26 +445,52 @@ class UninstallProgressDialog(tk.Toplevel):
             time.sleep(0.5)
 
             if self.delete_cloud and self.station_id:
+                cloud_deleted = False
+                # Method 1: Try Vercel API (works on any station laptop, no CF token needed)
                 try:
-                    env_vars = {}
-                    if os.path.exists(ENV_FILE_PATH):
-                        with open(ENV_FILE_PATH, 'r', encoding='utf-8') as ef:
-                            for line in ef:
-                                if '=' in line and not line.strip().startswith('#'):
-                                    k, v = line.strip().split('=', 1)
-                                    env_vars[k.strip()] = v.strip().strip('"').strip("'")
-                    cf_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or env_vars.get("CLOUDFLARE_ACCOUNT_ID") or "948fd75d8b84a5cf20559d6aa789d4dd"
-                    cf_token = os.environ.get("CLOUDFLARE_API_TOKEN") or env_vars.get("CLOUDFLARE_API_TOKEN") or ""
-                    cf_db = os.environ.get("CLOUDFLARE_D1_DATABASE_ID") or env_vars.get("CLOUDFLARE_D1_DATABASE_ID") or "3f4d4547-e86b-4cdd-a867-9ebba19c12c9"
-                    if cf_token:
-                        d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
-                        d1_headers = {"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"}
-                        payload = json.dumps({"sql": "DELETE FROM stations WHERE id = ?;", "params": [self.station_id]}).encode('utf-8')
-                        req = urllib.request.Request(d1_url, data=payload, headers=d1_headers)
-                        urllib.request.urlopen(req, timeout=5)
-                    self.after(0, lambda: self.step3_lbl.config(text="✓ 3. Station released from Cloudflare D1", foreground="green"))
+                    import ssl
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    # Load station token for auth
+                    st_token = ""
+                    if os.path.exists(CONFIG_FILE_PATH):
+                        try:
+                            with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as cf:
+                                st_token = json.load(cf).get("station_token", "")
+                        except Exception:
+                            pass
+                    api_payload = json.dumps({"stationId": self.station_id, "stationToken": st_token}).encode('utf-8')
+                    api_req = urllib.request.Request(
+                        f"{API_BASE_URL}/daemon/delete-station",
+                        data=api_payload,
+                        headers={"Content-Type": "application/json", "User-Agent": "PrintKurox-Setup/2.5"}
+                    )
+                    with urllib.request.urlopen(api_req, context=ctx, timeout=10) as resp:
+                        resp_data = json.loads(resp.read().decode('utf-8'))
+                        if resp_data.get("success"):
+                            cloud_deleted = True
                 except Exception:
-                    self.after(0, lambda: self.step3_lbl.config(text="✓ 3. Station cloud entry cleared", foreground="green"))
+                    pass
+
+                # Method 2: Fallback to direct D1 (works if CF token available)
+                if not cloud_deleted:
+                    try:
+                        cf_acc, cf_token, cf_db = get_cf_env()
+                        if cf_token:
+                            d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
+                            d1_headers = {"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"}
+                            payload = json.dumps({"sql": "DELETE FROM stations WHERE id = ?;", "params": [self.station_id]}).encode('utf-8')
+                            req = urllib.request.Request(d1_url, data=payload, headers=d1_headers)
+                            urllib.request.urlopen(req, timeout=5)
+                            cloud_deleted = True
+                    except Exception:
+                        pass
+
+                if cloud_deleted:
+                    self.after(0, lambda: self.step3_lbl.config(text="✓ 3. Station deleted from cloud server", foreground="green"))
+                else:
+                    self.after(0, lambda: self.step3_lbl.config(text="⚠ 3. Cloud delete failed (may need manual removal)", foreground="orange"))
             else:
                 self.after(0, lambda: self.step3_lbl.config(text="— 3. Cloud registration preserved (skipped)"))
             time.sleep(0.5)
@@ -489,11 +517,19 @@ class UninstallProgressDialog(tk.Toplevel):
             self.lbl_subtitle.config(text="All services, startup scripts, and configurations have been purged.")
 
         self.btn_done.config(state="normal")
-        self.after(2500, self._on_done)
+        # Allow WM_DELETE_WINDOW now that cleanup is done
+        self.protocol("WM_DELETE_WINDOW", self._on_done)
+        self.after(3000, self._on_done)
 
     def _on_done(self):
+        if self._done_fired:
+            return
+        self._done_fired = True
         try:
             self.grab_release()
+        except Exception:
+            pass
+        try:
             self.destroy()
         except Exception:
             pass
@@ -1075,7 +1111,7 @@ class PrintKuroxSetupApp(tk.Tk):
         btn_uninstall = ttk.Button(footer_frame, text="Uninstall / Clean PC", width=20, command=self.uninstall_station)
         btn_uninstall.pack(side="left")
 
-        btn_cancel = ttk.Button(footer_frame, text="Cancel", width=12, command=self.destroy)
+        btn_cancel = ttk.Button(footer_frame, text="Cancel", width=12, command=self._cancel_reconfigure)
         btn_cancel.pack(side="right", padx=(6, 0))
 
         self.btn_submit = ttk.Button(footer_frame, text="Register", width=18, style="Accent.TButton", command=self.save_and_start)
@@ -1085,17 +1121,16 @@ class PrintKuroxSetupApp(tk.Tk):
 
         self.load_existing_env()
 
+    def _cancel_reconfigure(self):
+        """Cancel reconfigure: return to dashboard if configured, else quit."""
+        if self.is_already_configured():
+            self.show_dashboard_ui()
+        else:
+            self.quit_app()
+
     def launch_and_exit(self):
-        conn_path = os.path.join(BASE_DIR, "connector.exe")
-        bat_path = os.path.join(BASE_DIR, "START_PRINTKUROX.bat")
-        fallback_bat = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
-        if os.path.exists(conn_path):
-            subprocess.Popen(["cmd.exe", "/c", "start", "PrintKurox Station", conn_path], cwd=BASE_DIR)
-        elif os.path.exists(bat_path):
-            subprocess.Popen(["cmd.exe", "/c", "start", "", bat_path], cwd=BASE_DIR)
-        elif os.path.exists(fallback_bat):
-            subprocess.Popen(["cmd.exe", "/c", "start", "", fallback_bat], cwd=BASE_DIR)
-        self.destroy()
+        """Switches directly to the built-in dashboard/spooler monitor."""
+        self.show_dashboard_ui()
 
     def uninstall_station(self):
         confirm = messagebox.askyesno(
@@ -1118,7 +1153,11 @@ class PrintKuroxSetupApp(tk.Tk):
             parent=self
         )
 
-        UninstallProgressDialog(self, delete_cloud, self.current_station_id)
+        self.spooler_running = False
+        dlg = UninstallProgressDialog(self, delete_cloud, self.current_station_id)
+        self.wait_window(dlg)
+        # Fully exit the app after uninstall
+        self.quit_app()
 
     def toggle_password_visibility(self):
         if self.entry_portal_pass.cget('show') == '':
@@ -1420,6 +1459,26 @@ class PrintKuroxSetupApp(tk.Tk):
             self.entry_portal_pass.delete(0, tk.END)
             self.entry_portal_pass.insert(0, loaded_pass)
 
+        # 4. Load room number, admin pin, station_id from station_config.json
+        #    (these fields aren't stored in daemon/.env)
+        if os.path.exists(CONFIG_FILE_PATH):
+            try:
+                with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                saved_room = cfg.get("room_number", "")
+                saved_pin = cfg.get("admin_pin", "")
+                saved_station_id = cfg.get("station_id", "")
+                if saved_room:
+                    self.entry_room_number.delete(0, tk.END)
+                    self.entry_room_number.insert(0, saved_room)
+                if saved_pin:
+                    self.entry_admin_pin.delete(0, tk.END)
+                    self.entry_admin_pin.insert(0, saved_pin)
+                if saved_station_id and not loaded_station_id:
+                    loaded_station_id = saved_station_id
+            except Exception:
+                pass
+
         self.current_station_id = loaded_station_id
         self._populate_initial_hostels(loaded_station_id)
 
@@ -1452,8 +1511,13 @@ class PrintKuroxSetupApp(tk.Tk):
                 messagebox.showerror("Configuration Error", "The Admin Passcode must contain at least 4 characters.", parent=self)
                 return
 
+            # Reconstruct the full station name with the new room number
+            base_hostel_name = raw_selection.split(" \u2014 ")[0].split(" (")[0].strip()
+            new_station_name = f"{base_hostel_name} ({room_num})" if room_num else base_hostel_name
+
             # Update daemon/.env (for live Wi-Fi auto-login and printing daemon)
             update_env_file({
+                "STATION_NAME": new_station_name,
                 "PRINTER_NAME": printer_name,
                 "TARGET_WIFI_PROFILE": wifi_ssid,
                 "CAMPUS_WIFI_USER": portal_user,
@@ -1466,6 +1530,7 @@ class PrintKuroxSetupApp(tk.Tk):
                 try:
                     with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
                         cfg = json.load(f)
+                    cfg["station_name"] = new_station_name
                     cfg["printer_name"] = printer_name
                     cfg["wifi_ssid"] = wifi_ssid
                     cfg["room_number"] = room_num
@@ -1475,24 +1540,77 @@ class PrintKuroxSetupApp(tk.Tk):
                 except Exception:
                     pass
 
-            # Sync updated room number and admin PIN directly to Cloudflare D1
+            # Sync updated settings to cloud via Vercel update-station API
             st_id = getattr(self, 'current_station_id', '')
+            cloud_ok = False
+            cloud_err_msg = ""
             if st_id:
-                def _sync_cloud_update():
-                    try:
-                        cf_acc, cf_token, cf_db = get_cf_env()
-                        if cf_token:
-                            d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
-                            d1_headers = {"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"}
-                            sql = "UPDATE stations SET short_name = ?, admin_pin = ? WHERE id = ?;"
-                            payload = json.dumps({"sql": sql, "params": [room_num, admin_pin, st_id]}).encode('utf-8')
-                            req = urllib.request.Request(d1_url, data=payload, headers=d1_headers)
-                            urllib.request.urlopen(req, timeout=8)
-                    except Exception as e:
-                        print("Notice updating cloud settings:", e)
-                threading.Thread(target=_sync_cloud_update, daemon=True).start()
+                try:
+                    import ssl
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
 
-            messagebox.showinfo("Settings Saved", "Your printer, Wi-Fi password, room number, and admin passcode have been updated successfully!", parent=self)
+                    # Load existing station_token from config
+                    existing_token = ""
+                    if os.path.exists(CONFIG_FILE_PATH):
+                        try:
+                            with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                                cfg_loaded = json.load(f)
+                            existing_token = cfg_loaded.get("station_token", "")
+                        except Exception:
+                            pass
+
+                    # Use the dedicated update-station endpoint (updates in-place, no duplicates)
+                    try:
+                        api_payload = json.dumps({
+                            "stationId": st_id,
+                            "stationToken": existing_token,
+                            "name": new_station_name,
+                            "shortName": room_num,
+                            "adminPin": admin_pin,
+                        }).encode('utf-8')
+                        api_req = urllib.request.Request(
+                            f"{API_BASE_URL}/daemon/update-station",
+                            data=api_payload,
+                            headers={"Content-Type": "application/json", "User-Agent": "PrintKurox-Setup/2.5"}
+                        )
+                        with urllib.request.urlopen(api_req, context=ctx, timeout=12) as resp:
+                            resp_data = json.loads(resp.read().decode('utf-8'))
+                            if resp_data.get("success"):
+                                cloud_ok = True
+                    except Exception as api_err:
+                        cloud_err_msg = str(api_err)
+
+                    # Fallback: Try direct D1 update (works if CF token is available)
+                    if not cloud_ok:
+                        try:
+                            cf_acc, cf_token, cf_db = get_cf_env()
+                            if cf_token:
+                                d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
+                                d1_headers = {"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"}
+                                sql = "UPDATE stations SET name = ?, short_name = ?, admin_pin = ? WHERE id = ?;"
+                                payload = json.dumps({"sql": sql, "params": [new_station_name, room_num, admin_pin, st_id]}).encode('utf-8')
+                                req = urllib.request.Request(d1_url, data=payload, headers=d1_headers)
+                                with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                                    resp_data = json.loads(resp.read().decode('utf-8'))
+                                    if resp_data.get("success"):
+                                        cloud_ok = True
+                        except Exception as d1_err:
+                            cloud_err_msg += f" | D1: {d1_err}"
+
+                except Exception as e:
+                    cloud_err_msg = str(e)
+
+            if cloud_ok:
+                messagebox.showinfo("Settings Saved", f"Station updated to \"{new_station_name}\".\nAll settings synced to cloud and local config.", parent=self)
+            elif st_id:
+                messagebox.showwarning("Saved Locally Only",
+                    f"Settings saved locally but cloud sync failed.\n\n"
+                    f"Error: {cloud_err_msg[:200]}\n\n"
+                    f"Settings will auto-sync on next heartbeat.", parent=self)
+            else:
+                messagebox.showinfo("Settings Saved", "Local configuration updated.", parent=self)
             return
 
         base_hostel_name = raw_selection.split(" — ")[0].split(" (")[0].strip()
@@ -1928,11 +2046,13 @@ class PrintKuroxSetupApp(tk.Tk):
     def _confirm_uninstall(self):
         confirm = messagebox.askyesno(
             "Disconnect & Uninstall Station",
-            "Are you sure you want to disconnect this station from this PC?\n\n"
+            "Are you sure you want to disconnect this station?\n\n"
             "This will:\n"
-            "• Stop the background printing service\n"
-            "• Remove automatic Windows startup\n"
-            "• Clear local credentials and configuration\n\n"
+            "\u2022 Stop the background printing service\n"
+            "\u2022 Remove automatic Windows startup\n"
+            "\u2022 Delete the station from the cloud server\n"
+            "\u2022 Clear local credentials and configuration\n\n"
+            "The hostel block will become available for another student to claim.\n\n"
             "Proceed with uninstallation?",
             parent=self,
             icon="warning"
@@ -1941,10 +2061,10 @@ class PrintKuroxSetupApp(tk.Tk):
             return
 
         self.spooler_running = False
-        dlg = UninstallProgressDialog(self, delete_cloud=False, station_id=self.current_station_id)
+        dlg = UninstallProgressDialog(self, delete_cloud=True, station_id=self.current_station_id)
         self.wait_window(dlg)
-        self.setup_ui()
-        self.refresh_devices()
+        # Fully exit the app after uninstall
+        self.quit_app()
 
     def _dashboard_spooler_loop(self):
         cfg = load_station_config()
