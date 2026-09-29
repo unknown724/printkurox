@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateStationToken } from '@/lib/stations';
+import { validateStationTokenAsync, normalizeStationId } from '@/lib/stations';
 import { executeD1, queryD1, PrintJobRecord } from '@/lib/cloudflare-d1';
 
 export const runtime = 'nodejs';
@@ -7,8 +7,13 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const stationToken = req.headers.get('x-station-token') || req.headers.get('authorization')?.replace('Bearer ', '');
-    const auth = validateStationToken(stationToken);
+    const { searchParams } = new URL(req.url);
+    const stationToken =
+      req.headers.get('x-station-token') ||
+      req.headers.get('authorization')?.replace('Bearer ', '') ||
+      searchParams.get('token');
+
+    const auth = await validateStationTokenAsync(stationToken);
 
     if (!auth.isValid || !auth.station) {
       return NextResponse.json({ error: 'Unauthorized: Invalid station token' }, { status: 401 });
@@ -20,13 +25,26 @@ export async function POST(req: NextRequest) {
     }
 
     const station = auth.station;
-    const isMain = station.id === 'block_b' || station.id === 'main';
+    const normId = normalizeStationId(station.id);
+    const isMain = normId === 'block_b' || normId === 'main';
 
     // Verify job belongs to this station and is PAID
     const checkSql = isMain
-      ? `SELECT id, status, pickup_code, is_duplex, total_pages FROM print_jobs WHERE id = ? AND (station_id = 'main' OR station_id = 'block_b' OR station_id IS NULL) LIMIT 1`
-      : `SELECT id, status, pickup_code, is_duplex, total_pages FROM print_jobs WHERE id = ? AND station_id = ? LIMIT 1`;
-    const checkParams = isMain ? [jobId] : [jobId, station.id];
+      ? `SELECT id, status, pickup_code, is_duplex, total_pages FROM print_jobs 
+         WHERE id = ? AND (
+           station_id = 'main' OR 
+           station_id = 'block_b' OR 
+           station_id = 'hostel_block_b_pare' OR 
+           station_id = 'pare' OR 
+           station_id IS NULL
+         ) LIMIT 1`
+      : `SELECT id, status, pickup_code, is_duplex, total_pages FROM print_jobs 
+         WHERE id = ? AND (
+           station_id = ? OR 
+           station_id = ? OR 
+           station_id = ?
+         ) LIMIT 1`;
+    const checkParams = isMain ? [jobId] : [jobId, station.id, normId, `hostel_${station.id}`];
 
     const rows = await queryD1<PrintJobRecord>(checkSql, checkParams);
     if (rows.length === 0) {
@@ -63,3 +81,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+

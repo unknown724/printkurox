@@ -422,6 +422,8 @@ export function getStationToken(stationId: string): string {
   return `kurox_st_${normId}_${rawHash}`;
 }
 
+import { queryD1 } from '@/lib/cloudflare-d1';
+
 /**
  * Validates a daemon station token timing-safely and returns the associated station config.
  */
@@ -434,6 +436,67 @@ export function validateStationToken(token?: string | null): { isValid: boolean;
     if (safeCompare(trimmed, expected)) {
       return { isValid: true, station };
     }
+  }
+
+  for (const station of Object.values(dynamicStationsCache)) {
+    const expected = getStationToken(station.id);
+    if (safeCompare(trimmed, expected)) {
+      return { isValid: true, station };
+    }
+  }
+
+  return { isValid: false, station: null };
+}
+
+/**
+ * Async token validator that checks in-memory config first, then queries Cloudflare D1
+ * to authenticate dynamic hostel/campus stations created via /adminkurox.
+ */
+export async function validateStationTokenAsync(
+  token?: string | null
+): Promise<{ isValid: boolean; station: StationConfig | null }> {
+  if (!token || typeof token !== 'string') return { isValid: false, station: null };
+  const trimmed = token.trim();
+
+  // 1. Fast in-memory check
+  const syncResult = validateStationToken(trimmed);
+  if (syncResult.isValid && syncResult.station) {
+    return syncResult;
+  }
+
+  // 2. Query Cloudflare D1 stations table
+  try {
+    const rows = await queryD1<{ id: string; name: string; short_name: string; station_token: string; admin_pin: string }>(
+      `SELECT id, name, short_name, station_token, admin_pin FROM stations WHERE station_token = ? LIMIT 1`,
+      [trimmed]
+    );
+
+    if (rows && rows.length > 0) {
+      const row = rows[0];
+      const station = getStationConfig(row.id);
+      station.name = row.name || station.name;
+      if (row.short_name) station.shortName = row.short_name;
+      if (row.admin_pin) station.adminPin = row.admin_pin;
+      registerDynamicStation(station);
+      return { isValid: true, station };
+    }
+
+    // Also check if token matches getStationToken for any row in D1
+    const allRows = await queryD1<{ id: string; name: string; short_name: string; station_token: string; admin_pin: string }>(
+      `SELECT id, name, short_name, station_token, admin_pin FROM stations LIMIT 50`
+    );
+    for (const row of allRows) {
+      if (safeCompare(trimmed, row.station_token) || safeCompare(trimmed, getStationToken(row.id))) {
+        const station = getStationConfig(row.id);
+        station.name = row.name || station.name;
+        if (row.short_name) station.shortName = row.short_name;
+        if (row.admin_pin) station.adminPin = row.admin_pin;
+        registerDynamicStation(station);
+        return { isValid: true, station };
+      }
+    }
+  } catch (err) {
+    console.error('validateStationTokenAsync D1 error:', err);
   }
 
   return { isValid: false, station: null };
@@ -475,6 +538,42 @@ export function validateStationPinWithRole(
   return { isValid: false, isMaster: false };
 }
 
+/**
+ * Async PIN validator that validates against env master secret, static configs,
+ * and Cloudflare D1 stations table admin_pin.
+ */
+export async function validateStationPinWithRoleAsync(
+  stationId: string,
+  inputPin: string
+): Promise<{ isValid: boolean; isMaster: boolean }> {
+  if (!inputPin) return { isValid: false, isMaster: false };
+
+  // 1. Fast in-memory check
+  const syncResult = validateStationPinWithRole(stationId, inputPin);
+  if (syncResult.isValid) {
+    return syncResult;
+  }
+
+  // 2. Query Cloudflare D1 for dynamic station custodian PIN
+  try {
+    const rows = await queryD1<{ admin_pin: string }>(
+      `SELECT admin_pin FROM stations WHERE id = ? OR id = ? OR id = ? LIMIT 1`,
+      [stationId, normalizeStationId(stationId), `hostel_${stationId}`]
+    );
+
+    if (rows && rows.length > 0 && rows[0].admin_pin) {
+      if (safeCompare(inputPin, rows[0].admin_pin)) {
+        return { isValid: true, isMaster: false };
+      }
+    }
+  } catch (err) {
+    console.error('validateStationPinWithRoleAsync D1 error:', err);
+  }
+
+  return { isValid: false, isMaster: false };
+}
+
 export function validateStationPin(stationId: string, inputPin: string): boolean {
   return validateStationPinWithRole(stationId, inputPin).isValid;
 }
+

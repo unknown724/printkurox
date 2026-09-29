@@ -556,17 +556,10 @@ export default function StationOperatorPortal() {
             </div>
 
             <div className="flex items-center gap-2 self-start sm:self-center">
-              {razorpayAccountId ? (
-                <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Auto-Split: {100 - commissionPercent}% Bank Direct ({razorpayAccountId.slice(0, 10)}...)
-                </span>
-              ) : (
-                <span className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/25 flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  Direct Payout: Pending Admin Linking
-                </span>
-              )}
+              <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Direct Settlement: 100% to Primary Razorpay Account
+              </span>
             </div>
           </div>
 

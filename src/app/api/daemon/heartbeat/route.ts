@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateStationToken } from '@/lib/stations';
+import { validateStationTokenAsync } from '@/lib/stations';
 import { executeD1 } from '@/lib/cloudflare-d1';
 
 export const runtime = 'nodejs';
@@ -7,8 +7,13 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const stationToken = req.headers.get('x-station-token') || req.headers.get('authorization')?.replace('Bearer ', '');
-    const auth = validateStationToken(stationToken);
+    const { searchParams } = new URL(req.url);
+    const stationToken =
+      req.headers.get('x-station-token') ||
+      req.headers.get('authorization')?.replace('Bearer ', '') ||
+      searchParams.get('token');
+
+    const auth = await validateStationTokenAsync(stationToken);
 
     if (!auth.isValid || !auth.station) {
       return NextResponse.json({ error: 'Unauthorized: Invalid station token' }, { status: 401 });
@@ -24,6 +29,14 @@ export async function POST(req: NextRequest) {
        VALUES (?, datetime('now'), ?)
        ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now'), station_id = excluded.station_id`,
       [station.slot, station.id]
+    );
+
+    // Also update stations table so /adminkurox and student kiosk show ONLINE immediately
+    await executeD1(
+      `UPDATE stations
+       SET last_heartbeat = datetime('now'), status = 'online'
+       WHERE id = ? OR id = ? OR id = 'hostel_' || ? OR (id = 'hostel_block_b_pare' AND (? = 'block_b' OR ? = 'main'))`,
+      [station.id, station.slot.toString(), station.id, station.id, station.id]
     );
 
     // If hardware telemetry was sent from primary station, update printer_telemetry in D1

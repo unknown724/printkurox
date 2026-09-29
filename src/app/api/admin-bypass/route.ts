@@ -115,13 +115,29 @@ export async function POST(req: NextRequest) {
       customRows,
     });
 
+    const inputPin = pin || stationPinCookie;
+    const isMasterAdmin = isDeviceAdmin || Boolean(inputPin && validateAdminPin(inputPin));
+    let adminPaymentId = `ADMIN_BYPASS_${Date.now()}`;
+
+    if (!isMasterAdmin) {
+      // Station Owner Free Print Quota Check (Anti-Abuse)
+      const { checkOwnerFreeQuota } = await import('@/lib/settlement-service');
+      const pagesToPrint = (pricing.totalPages || activePagesCount) * Math.max(1, Math.floor(copies || 1));
+      const quotaCheck = await checkOwnerFreeQuota(stationId, pagesToPrint);
+
+      if (!quotaCheck.allowed) {
+        return NextResponse.json({ error: quotaCheck.error }, { status: 403 });
+      }
+
+      adminPaymentId = `OWNER_FREE_PRINT_${Date.now()}`;
+    }
+
     // Generate unique pickup code (21,600 collision-resistant namespace)
     const pickupCode = generateRandomPickupCode();
 
     const jobId = crypto.randomUUID();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
-    const adminPaymentId = `ADMIN_BYPASS_${Date.now()}`;
 
     let finalFileKey = fileKey;
     let finalDocPages = pricing.totalPages;

@@ -33,19 +33,43 @@ export async function GET(req: NextRequest) {
 
     // Fetch stations (public only for students, or all if requested by admin)
     const sql = includeAll
-      ? `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, admin_pin as adminPin, station_token as stationToken, status, last_heartbeat, duplex_enabled as duplexEnabled, created_at as createdAt FROM stations ORDER BY created_at ASC`
-      : `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, status, last_heartbeat, duplex_enabled as duplexEnabled FROM stations WHERE is_public = 1 ORDER BY created_at ASC`;
+      ? `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, admin_pin as adminPin, station_token as stationToken, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota, created_at as createdAt FROM stations ORDER BY created_at ASC`
+      : `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota FROM stations WHERE is_public = 1 ORDER BY created_at ASC`;
 
     const rows = await queryD1(sql);
 
-    // Process rows to determine accurate online/offline status based on last_heartbeat
+    // Also get daemon_heartbeats to cross-reference active connectors
+    let heartbeatRows: any[] = [];
+    try {
+      heartbeatRows = await queryD1(`SELECT id, updated_at, station_id FROM daemon_heartbeat`);
+    } catch {}
+
+    const now = Date.now();
+
+    // Process rows to determine accurate online/offline status based on last_heartbeat & daemon_heartbeat
     const stations = rows.map((row: any) => {
       let isOnline = false;
       let offlineMinutes = 0;
+      let effectiveHeartbeat = row.last_heartbeat;
 
-      if (row.last_heartbeat) {
-        const heartbeatTime = new Date(row.last_heartbeat + 'Z').getTime();
-        const now = Date.now();
+      // Check if daemon_heartbeat has a fresher ping
+      const hb = heartbeatRows.find(
+        (h: any) =>
+          h.station_id === row.id ||
+          (row.id === 'hostel_block_b_pare' && (h.station_id === 'block_b' || h.station_id === 'main' || h.id === 1)) ||
+          (row.shortName && h.station_id === row.shortName.toLowerCase())
+      );
+
+      if (hb && hb.updated_at) {
+        const hbTime = new Date(hb.updated_at.replace(' ', 'T') + 'Z').getTime();
+        const rowTime = row.last_heartbeat ? new Date(row.last_heartbeat.replace(' ', 'T') + 'Z').getTime() : 0;
+        if (hbTime > rowTime) {
+          effectiveHeartbeat = hb.updated_at;
+        }
+      }
+
+      if (effectiveHeartbeat) {
+        const heartbeatTime = new Date(effectiveHeartbeat.replace(' ', 'T') + 'Z').getTime();
         const diffSeconds = Math.floor((now - heartbeatTime) / 1000);
 
         if (diffSeconds < 60) {

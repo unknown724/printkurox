@@ -15,6 +15,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Verify Station and Credentials (supports both secret station_token and admin password)
+    const { normalizeStationId, getStationConfig } = await import('@/lib/stations');
+    const norm = normalizeStationId(stationId);
+    const stationConfig = getStationConfig(stationId);
+
     const stationRows = await queryD1<{ 
       id: string; 
       name: string; 
@@ -24,19 +28,38 @@ export async function POST(req: NextRequest) {
       status: string;
       last_heartbeat: string;
     }>(
-      'SELECT id, name, admin_pin, station_token, station_type, status, last_heartbeat FROM stations WHERE id = ? LIMIT 1',
-      [stationId]
+      `SELECT id, name, admin_pin, station_token, station_type, status, last_heartbeat 
+       FROM stations 
+       WHERE id = ? OR id = ? OR id = ? OR id = ? LIMIT 1`,
+      [stationId, norm, `hostel_${norm}`, `hostel_${norm}_pare`]
     );
 
-    if (stationRows.length === 0) {
-      return NextResponse.json({ success: false, error: 'Station not found' }, { status: 404 });
+    let station = stationRows[0];
+    if (!station) {
+      if (stationConfig) {
+        station = {
+          id: stationConfig.id,
+          name: stationConfig.name,
+          admin_pin: stationConfig.adminPin,
+          station_token: '',
+          station_type: 'hostel',
+          status: 'offline',
+          last_heartbeat: '',
+        };
+      } else {
+        return NextResponse.json({ success: false, error: 'Station not found' }, { status: 404 });
+      }
     }
 
-    const station = stationRows[0];
-
     // Cryptographic Token Match (Magic Link / Saved Device) OR Password Match
-    const isTokenValid = token && station.station_token === token;
-    const isPasswordValid = pin && station.admin_pin === pin;
+    const isTokenValid = Boolean(token && station.station_token && station.station_token === token);
+    const isPasswordValid = Boolean(
+      pin && (
+        station.admin_pin === pin || 
+        (stationConfig && stationConfig.adminPin === pin) ||
+        (process.env.ADMIN_SECRET_KEY && pin === process.env.ADMIN_SECRET_KEY)
+      )
+    );
 
     if (!isTokenValid && !isPasswordValid) {
       return NextResponse.json({ success: false, error: 'Invalid password or access token' }, { status: 401 });
@@ -55,56 +78,52 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Fetch Jobs for this station
+    // 2. Fetch Settlement & Quota Summary
+    const { getStationSettlementSummary } = await import('@/lib/settlement-service');
+    const settlementSummary = await getStationSettlementSummary(stationId);
+
+    // 3. Fetch Recent Jobs for this station
+    const matchClause = norm === 'block_b'
+      ? `(station_id = 'block_b' OR station_id = 'main' OR station_id = 'hostel_block_b_pare' OR station_id = 'pare' OR station_id IS NULL)`
+      : `(station_id = '${stationId}' OR station_id = '${norm}' OR station_id = 'hostel_${norm}')`;
+
     const jobs = await queryD1<{ 
       id: string; 
       status: string; 
       total_price: number; 
       total_pages: number;
+      copies: number;
       created_at: string;
+      settlement_id?: string | null;
+      payment_id?: string | null;
     }>(
-      `SELECT id, status, total_price, total_pages, created_at 
+      `SELECT id, status, total_price, total_pages, copies, created_at, settlement_id, payment_id 
        FROM print_jobs 
-       WHERE station_id = ? AND status = 'COMPLETED'
-       ORDER BY created_at DESC`,
-      [stationId]
+       WHERE ${matchClause} AND status = 'COMPLETED'
+       ORDER BY created_at DESC 
+       LIMIT 30`
     );
 
-    let totalEarned = 0;
-    let todayEarned = 0;
-    let todayPages = 0;
-    let totalPages = 0;
-    
-    const todayStr = new Date().toISOString().split('T')[0];
-    const recentJobs = [];
-
-    for (const job of jobs) {
-      const jobDate = job.created_at.split(' ')[0];
-      totalEarned += job.total_price;
-      totalPages += job.total_pages;
-
-      if (jobDate === todayStr || job.created_at.startsWith(todayStr)) {
-        todayEarned += job.total_price;
-        todayPages += job.total_pages;
-      }
-      
-      if (recentJobs.length < 20) {
-        recentJobs.push(job);
-      }
-    }
+    let allTimePages = 0;
+    try {
+      const pageSumRow = await queryD1<{ total_pages_sum: number }>(
+        `SELECT SUM(total_pages * copies) as total_pages_sum FROM print_jobs WHERE ${matchClause} AND status = 'COMPLETED'`
+      );
+      allTimePages = pageSumRow[0]?.total_pages_sum || 0;
+    } catch {}
 
     // Fetch current dynamic pricing for this station
     const pricing = await getStationPricing(stationId);
-
-    // Platform takes 10% cut
-    const ownerCutTotal = Math.floor(totalEarned * 0.90);
-    const ownerCutToday = Math.floor(todayEarned * 0.90);
 
     return NextResponse.json({
       success: true,
       stationName: station.name,
       stationType: station.station_type,
       stationToken: station.station_token,
+      upiId: settlementSummary.upiId,
+      monthlyFreeQuota: settlementSummary.monthlyFreeQuota,
+      freeQuotaUsedThisMonth: settlementSummary.freeQuotaUsedThisMonth,
+      freeQuotaRemaining: Math.max(0, settlementSummary.monthlyFreeQuota - settlementSummary.freeQuotaUsedThisMonth),
       deviceStatus: {
         status: station.status || 'offline',
         lastHeartbeat: station.last_heartbeat || null,
@@ -116,12 +135,30 @@ export async function POST(req: NextRequest) {
         colorBulk: pricing.colorBulk,
       },
       metrics: {
-        totalEarned: ownerCutTotal,
-        todayEarned: ownerCutToday,
-        totalPages,
-        todayPages
+        // Pending Payout (To be paid this Sunday, 90% after 10% fee)
+        totalEarned: settlementSummary.unsettled.netPayoutOwed,
+        unsettledGross: settlementSummary.unsettled.grossRevenue,
+        platformFee: settlementSummary.unsettled.platformFee,
+        // Today's earnings (90%)
+        todayEarned: settlementSummary.today.netPayout,
+        todayGross: settlementSummary.today.grossRevenue,
+        // Lifetime money paid to owner
+        totalSettled: settlementSummary.settled.totalPaidLifetime,
+        settlementsCount: settlementSummary.settled.settlementsCount,
+        // Pages
+        totalPages: allTimePages || settlementSummary.unsettled.pagesCount,
+        todayPages: settlementSummary.today.pagesCount,
       },
-      recentJobs
+      settlementHistory: settlementSummary.history,
+      recentJobs: jobs.map((j) => ({
+        id: j.id,
+        status: j.status,
+        total_price: j.total_price,
+        total_pages: (j.total_pages || 1) * (j.copies || 1),
+        created_at: j.created_at,
+        isSettled: Boolean(j.settlement_id),
+        isFreePrint: Boolean(j.payment_id && (j.payment_id.startsWith('OWNER_FREE_') || j.payment_id.startsWith('ADMIN_BYPASS_'))),
+      })),
     });
 
   } catch (err) {

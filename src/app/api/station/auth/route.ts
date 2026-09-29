@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStationConfig, validateStationPinWithRole, validateStationPin } from '@/lib/stations';
+import { getStationConfig, validateStationPinWithRoleAsync, validateStationPin } from '@/lib/stations';
 import {
   verifyAdminDevice,
   ADMIN_COOKIE_NAME,
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
     const station = getStationConfig(rawStationId || 'block_b');
 
     // 2. Validate PIN with role detection
-    const authResult = validateStationPinWithRole(station.id, pin);
+    const authResult = await validateStationPinWithRoleAsync(station.id, pin);
 
     if (!pin || !authResult.isValid) {
       const failResult = await recordFailedAttempt(ip);

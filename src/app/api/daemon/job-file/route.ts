@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateStationToken } from '@/lib/stations';
+import { validateStationTokenAsync, normalizeStationId } from '@/lib/stations';
 import { queryD1, PrintJobRecord } from '@/lib/cloudflare-d1';
 import { getFileBufferFromR2 } from '@/lib/cloudflare-r2';
 
@@ -11,9 +11,12 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const jobId = searchParams.get('jobId') || searchParams.get('job_id');
     const tokenParam = searchParams.get('token');
-    const stationToken = req.headers.get('x-station-token') || tokenParam;
+    const stationToken =
+      req.headers.get('x-station-token') ||
+      req.headers.get('authorization')?.replace('Bearer ', '') ||
+      tokenParam;
 
-    const auth = validateStationToken(stationToken);
+    const auth = await validateStationTokenAsync(stationToken);
     if (!auth.isValid || !auth.station) {
       return NextResponse.json({ error: 'Unauthorized: Invalid station token' }, { status: 401 });
     }
@@ -23,12 +26,25 @@ export async function GET(req: NextRequest) {
     }
 
     const station = auth.station;
-    const isMain = station.id === 'block_b' || station.id === 'main';
+    const normId = normalizeStationId(station.id);
+    const isMain = normId === 'block_b' || normId === 'main';
 
     const checkSql = isMain
-      ? `SELECT id, file_key, file_name, status, pickup_code, station_id FROM print_jobs WHERE id = ? AND (station_id = 'main' OR station_id = 'block_b' OR station_id IS NULL) LIMIT 1`
-      : `SELECT id, file_key, file_name, status, pickup_code, station_id FROM print_jobs WHERE id = ? AND station_id = ? LIMIT 1`;
-    const checkParams = isMain ? [jobId] : [jobId, station.id];
+      ? `SELECT id, file_key, file_name, status, pickup_code, station_id FROM print_jobs 
+         WHERE id = ? AND (
+           station_id = 'main' OR 
+           station_id = 'block_b' OR 
+           station_id = 'hostel_block_b_pare' OR 
+           station_id = 'pare' OR 
+           station_id IS NULL
+         ) LIMIT 1`
+      : `SELECT id, file_key, file_name, status, pickup_code, station_id FROM print_jobs 
+         WHERE id = ? AND (
+           station_id = ? OR 
+           station_id = ? OR 
+           station_id = ?
+         ) LIMIT 1`;
+    const checkParams = isMain ? [jobId] : [jobId, station.id, normId, `hostel_${station.id}`];
 
     const rows = await queryD1<PrintJobRecord>(checkSql, checkParams);
     if (rows.length === 0) {

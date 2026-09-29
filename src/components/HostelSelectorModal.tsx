@@ -37,7 +37,16 @@ interface HostelSelectorModalProps {
   onStationSelect?: (stationId: string) => void;
 }
 
-function getCleanRoomLocation(stId: string): string {
+function getCleanRoomLocation(stId: string, name?: string, shortName?: string | null): string {
+  if (name) {
+    const roomMatch = name.match(/\(([^)]+)\)/);
+    if (roomMatch && roomMatch[1]) {
+      return roomMatch[1];
+    }
+  }
+  if (shortName && (shortName.toLowerCase().includes('room') || shortName.toLowerCase().includes('floor') || shortName.toLowerCase().includes('gate'))) {
+    return shortName;
+  }
   const norm = stId.toLowerCase();
   if (norm.includes('block_b') || norm === 'main') return 'Room 29 (1st Fl)';
   if (norm.includes('block_c')) return 'Ground Floor';
@@ -81,7 +90,7 @@ export function HostelSelectorModal({
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.stations)) {
-          setDynamicStations(data.stations);
+          setDynamicStations(data.stations.filter((st: any) => st.type === 'hostel'));
         }
       }
     } catch {
@@ -358,7 +367,7 @@ export function HostelSelectorModal({
                       </div>
                       <div className="text-[11px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1 mt-0.5 truncate">
                         <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-                        <span className="truncate">{getCleanRoomLocation(st.id)}</span>
+                        <span className="truncate">{getCleanRoomLocation(st.id, st.name, st.shortName)}</span>
                       </div>
 
                       {/* Compact Live Price Badge */}

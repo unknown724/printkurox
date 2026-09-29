@@ -167,38 +167,16 @@ export async function POST(req: NextRequest) {
         key_secret: keySecret,
       });
 
-      const stationPricing = await getStationPricing(station.id);
-      const targetAccountId = (stationPricing.razorpayAccountId || station.razorpayAccountId || '').trim();
-
-      // Base order payload
+      // Direct 100% Settlement to Primary Razorpay Account (No Route Transfers)
       const orderPayload: Record<string, unknown> = {
         amount: amountInPaise,
         currency,
         receipt,
-        notes: orderNotes,
+        notes: {
+          ...orderNotes,
+          station_id: station.id,
+        },
       };
-
-      // Automated Revenue Split via Razorpay Route (Marketplace)
-      if (targetAccountId && targetAccountId.startsWith('acc_')) {
-        const commissionPct = Number(stationPricing.commissionPercent ?? station.commissionPercent ?? 10);
-        const hostSharePct = Math.max(0, 100 - commissionPct);
-        const hostAmountPaise = Math.round((amountInPaise * hostSharePct) / 100);
-
-        if (hostAmountPaise > 0) {
-          orderPayload.transfers = [
-            {
-              account: targetAccountId,
-              amount: hostAmountPaise,
-              currency: 'INR',
-              notes: {
-                station_id: station.id,
-                job_name: fileName || 'PrintKurox Document',
-              },
-              on_hold: false,
-            },
-          ];
-        }
-      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rzpOrder = await razorpay.orders.create(orderPayload as any);

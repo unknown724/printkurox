@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     }
 
     const stationId = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    const stationToken = crypto.randomBytes(32).toString('hex');
+    const stationToken = `kurox_st_${stationId}_${crypto.randomBytes(16).toString('hex')}`;
     const isPublic = (stationType === 'hostel' || stationType === 'shop') ? 1 : 0;
 
     const createTableSql = `

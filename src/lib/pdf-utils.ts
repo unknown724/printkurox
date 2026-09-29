@@ -229,9 +229,17 @@ export async function mergeFilesToPdf(
   const printableItems: PrintableItem[] = [];
 
   for (const item of files) {
-    const ext = item.fileName.toLowerCase().split('.').pop() || '';
+    const ext = (item.fileName.toLowerCase().split('.').pop() || '').trim();
+    const isPdfHeader = item.buffer.length >= 5 && item.buffer.subarray(0, 5).toString().startsWith('%PDF-');
+    const isJpegHeader = item.buffer.length >= 3 && item.buffer[0] === 0xff && item.buffer[1] === 0xd8;
+    const isPngHeader =
+      item.buffer.length >= 4 &&
+      item.buffer[0] === 0x89 &&
+      item.buffer[1] === 0x50 &&
+      item.buffer[2] === 0x4e &&
+      item.buffer[3] === 0x47;
 
-    if (ext === 'pdf' || item.mimeType === 'application/pdf') {
+    if (isPdfHeader || ext === 'pdf' || item.mimeType === 'application/pdf') {
       const srcPdf = await PDFDocument.load(item.buffer, { ignoreEncryption: true });
       const embeddedPages = await mergedPdf.embedPages(srcPdf.getPages());
       const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
@@ -244,14 +252,20 @@ export async function mergeFilesToPdf(
           height: embeddedPages[idx].height,
         });
       }
-    } else if (['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext) || item.mimeType.startsWith('image/')) {
+    } else if (
+      isJpegHeader ||
+      isPngHeader ||
+      ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext) ||
+      item.mimeType.startsWith('image/')
+    ) {
       try {
         const isPng =
-          item.buffer.length >= 4 &&
-          item.buffer[0] === 0x89 &&
-          item.buffer[1] === 0x50 &&
-          item.buffer[2] === 0x4e &&
-          item.buffer[3] === 0x47;
+          isPngHeader ||
+          (item.buffer.length >= 4 &&
+            item.buffer[0] === 0x89 &&
+            item.buffer[1] === 0x50 &&
+            item.buffer[2] === 0x4e &&
+            item.buffer[3] === 0x47);
 
         const image = isPng ? await mergedPdf.embedPng(item.buffer) : await mergedPdf.embedJpg(item.buffer);
         printableItems.push({
@@ -937,9 +951,13 @@ export async function transformPdfForPrint(
   fileName: string,
   options: PrintLayoutOptions
 ): Promise<{ transformedBuffer: Buffer; totalPages: number }> {
-  const mimeType = fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
+  const isPdfHeader = inputBuffer.length >= 5 && inputBuffer.subarray(0, 5).toString().startsWith('%PDF-');
+  const isPdf = isPdfHeader || fileName.toLowerCase().endsWith('.pdf');
+  const mimeType = isPdf ? 'application/pdf' : 'application/octet-stream';
+  const effectiveName = isPdf && !fileName.toLowerCase().endsWith('.pdf') ? `${fileName}.pdf` : fileName;
+
   const result = await mergeFilesToPdf(
-    [{ buffer: inputBuffer, fileName, mimeType }],
+    [{ buffer: inputBuffer, fileName: effectiveName, mimeType }],
     options
   );
   return {

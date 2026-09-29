@@ -385,8 +385,8 @@ export function PageVisualizer({
                     }
                   }
 
-                  // Fast, high-quality thumbnail render (0.6 scale = crisp on mobile, lightweight memory)
-                  const viewport = page.getViewport({ scale: 0.6 });
+                  // Crisp, high-definition render (1.5 scale = 300-DPI-equivalent Retina clarity on mobile & desktop)
+                  const viewport = page.getViewport({ scale: 1.5 });
                   const canvas = document.createElement('canvas');
                   const context = canvas.getContext('2d');
                   canvas.height = viewport.height;
@@ -395,7 +395,7 @@ export function PageVisualizer({
                   if (context) {
                     await page.render({ canvasContext: context, viewport }).promise;
                     // Use async toBlob (runs off main thread, zero massive Base64 string allocations)
-                    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.8));
+                    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
                     if (blob && isMounted) {
                       const objectUrl = URL.createObjectURL(blob);
                       activeUrlsRef.current.push(objectUrl);
@@ -523,7 +523,8 @@ export function PageVisualizer({
                 }
               }
 
-              const viewport = page.getViewport({ scale: 0.6 });
+              // Crisp, high-definition render (1.5 scale = 300-DPI-equivalent Retina clarity on mobile & desktop)
+              const viewport = page.getViewport({ scale: 1.5 });
               const canvas = document.createElement('canvas');
               const context = canvas.getContext('2d');
               canvas.height = viewport.height;
@@ -531,7 +532,7 @@ export function PageVisualizer({
 
               if (context) {
                 await page.render({ canvasContext: context, viewport }).promise;
-                const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.8));
+                const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
                 if (blob && isMounted) {
                   const objectUrl = URL.createObjectURL(blob);
                   activeUrlsRef.current.push(objectUrl);
@@ -2516,6 +2517,7 @@ export function PageVisualizer({
                               src={thumbnails[pageNum]}
                               alt={`Page ${pageNum}`}
                               style={{
+                                imageRendering: '-webkit-optimize-contrast',
                                 filter:
                                   enhanceMode === 'magic_bw'
                                     ? 'grayscale(100%) contrast(210%) brightness(122%)'
