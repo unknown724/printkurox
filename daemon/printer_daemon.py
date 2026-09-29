@@ -838,6 +838,36 @@ def resolve_effective_orientation(job, local_pdf_path):
 
     return orient if orient in ["landscape", "portrait"] else "portrait"
 
+def convert_to_grayscale_pdf(input_pdf_path):
+    """
+    Converts any PDF into 100% pure 8-bit DeviceGray PDF.
+    Guarantees that Epson, HP, and Canon printer drivers physically
+    receive zero color saturation, forcing pure Black ink only.
+    """
+    if not input_pdf_path or not os.path.isfile(input_pdf_path):
+        return input_pdf_path
+
+    try:
+        import pymupdf
+        doc = pymupdf.open(input_pdf_path)
+        gray_doc = pymupdf.open()
+        for p in doc:
+            pix = p.get_pixmap(colorspace=pymupdf.csGRAY, dpi=300)
+            img_bytes = pix.tobytes("jpeg")
+            gray_page = gray_doc.new_page(width=p.rect.width, height=p.rect.height)
+            gray_page.insert_image(gray_page.rect, stream=img_bytes)
+
+        out_path = os.path.splitext(input_pdf_path)[0] + "_mono.pdf"
+        gray_doc.save(out_path)
+        doc.close()
+        gray_doc.close()
+        log(f"Converted document to True Grayscale PDF (300 DPI): {os.path.basename(out_path)}", "SUCCESS")
+        return out_path
+    except Exception as mupdf_err:
+        log(f"PyMuPDF grayscale conversion note: {mupdf_err}", "DEBUG")
+
+    return input_pdf_path
+
 def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, orientation=None, duplex=False):
     """
     Executes SumatraPDF CLI silent print command with professional orientation & fit.
@@ -882,8 +912,12 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
         clean_range = "".join(str(page_range).split())
         if clean_range:
             settings_list.append(clean_range)
-    if color_mode == "bw":
+
+    # Normalize color mode case-insensitively & enforce true grayscale
+    is_bw = str(color_mode or '').strip().lower() in ['bw', 'mono', 'monochrome', 'black & white', 'grayscale']
+    if is_bw:
         settings_list.append("monochrome")
+        file_path = convert_to_grayscale_pdf(file_path)
     else:
         settings_list.append("color")
 

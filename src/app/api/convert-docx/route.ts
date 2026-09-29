@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
             'X-File-Extension': ext,
             'X-Original-Filename': fileName,
           },
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(30000),
         });
 
         if (remoteRes.ok) {

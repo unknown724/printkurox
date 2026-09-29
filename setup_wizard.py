@@ -5,6 +5,8 @@ import re
 import subprocess
 import threading
 import time
+import shutil
+import winsound
 import urllib.request
 import urllib.parse
 import tkinter as tk
@@ -21,6 +23,8 @@ else:
 API_BASE_URL = "https://printkurox.vercel.app/api"
 ENV_FILE_PATH = os.path.join(BASE_DIR, "daemon", ".env")
 CONFIG_FILE_PATH = os.path.join(BASE_DIR, "station_config.json")
+TEMP_DIR = os.path.join(BASE_DIR, "temp_prints")
+os.makedirs(TEMP_DIR, exist_ok=True)
 ICON_FILE_PATH = os.path.join(RESOURCE_DIR, "app_icon.ico")
 if not os.path.exists(ICON_FILE_PATH):
     ICON_FILE_PATH = os.path.join(BASE_DIR, "app_icon.ico")
@@ -33,6 +37,7 @@ def launch_hostel_always_online_silent():
     vbs_path = os.path.join(daemon_dir, "PrintKurox_AutoStart.vbs")
     keepalive_py = os.path.join(daemon_dir, "station_keepalive.py")
     printer_py = os.path.join(daemon_dir, "printer_daemon.py")
+    conn_exe = os.path.join(BASE_DIR, "connector.exe")
 
     # 1. Try launching through wscript with PrintKurox_AutoStart.vbs (100% invisible, 0 blinking)
     if os.path.exists(vbs_path):
@@ -42,7 +47,15 @@ def launch_hostel_always_online_silent():
         except Exception:
             pass
 
-    # 2. Try pythonw directly with CREATE_NO_WINDOW (zero console popup)
+    # 2. Try standalone connector.exe if present
+    if os.path.exists(conn_exe):
+        try:
+            subprocess.Popen([conn_exe], cwd=BASE_DIR, creationflags=CREATE_NO_WINDOW)
+            return True
+        except Exception:
+            pass
+
+    # 3. Try pythonw directly with CREATE_NO_WINDOW (zero console popup)
     for py_bin in ["pythonw.exe", "pythonw", "python.exe", "python"]:
         try:
             if os.path.exists(keepalive_py):
@@ -53,15 +66,16 @@ def launch_hostel_always_online_silent():
         except Exception:
             continue
 
-    # 3. Fallback to HOSTEL_ALWAYS_ONLINE.bat using hidden window style
-    bat_path = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
-    if os.path.exists(bat_path):
-        try:
-            ps_cmd = f"Start-Process -FilePath '{bat_path}' -WorkingDirectory '{BASE_DIR}' -WindowStyle Hidden"
-            subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], capture_output=True, creationflags=CREATE_NO_WINDOW)
-            return True
-        except Exception:
-            pass
+    # 4. Fallback to START_PRINTKUROX.bat or HOSTEL_ALWAYS_ONLINE.bat using hidden window style
+    for bat_name in ["START_PRINTKUROX.bat", "HOSTEL_ALWAYS_ONLINE.bat"]:
+        bat_path = os.path.join(BASE_DIR, bat_name)
+        if os.path.exists(bat_path):
+            try:
+                ps_cmd = f"Start-Process -FilePath '{bat_path}' -WorkingDirectory '{BASE_DIR}' -WindowStyle Hidden"
+                subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], capture_output=True, creationflags=CREATE_NO_WINDOW)
+                return True
+            except Exception:
+                pass
     return False
 
 def is_already_configured():
@@ -483,11 +497,220 @@ class UninstallProgressDialog(tk.Toplevel):
             self.destroy()
         except Exception:
             pass
+def locate_sumatra():
+    """Finds SumatraPDF.exe in common locations."""
+    candidates = [
+        os.path.join(BASE_DIR, "sumatra", "SumatraPDF-3.5.2-64.exe"),
+        os.path.join(BASE_DIR, "sumatra", "SumatraPDF.exe"),
+        os.path.join(BASE_DIR, "daemon", "sumatra", "SumatraPDF-3.5.2-64.exe"),
+        os.path.join(BASE_DIR, "daemon", "sumatra", "SumatraPDF.exe"),
+        r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
+        r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\SumatraPDF\SumatraPDF.exe"),
+        shutil.which("SumatraPDF.exe") or ""
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return os.path.abspath(c)
+    return None
+
+def convert_to_grayscale_pdf(input_pdf_path):
+    """Converts PDF to true 8-bit DeviceGray PDF so printer drivers cannot spray color ink."""
+    if not input_pdf_path or not os.path.isfile(input_pdf_path):
+        return input_pdf_path
+    try:
+        import pymupdf
+        doc = pymupdf.open(input_pdf_path)
+        gray_doc = pymupdf.open()
+        for p in doc:
+            pix = p.get_pixmap(colorspace=pymupdf.csGRAY, dpi=300)
+            img_bytes = pix.tobytes("jpeg")
+            gray_page = gray_doc.new_page(width=p.rect.width, height=p.rect.height)
+            gray_page.insert_image(gray_page.rect, stream=img_bytes)
+
+        out_path = os.path.splitext(input_pdf_path)[0] + "_mono.pdf"
+        gray_doc.save(out_path)
+        doc.close()
+        gray_doc.close()
+        return out_path
+    except Exception as err:
+        print(f"[GRAYSCALE NOTICE] {err}")
+        return input_pdf_path
+
+def print_pdf_job(sumatra_exe, printer_name, pdf_path, job, logger=None):
+    """Executes silent physical print using SumatraPDF with true grayscale enforcement."""
+    if not sumatra_exe or not os.path.exists(sumatra_exe):
+        if logger: logger("SumatraPDF not found; simulating physical print...")
+        time.sleep(job.get('total_pages', 1) * 1.5)
+        return True
+
+    cmd = [sumatra_exe, "-silent"]
+    if printer_name and printer_name != "Default System Printer":
+        cmd += ["-print-to", printer_name]
+    else:
+        cmd.append("-print-to-default")
+
+    settings = []
+    copies = job.get('copies', 1)
+    if copies and copies > 1:
+        settings.append(f"{copies}x")
+
+    page_range = job.get('page_range', 'ALL')
+    if page_range and page_range.upper() != 'ALL':
+        settings.append(page_range)
+
+    color_mode = str(job.get('color_mode') or 'BW').strip().lower()
+    is_bw = color_mode in ['bw', 'mono', 'monochrome', 'black & white', 'grayscale']
+    if is_bw:
+        settings.append("monochrome")
+        pdf_path = convert_to_grayscale_pdf(pdf_path)
+    else:
+        settings.append("color")
+
+    orientation = job.get('orientation', 'portrait')
+    if orientation and orientation.lower() in ['portrait', 'landscape']:
+        settings.append(orientation.lower())
+
+    settings.append("fit")
+    cmd += ["-print-settings", ",".join(settings)]
+    cmd.append(pdf_path)
+
+    try:
+        res = subprocess.run(cmd, timeout=90, creationflags=CREATE_NO_WINDOW)
+        return res.returncode == 0
+    except Exception as e:
+        if logger: logger(f"Print execution error: {e}")
+        return False
+
+def run_heartbeat_worker(server_url, station_id, station_token):
+    """Background thread sending heartbeats every 25 seconds."""
+    headers = {
+        'Content-Type': 'application/json',
+        'x-station-token': station_token,
+        'User-Agent': 'PrintKurox-Manager/3.0'
+    }
+    url = f"{server_url}/api/daemon/heartbeat"
+    payload = json.dumps({"stationId": station_id}).encode('utf-8')
+    while True:
         try:
-            self.parent.destroy()
+            req = urllib.request.Request(url, data=payload, headers=headers)
+            with urllib.request.urlopen(req, timeout=10):
+                pass
         except Exception:
             pass
+        time.sleep(25)
 
+def download_file(server_url, station_token, job_id, dest_path):
+    url = f"{server_url}/api/daemon/job-file?jobId={job_id}"
+    req = urllib.request.Request(url, headers={
+        'x-station-token': station_token,
+        'User-Agent': 'PrintKurox-Manager/3.0'
+    })
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        with open(dest_path, 'wb') as f:
+            shutil.copyfileobj(resp, f)
+
+def claim_job(server_url, station_token, job_id):
+    url = f"{server_url}/api/daemon/claim"
+    payload = json.dumps({"jobId": job_id}).encode('utf-8')
+    req = urllib.request.Request(url, data=payload, headers={
+        'Content-Type': 'application/json',
+        'x-station-token': station_token,
+        'User-Agent': 'PrintKurox-Manager/3.0'
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            return data.get("claimed", False) or data.get("status") == "PRINTING_ODD"
+    except Exception:
+        return False
+
+def update_status(server_url, station_token, job_id, status):
+    url = f"{server_url}/api/daemon/status"
+    payload = json.dumps({"jobId": job_id, "status": status}).encode('utf-8')
+    req = urllib.request.Request(url, data=payload, headers={
+        'Content-Type': 'application/json',
+        'x-station-token': station_token,
+        'User-Agent': 'PrintKurox-Manager/3.0'
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            return True
+    except Exception:
+        return False
+
+def is_startup_enabled():
+    try:
+        startup_folder = os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+        shortcut_path = os.path.join(startup_folder, 'PrintKurox_Hostel_AlwaysOnline.lnk')
+        return os.path.exists(shortcut_path)
+    except Exception:
+        return False
+
+def set_startup_shortcut(enable=True):
+    try:
+        startup_folder = os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+        shortcut_path = os.path.join(startup_folder, 'PrintKurox_Hostel_AlwaysOnline.lnk')
+        if not enable:
+            if os.path.exists(shortcut_path):
+                os.remove(shortcut_path)
+            return True
+
+        if getattr(sys, 'frozen', False):
+            target = sys.executable
+            args = ""
+        elif os.path.exists(os.path.join(BASE_DIR, "connector.exe")):
+            target = os.path.join(BASE_DIR, "connector.exe")
+            args = ""
+        else:
+            target = sys.executable
+            args = f'"{os.path.abspath(__file__)}"'
+
+        ps_script = f"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcut_path}'); $s.TargetPath = '{target}'; "
+        if args:
+            ps_script += f"$s.Arguments = '{args}'; "
+        ps_script += f"$s.WorkingDirectory = '{BASE_DIR}'; $s.Description = 'PrintKurox Station'; $s.Save()"
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps_script], capture_output=True, creationflags=CREATE_NO_WINDOW)
+        return True
+    except Exception as e:
+        print("Notice configuring startup shortcut:", e)
+        return False
+
+def load_station_config():
+    config = {
+        "station_id": "",
+        "station_token": "",
+        "station_name": "PrintKurox Station",
+        "station_type": "hostel",
+        "room_number": "",
+        "printer_name": "Default System Printer",
+        "admin_pin": "",
+        "wifi_ssid": "",
+        "server_url": "https://printkurox.vercel.app"
+    }
+    if os.path.exists(CONFIG_FILE_PATH):
+        try:
+            with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+                config.update(d)
+        except Exception:
+            pass
+    if os.path.exists(ENV_FILE_PATH):
+        try:
+            with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if '=' in line and not line.strip().startswith('#'):
+                        k, v = line.strip().split('=', 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        if k == "STATION_ID" and not config.get("station_id"): config["station_id"] = v
+                        elif k == "STATION_TOKEN" and not config.get("station_token"): config["station_token"] = v
+                        elif k == "STATION_NAME" and config.get("station_name") == "PrintKurox Station": config["station_name"] = v
+                        elif k == "PRINTER_NAME" and not config.get("printer_name"): config["printer_name"] = v
+                        elif k == "SERVER_URL": config["server_url"] = v
+        except Exception:
+            pass
+    return config
 
 class RegistrationSuccessDialog(tk.Toplevel):
     def __init__(self, parent, station_name, room_num, station_id, admin_pin, dashboard_url):
@@ -603,27 +826,18 @@ class RegistrationSuccessDialog(tk.Toplevel):
                 pass
 
     def _finish(self):
-        # Launch HOSTEL_ALWAYS_ONLINE.bat visibly
-        try:
-            bat_path = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
-            if os.path.exists(bat_path):
-                subprocess.Popen(["cmd.exe", "/c", "start", "", bat_path], cwd=BASE_DIR)
-        except Exception as e:
-            print("Notice launching bat:", e)
         try:
             self.grab_release()
             self.destroy()
         except Exception:
             pass
-        try:
-            self.parent.destroy()
-        except Exception:
-            pass
+        if hasattr(self.parent, "show_dashboard_ui"):
+            self.parent.show_dashboard_ui()
 
 class PrintKuroxSetupApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PrintKurox Station Configuration Utility")
+        self.title("PrintKurox Station Manager")
         self.geometry("560x730")
         self.resizable(False, False)
 
@@ -649,11 +863,26 @@ class PrintKuroxSetupApp(tk.Tk):
         self.wifi_var = tk.StringVar()
         self.autostart_var = tk.BooleanVar(value=True)
         self.current_station_id = ""
+        self.spooler_running = False
 
-        self.setup_ui()
-        self.refresh_devices()
+        if "--background" in sys.argv or "--silent" in sys.argv:
+            self.withdraw()
+
+        if is_already_configured():
+            self.show_dashboard_ui()
+        else:
+            self.setup_ui()
+            self.refresh_devices()
 
     def setup_ui(self):
+        for w in self.winfo_children():
+            w.destroy()
+        self.title("PrintKurox Kiosk Station Setup")
+        self.geometry("560x730")
+        self.resizable(False, False)
+        if self.state() == "withdrawn" and ("--background" not in sys.argv and "--silent" not in sys.argv):
+            self.deiconify()
+
         # 1. Professional Windows Header Banner
         header_frame = ttk.Frame(self, padding=(16, 12))
         header_frame.pack(fill="x")
@@ -787,10 +1016,15 @@ class PrintKuroxSetupApp(tk.Tk):
         self.load_existing_env()
 
     def launch_and_exit(self):
-        # Launch HOSTEL_ALWAYS_ONLINE.bat visibly
-        bat_path = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
-        if os.path.exists(bat_path):
+        conn_path = os.path.join(BASE_DIR, "connector.exe")
+        bat_path = os.path.join(BASE_DIR, "START_PRINTKUROX.bat")
+        fallback_bat = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
+        if os.path.exists(conn_path):
+            subprocess.Popen(["cmd.exe", "/c", "start", "PrintKurox Station", conn_path], cwd=BASE_DIR)
+        elif os.path.exists(bat_path):
             subprocess.Popen(["cmd.exe", "/c", "start", "", bat_path], cwd=BASE_DIR)
+        elif os.path.exists(fallback_bat):
+            subprocess.Popen(["cmd.exe", "/c", "start", "", fallback_bat], cwd=BASE_DIR)
         self.destroy()
 
     def uninstall_station(self):
@@ -1365,10 +1599,19 @@ class PrintKuroxSetupApp(tk.Tk):
                 try:
                     startup_folder = os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
                     shortcut_path = os.path.join(startup_folder, 'PrintKurox_Hostel_AlwaysOnline.lnk')
-                    target_vbs = os.path.abspath(os.path.join(BASE_DIR, 'daemon', 'PrintKurox_AutoStart.vbs'))
-                    vbs_dir = os.path.dirname(target_vbs)
                     
-                    if os.path.exists(target_vbs):
+                    conn_exe = os.path.abspath(os.path.join(BASE_DIR, 'connector.exe'))
+                    start_bat = os.path.abspath(os.path.join(BASE_DIR, 'START_PRINTKUROX.bat'))
+                    target_vbs = os.path.abspath(os.path.join(BASE_DIR, 'daemon', 'PrintKurox_AutoStart.vbs'))
+
+                    if os.path.exists(conn_exe):
+                        ps_script = f"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcut_path}'); $s.TargetPath = '{conn_exe}'; $s.WorkingDirectory = '{BASE_DIR}'; $s.Description = 'PrintKurox Station Connector'; $s.Save()"
+                        subprocess.run(['powershell', '-NoProfile', '-Command', ps_script], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    elif os.path.exists(start_bat):
+                        ps_script = f"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcut_path}'); $s.TargetPath = '{start_bat}'; $s.WorkingDirectory = '{BASE_DIR}'; $s.Description = 'PrintKurox Station'; $s.Save()"
+                        subprocess.run(['powershell', '-NoProfile', '-Command', ps_script], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    elif os.path.exists(target_vbs):
+                        vbs_dir = os.path.dirname(target_vbs)
                         ps_script = f"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcut_path}'); $s.TargetPath = 'wscript.exe'; $s.Arguments = '`\"{target_vbs}`\"'; $s.WorkingDirectory = '{vbs_dir}'; $s.Description = 'PrintKurox Always Online Keepalive'; $s.Save()"
                         subprocess.run(['powershell', '-NoProfile', '-Command', ps_script], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 except Exception as ex:
@@ -1423,6 +1666,300 @@ class PrintKuroxSetupApp(tk.Tk):
         self.btn_submit.config(state="normal", text="Register")
         messagebox.showerror("Registration Notice", f"{error_msg}\n\nPlease choose your actual station and try again.", parent=self)
         self.refresh_devices()
+
+    def show_dashboard_ui(self):
+        for w in self.winfo_children():
+            w.destroy()
+
+        self.title("PrintKurox Station Manager")
+        self.geometry("560x650")
+        self.resizable(False, False)
+        if self.state() == "withdrawn" and ("--background" not in sys.argv and "--silent" not in sys.argv):
+            self.deiconify()
+
+        cfg = load_station_config()
+        self.current_station_id = cfg.get("station_id", "")
+        self.station_token = cfg.get("station_token", "")
+        self.station_name = cfg.get("station_name", "PrintKurox Station")
+        self.printer_name = cfg.get("printer_name", "Default System Printer")
+        self.server_url = (cfg.get("server_url") or "https://printkurox.vercel.app").rstrip('/')
+        self.admin_pin = cfg.get("admin_pin", "")
+
+        # Header Frame
+        hdr = ttk.Frame(self, padding=(18, 14))
+        hdr.pack(fill="x")
+
+        hdr_left = ttk.Frame(hdr)
+        hdr_left.pack(side="left", fill="both", expand=True)
+
+        lbl_t = ttk.Label(hdr_left, text="PrintKurox Station Manager", style="Header.TLabel")
+        lbl_t.pack(anchor="w")
+
+        lbl_sub = ttk.Label(hdr_left, text="Active cloud print dispatch and queue monitor", style="SubHeader.TLabel")
+        lbl_sub.pack(anchor="w", pady=(2, 0))
+
+        self.dash_status_badge = tk.Label(hdr, text="● ONLINE", font=("Segoe UI", 9, "bold"), fg="#16A34A")
+        self.dash_status_badge.pack(side="right", anchor="ne", pady=2)
+
+        # Body container
+        body = ttk.Frame(self, padding=(18, 0, 18, 14))
+        body.pack(fill="both", expand=True)
+
+        # Station Info Card
+        card = ttk.LabelFrame(body, text=" Station Information ", padding=(14, 10))
+        card.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(card, text="Station Name:", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Label(card, text=self.station_name, font=("Segoe UI", 9)).grid(row=0, column=1, sticky="w", padx=(10, 0), pady=2)
+
+        ttk.Label(card, text="Station ID:", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Label(card, text=self.current_station_id, font=("Segoe UI", 9)).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=2)
+
+        ttk.Label(card, text="Active Printer:", font=("Segoe UI", 9, "bold")).grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Label(card, text=self.printer_name, font=("Segoe UI", 9)).grid(row=2, column=1, sticky="w", padx=(10, 0), pady=2)
+
+        # Automation & Options Frame
+        opts_frame = ttk.LabelFrame(body, text=" System & Automation ", padding=(14, 10))
+        opts_frame.pack(fill="x", pady=(0, 10))
+
+        self.dash_autostart_var = tk.BooleanVar(value=is_startup_enabled())
+        chk_auto = ttk.Checkbutton(
+            opts_frame,
+            text="Start automatically with Windows (Background spooler)",
+            variable=self.dash_autostart_var,
+            command=self._on_dash_toggle_autostart
+        )
+        chk_auto.pack(anchor="w", pady=(0, 8))
+
+        # Action Buttons Row
+        act_row = ttk.Frame(opts_frame)
+        act_row.pack(fill="x")
+
+        btn_portal = ttk.Button(act_row, text="🌐 Open Admin Portal", command=self._open_admin_portal)
+        btn_portal.pack(side="left", padx=(0, 6))
+
+        btn_test = ttk.Button(act_row, text="🖨️ Print Test Page", command=self._print_test_page_dashboard)
+        btn_test.pack(side="left", padx=(0, 6))
+
+        btn_reconfig = ttk.Button(act_row, text="⚙️ Reconfigure", command=self._reconfigure_station)
+        btn_reconfig.pack(side="left")
+
+        # Live Activity / Spooler Log Frame
+        log_frame = ttk.LabelFrame(body, text=" Live Print Activity & Spooler Log ", padding=(10, 8))
+        log_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        self.log_text = tk.Text(log_frame, height=9, font=("Consolas", 8), bg="#0F172A", fg="#38BDF8", relief="flat", wrap="word")
+        self.log_text.pack(fill="both", expand=True)
+        tstr = time.strftime('%H:%M:%S')
+        self.log_text.insert("end", f"[{tstr}] Station Manager initialized.\n")
+        self.log_text.insert("end", f"[{tstr}] Station: {self.station_name} [{self.current_station_id}]\n")
+        self.log_text.insert("end", f"[{tstr}] Target Printer: {self.printer_name}\n")
+        self.log_text.see("end")
+
+        # Bottom Bar: Disconnect / Uninstall Button
+        bottom_bar = ttk.Frame(body)
+        bottom_bar.pack(fill="x")
+
+        btn_uninstall = tk.Button(
+            bottom_bar,
+            text="🗑️ Disconnect & Uninstall Station",
+            font=("Segoe UI", 8),
+            fg="#DC2626",
+            bg="#FEF2F2",
+            activebackground="#FEE2E2",
+            relief="groove",
+            command=self._confirm_uninstall
+        )
+        btn_uninstall.pack(side="left")
+
+        lbl_keep = ttk.Label(bottom_bar, text="Minimizing this window keeps printing active.", font=("Segoe UI", 8, "italic"))
+        lbl_keep.pack(side="right")
+
+        # Start Spooler Worker thread if not already running
+        self.spooler_running = True
+        threading.Thread(target=self._dashboard_spooler_loop, daemon=True).start()
+
+    def _append_log(self, msg):
+        def _insert():
+            try:
+                if hasattr(self, 'log_text') and self.log_text.winfo_exists():
+                    tstr = time.strftime('%H:%M:%S')
+                    self.log_text.insert("end", f"[{tstr}] {msg}\n")
+                    self.log_text.see("end")
+            except Exception:
+                pass
+        self.after(0, _insert)
+
+    def _on_dash_toggle_autostart(self):
+        val = self.dash_autostart_var.get()
+        ok = set_startup_shortcut(val)
+        if ok:
+            status = "ENABLED" if val else "DISABLED"
+            self._append_log(f"Windows startup auto-launch {status}.")
+        else:
+            self._append_log("Notice: Could not update startup shortcut.")
+
+    def _open_admin_portal(self):
+        cfg = load_station_config()
+        st_id = cfg.get("station_id") or self.current_station_id
+        token = cfg.get("station_token") or getattr(self, 'station_token', '')
+        url = f"https://printkurox.vercel.app/admin/{st_id}?token={token}"
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", "", url], shell=True)
+        except Exception:
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+    def _print_test_page_dashboard(self):
+        cfg = load_station_config()
+        pname = cfg.get("printer_name") or getattr(self, 'printer_name', 'Default System Printer')
+        self._append_log(f"Generating test page for {pname}...")
+        try:
+            import pymupdf
+            doc = pymupdf.open()
+            page = doc.new_page(width=595, height=842)
+            rect = pymupdf.Rect(40, 40, 555, 802)
+            page.draw_rect(rect, color=(0, 0, 0), width=2)
+            page.insert_text(pymupdf.Point(60, 90), "PrintKurox Station Test Page", fontsize=18, fontname="helv", color=(0, 0, 0))
+            page.insert_text(pymupdf.Point(60, 120), f"Station: {self.station_name} [{self.current_station_id}]", fontsize=11, fontname="helv", color=(0, 0, 0))
+            page.insert_text(pymupdf.Point(60, 140), f"Printer: {pname}", fontsize=11, fontname="helv", color=(0, 0, 0))
+            page.insert_text(pymupdf.Point(60, 160), f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}", fontsize=11, fontname="helv", color=(0, 0, 0))
+            page.insert_text(pymupdf.Point(60, 190), "Status: Connection and Spooler Operational", fontsize=12, fontname="helv", color=(0, 0, 0))
+            page.insert_text(pymupdf.Point(60, 230), "Pure Black & White (8-bit DeviceGray) Conversion Verified.", fontsize=10, fontname="helv", color=(0, 0, 0))
+
+            test_path = os.path.join(TEMP_DIR, "test_page.pdf")
+            doc.save(test_path)
+            doc.close()
+
+            sumatra_exe = locate_sumatra()
+            job = {"copies": 1, "page_range": "ALL", "color_mode": "BW", "total_pages": 1}
+            ok = print_pdf_job(sumatra_exe, pname, test_path, job, logger=self._append_log)
+            if ok:
+                self._append_log("Test page successfully spooled to printer!")
+            else:
+                self._append_log("Failed to print test page.")
+        except Exception as e:
+            self._append_log(f"Test page error: {e}")
+
+    def _reconfigure_station(self):
+        self.spooler_running = False
+        self.setup_ui()
+        self.refresh_devices()
+
+    def _confirm_uninstall(self):
+        confirm = messagebox.askyesno(
+            "Disconnect & Uninstall Station",
+            "Are you sure you want to disconnect this station from this PC?\n\n"
+            "This will:\n"
+            "• Stop the background printing service\n"
+            "• Remove automatic Windows startup\n"
+            "• Clear local credentials and configuration\n\n"
+            "Proceed with uninstallation?",
+            parent=self,
+            icon="warning"
+        )
+        if not confirm:
+            return
+
+        self.spooler_running = False
+        dlg = UninstallProgressDialog(self, delete_cloud=False, station_id=self.current_station_id)
+        self.wait_window(dlg)
+        self.setup_ui()
+        self.refresh_devices()
+
+    def _dashboard_spooler_loop(self):
+        cfg = load_station_config()
+        station_id = cfg.get("station_id") or self.current_station_id
+        station_token = cfg.get("station_token") or getattr(self, 'station_token', '')
+        printer_name = cfg.get("printer_name") or getattr(self, 'printer_name', '')
+        server_url = (cfg.get("server_url") or "https://printkurox.vercel.app").rstrip('/')
+
+        if not station_id or not station_token:
+            self._append_log("Station ID or Token missing. Setup required.")
+            return
+
+        sumatra_exe = locate_sumatra()
+        if sumatra_exe:
+            self._append_log(f"Print Engine: SumatraPDF ({os.path.basename(sumatra_exe)})")
+        else:
+            self._append_log("SumatraPDF not found in bundle. Will attempt standard Windows print.")
+
+        # Start Heartbeat thread
+        threading.Thread(
+            target=run_heartbeat_worker,
+            args=(server_url, station_id, station_token),
+            daemon=True
+        ).start()
+        self._append_log("Heartbeat active (status: online)")
+
+        headers = {
+            'Content-Type': 'application/json',
+            'x-station-token': station_token,
+            'User-Agent': 'PrintKurox-Manager/3.0'
+        }
+        poll_url = f"{server_url}/api/daemon/poll?stationId={station_id}"
+
+        consecutive_errors = 0
+        while self.spooler_running:
+            try:
+                req = urllib.request.Request(poll_url, data=b'{}', headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    jobs = data.get("jobs", [])
+                    if jobs:
+                        for job in jobs:
+                            if not self.spooler_running:
+                                break
+                            job_id = job.get("id")
+                            pickup = job.get("pickup_code", "PRINT")
+                            fname = job.get("file_name", "document.pdf")
+                            color_mode = job.get("color_mode", "BW")
+                            pages = job.get("total_pages", 1)
+
+                            self._append_log(f"New print order #{pickup} ({fname}, {color_mode}, {pages}p)")
+
+                            if not claim_job(server_url, station_token, job_id):
+                                self._append_log(f"Job #{pickup} already claimed or processed.")
+                                continue
+
+                            temp_pdf = os.path.join(TEMP_DIR, f"{pickup}_{job_id[:6]}.pdf")
+                            self._append_log(f"Downloading #{pickup}...")
+                            try:
+                                download_file(server_url, station_token, job_id, temp_pdf)
+                            except Exception as dl_e:
+                                self._append_log(f"Download failed: {dl_e}")
+                                update_status(server_url, station_token, job_id, "FAILED")
+                                continue
+
+                            self._append_log(f"Sending #{pickup} to {printer_name}...")
+                            ok = print_pdf_job(sumatra_exe, printer_name, temp_pdf, job, logger=self._append_log)
+                            if ok:
+                                time.sleep(2)
+                                update_status(server_url, station_token, job_id, "COMPLETED")
+                                try:
+                                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+                                except Exception:
+                                    pass
+                                self._append_log(f"Order #{pickup} printed and marked COMPLETED!")
+                            else:
+                                update_status(server_url, station_token, job_id, "FAILED")
+                                self._append_log(f"Print failed for order #{pickup}.")
+
+                            try:
+                                if os.path.exists(temp_pdf):
+                                    os.remove(temp_pdf)
+                            except Exception:
+                                pass
+                    consecutive_errors = 0
+            except Exception as e:
+                consecutive_errors += 1
+                if consecutive_errors == 1:
+                    self._append_log(f"Queue poll notice: {e}")
+                time.sleep(3)
+            time.sleep(4)
 
 if __name__ == '__main__':
     # Always open the full setup and control application

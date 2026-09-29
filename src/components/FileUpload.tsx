@@ -332,7 +332,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
                 const stationRes = await fetch('http://127.0.0.1:7250/convert-docx', {
                   method: 'POST',
                   body: f,
-                  signal: AbortSignal.timeout(3500),
+                  signal: AbortSignal.timeout(15000),
                 });
                 if (stationRes.ok) {
                   const pdfBlob = await stationRes.blob();
@@ -348,14 +348,14 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
               }
             }
 
-            // Priority 1: Server-side conversion via Next.js API route (active on localhost with LibreOffice)
+            // Priority 1: Server-side conversion via Next.js API route (forwards to server laptop via tunnel)
             try {
               const formData = new FormData();
               formData.append('file', f);
               const convRes = await fetch('/api/convert-docx', {
                 method: 'POST',
                 body: formData,
-                signal: AbortSignal.timeout(4000),
+                signal: AbortSignal.timeout(35000),
               });
 
               if (convRes.ok) {

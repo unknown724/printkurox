@@ -42,6 +42,7 @@ next-env.d.ts
 # Cloudflare OpenNext & daemon temp
 .open-next/
 daemon/sumatra/
+sumatra/
 daemon/temp_prints/
 temp_print/
 daemon/printed_archive/
