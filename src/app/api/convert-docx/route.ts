@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { convertDocxToPdf } from '@/lib/docx-converter';
-import { PDFDocument } from 'pdf-lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,43 +23,56 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 1. Try external LibreOffice converter if configured (e.g. friend's laptop via Cloudflare Tunnel or Oracle VM)
-    const externalConverterUrl = process.env.DOCX_CONVERTER_URL?.trim();
-    if (externalConverterUrl) {
+    // If DOCX_CONVERTER_URL is configured (e.g. Cloudflare tunnel to hostel station laptop),
+    // forward to the remote LibreOffice daemon first for 100% authentic vector output.
+    const converterUrl = process.env.DOCX_CONVERTER_URL?.trim();
+    if (converterUrl) {
       try {
-        const remoteRes = await fetch(`${externalConverterUrl.replace(/\/+$/, '')}/convert-docx`, {
+        const cleanBase = converterUrl.replace(/\/+$/, '');
+        const tunnelEndpoint = `${cleanBase}/convert-docx?ext=${encodeURIComponent(ext)}`;
+        const remoteRes = await fetch(tunnelEndpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          },
           body: buffer,
-          signal: AbortSignal.timeout(25000),
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-File-Extension': ext,
+            'X-Original-Filename': fileName,
+          },
+          signal: AbortSignal.timeout(8000),
         });
 
         if (remoteRes.ok) {
-          const remotePdf = await remoteRes.arrayBuffer();
-          if (remotePdf && remotePdf.byteLength > 500) {
-            const pdfDoc = await PDFDocument.load(remotePdf, { ignoreEncryption: true });
-            const pageCount = pdfDoc.getPageCount();
+          const remotePdf = Buffer.from(await remoteRes.arrayBuffer());
+          if (remotePdf.length > 500) {
+            let pageCount = 1;
+            try {
+              const { PDFDocument } = await import('pdf-lib');
+              const pdfDoc = await PDFDocument.load(remotePdf, { ignoreEncryption: true });
+              pageCount = pdfDoc.getPageCount() || 1;
+            } catch {
+              pageCount = 1;
+            }
+
             const outName = fileName.replace(/\.(docx|doc)$/i, '.pdf');
             return new NextResponse(new Uint8Array(remotePdf), {
               status: 200,
               headers: {
                 'Content-Type': 'application/pdf',
                 'Content-Disposition': `attachment; filename="${encodeURIComponent(outName)}"`,
-                'X-Page-Count': String(pageCount || 1),
-                'X-Converted-By': 'PrintKurox-Remote-LibreOffice',
+                'X-Page-Count': String(pageCount),
+                'X-Converted-By': 'PrintKurox-Cloudflare-LibreOffice',
               },
             });
           }
+        } else {
+          console.warn(`[API /api/convert-docx] Remote tunnel converter returned HTTP ${remoteRes.status}`);
         }
-      } catch (remoteErr) {
-        console.warn('[API /api/convert-docx] Remote LibreOffice converter notice:', remoteErr);
+      } catch (tunnelErr) {
+        console.warn('[API /api/convert-docx] Remote tunnel conversion attempt failed, falling back:', tunnelErr);
       }
     }
 
-    // 2. Try server-side local LibreOffice/Word (active on localhost or self-hosted Windows/Linux server)
-    const { pdfBuffer, pageCount } = await convertDocxToPdf(buffer, ext, false);
+    const { pdfBuffer, pageCount } = await convertDocxToPdf(buffer, ext, true);
 
     if (!pdfBuffer || pdfBuffer.length === 0) {
       return NextResponse.json({ error: 'Conversion produced empty output' }, { status: 500 });
@@ -74,15 +86,15 @@ export async function POST(req: NextRequest) {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${encodeURIComponent(outName)}"`,
         'X-Page-Count': String(pageCount || 1),
-        'X-Converted-By': 'PrintKurox-Local-LibreOffice',
+        'X-Converted-By': 'PrintKurox-Server-Converter',
       },
     });
   } catch (err: unknown) {
-    console.warn('[API /api/convert-docx] Server-side LibreOffice engine unavailable on cloud container:', err);
+    console.warn('[API /api/convert-docx] Server-side DOCX conversion error:', err);
     const message = err instanceof Error ? err.message : 'DOCX conversion failed';
     return NextResponse.json(
       { error: message, fallbackToClient: true },
-      { status: 501 }
+      { status: 500 }
     );
   }
 }

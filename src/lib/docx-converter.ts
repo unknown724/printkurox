@@ -227,7 +227,7 @@ async function convertWithLibreOffice(buffer: Buffer, fileExt: string = 'docx'):
 export async function convertDocxToPdf(
   buffer: Buffer,
   fileExt: string = 'docx',
-  allowPlainFallback: boolean = false
+  allowPlainFallback: boolean = true
 ): Promise<DocxConversionResult> {
   // Step 1: Try headless LibreOffice on Windows/Linux (100% authentic vector output, 1.5s, no popups)
   try {
@@ -249,10 +249,9 @@ export async function convertDocxToPdf(
     console.warn('Native Word conversion error; falling back to JS converter:', nativeErr);
   }
 
-  // If server does not have LibreOffice or Word installed (e.g. Vercel cloud container),
-  // do NOT return degraded stripped plain-text. Reject so client-side docx-preview can render genuine styles.
+  // Step 3: Fast in-process JS converter (mammoth + pdf-lib) for serverless cloud environments (Vercel)
   if (!allowPlainFallback) {
-    throw new Error('Native LibreOffice/Word engine not present on cloud server. Fallback to high-fidelity client docx-preview.');
+    throw new Error('Native LibreOffice/Word engine not present on server.');
   }
 
   // Step 3: Fallback in-process JS converter (mammoth + pdf-lib)
