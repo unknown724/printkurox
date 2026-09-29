@@ -49,6 +49,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // If active Cloudflare tunnel converter URL was provided, register it in app_settings
+    const converterUrl = body.converter_url;
+    if (converterUrl && typeof converterUrl === 'string' && converterUrl.startsWith('https://')) {
+      try {
+        await executeD1(
+          `INSERT INTO app_settings (key, value, updated_at)
+           VALUES ('docx_converter_url', ?, datetime('now'))
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+          [converterUrl.trim()]
+        );
+      } catch {
+        // Table might not exist yet, create and retry
+        try {
+          await executeD1(`
+            CREATE TABLE IF NOT EXISTS app_settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+          `);
+          await executeD1(
+            `INSERT INTO app_settings (key, value, updated_at)
+             VALUES ('docx_converter_url', ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+            [converterUrl.trim()]
+          );
+        } catch (d1Err) {
+          console.warn('[Heartbeat] Could not save docx_converter_url to D1:', d1Err);
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       stationId: station.id,

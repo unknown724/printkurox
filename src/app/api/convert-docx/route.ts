@@ -23,9 +23,25 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // If DOCX_CONVERTER_URL is configured (e.g. Cloudflare tunnel to hostel station laptop),
-    // forward to the remote LibreOffice daemon first for 100% authentic vector output.
-    const converterUrl = process.env.DOCX_CONVERTER_URL?.trim();
+    // 1. Check if DOCX_CONVERTER_URL is configured via environment variable
+    let converterUrl = process.env.DOCX_CONVERTER_URL?.trim();
+
+    // 2. If not in env, dynamically query the live converter URL registered by the hostel station daemon
+    if (!converterUrl) {
+      try {
+        const { queryD1 } = await import('@/lib/cloudflare-d1');
+        const rows = await queryD1<{ value: string }>(
+          `SELECT value FROM app_settings WHERE key = 'docx_converter_url' LIMIT 1`
+        );
+        if (rows?.[0]?.value) {
+          converterUrl = rows[0].value.trim();
+        }
+      } catch (d1Err) {
+        console.warn('[API /api/convert-docx] Could not query docx_converter_url from D1:', d1Err);
+      }
+    }
+
+    // Forward to the station laptop's LibreOffice daemon for 100% authentic vector output.
     if (converterUrl) {
       try {
         const cleanBase = converterUrl.replace(/\/+$/, '');
@@ -38,7 +54,7 @@ export async function POST(req: NextRequest) {
             'X-File-Extension': ext,
             'X-Original-Filename': fileName,
           },
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(35000),
         });
 
         if (remoteRes.ok) {
