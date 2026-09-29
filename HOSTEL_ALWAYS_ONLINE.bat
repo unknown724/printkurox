@@ -1,16 +1,9 @@
 @echo off
-title PrintKurox Hostel Station — Always-Online Keepalive
 cd /d "%~dp0daemon"
-
-:: Check Python
-python -V >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not in PATH!
-    pause
-    exit /b 1
+if exist PrintKurox_AutoStart.vbs (
+    start "" wscript.exe //B //Nologo "PrintKurox_AutoStart.vbs"
+    exit /b 0
 )
-
 start "" pythonw station_keepalive.py
 start "" pythonw printer_daemon.py
 exit /b 0
-

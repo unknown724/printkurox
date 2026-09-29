@@ -25,6 +25,64 @@ ICON_FILE_PATH = os.path.join(RESOURCE_DIR, "app_icon.ico")
 if not os.path.exists(ICON_FILE_PATH):
     ICON_FILE_PATH = os.path.join(BASE_DIR, "app_icon.ico")
 
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
+
+def launch_hostel_always_online_silent():
+    """Launches the Always-Online keepalive and printer daemon completely silently with ZERO terminal blinking."""
+    daemon_dir = os.path.join(BASE_DIR, "daemon")
+    vbs_path = os.path.join(daemon_dir, "PrintKurox_AutoStart.vbs")
+    keepalive_py = os.path.join(daemon_dir, "station_keepalive.py")
+    printer_py = os.path.join(daemon_dir, "printer_daemon.py")
+
+    # 1. Try launching through wscript with PrintKurox_AutoStart.vbs (100% invisible, 0 blinking)
+    if os.path.exists(vbs_path):
+        try:
+            subprocess.Popen(["wscript.exe", "//B", "//Nologo", vbs_path], cwd=daemon_dir)
+            return True
+        except Exception:
+            pass
+
+    # 2. Try pythonw directly with CREATE_NO_WINDOW (zero console popup)
+    for py_bin in ["pythonw.exe", "pythonw", "python.exe", "python"]:
+        try:
+            if os.path.exists(keepalive_py):
+                subprocess.Popen([py_bin, keepalive_py], cwd=daemon_dir, creationflags=CREATE_NO_WINDOW)
+            if os.path.exists(printer_py):
+                subprocess.Popen([py_bin, printer_py], cwd=daemon_dir, creationflags=CREATE_NO_WINDOW)
+            return True
+        except Exception:
+            continue
+
+    # 3. Fallback to HOSTEL_ALWAYS_ONLINE.bat using hidden window style
+    bat_path = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
+    if os.path.exists(bat_path):
+        try:
+            ps_cmd = f"Start-Process -FilePath '{bat_path}' -WorkingDirectory '{BASE_DIR}' -WindowStyle Hidden"
+            subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], capture_output=True, creationflags=CREATE_NO_WINDOW)
+            return True
+        except Exception:
+            pass
+    return False
+
+def is_already_configured():
+    if os.path.exists(CONFIG_FILE_PATH):
+        try:
+            with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+                if d.get('station_id') and d.get('station_id') != 'default':
+                    return True
+        except Exception:
+            pass
+    if os.path.exists(ENV_FILE_PATH):
+        try:
+            with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if 'STATION_ID=' in content and 'STATION_TOKEN=' in content:
+                    return True
+        except Exception:
+            pass
+    return False
+
 def detect_printers():
     """Queries Windows Spooler for installed printers and prioritizes physical devices."""
     try:
@@ -705,7 +763,20 @@ class PrintKuroxSetupApp(tk.Tk):
         self.btn_submit = ttk.Button(footer_frame, text="Register", width=18, style="Accent.TButton", command=self.save_and_start)
         self.btn_submit.pack(side="right")
 
+        self.btn_launch_now = ttk.Button(footer_frame, text="🚀 Start Station Monitor", width=22, command=self.launch_and_exit)
+        self.btn_launch_now.pack(side="right", padx=(0, 6))
+
         self.load_existing_env()
+
+    def launch_and_exit(self):
+        launch_hostel_always_online_silent()
+        info_file = os.path.join(BASE_DIR, "LOGIN_INFO.txt")
+        if os.path.exists(info_file):
+            try:
+                subprocess.Popen(["notepad.exe", info_file])
+            except Exception:
+                pass
+        self.destroy()
 
     def uninstall_station(self):
         confirm = messagebox.askyesno(
@@ -1231,10 +1302,11 @@ class PrintKuroxSetupApp(tk.Tk):
                 try:
                     startup_folder = os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
                     shortcut_path = os.path.join(startup_folder, 'PrintKurox_Hostel_AlwaysOnline.lnk')
-                    target_bat = os.path.abspath(os.path.join(BASE_DIR, 'HOSTEL_ALWAYS_ONLINE.bat'))
+                    target_vbs = os.path.abspath(os.path.join(BASE_DIR, 'daemon', 'PrintKurox_AutoStart.vbs'))
+                    vbs_dir = os.path.dirname(target_vbs)
                     
-                    if os.path.exists(target_bat):
-                        ps_script = f"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcut_path}'); $s.TargetPath = '{target_bat}'; $s.WorkingDirectory = '{os.path.dirname(target_bat)}'; $s.Description = 'PrintKurox Autonomous Background Service'; $s.Save()"
+                    if os.path.exists(target_vbs):
+                        ps_script = f"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcut_path}'); $s.TargetPath = 'wscript.exe'; $s.Arguments = '`\"{target_vbs}`\"'; $s.WorkingDirectory = '{vbs_dir}'; $s.Description = 'PrintKurox Always Online Keepalive'; $s.Save()"
                         subprocess.run(['powershell', '-NoProfile', '-Command', ps_script], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 except Exception as ex:
                     print("Could not register startup task:", ex)
@@ -1295,35 +1367,7 @@ class PrintKuroxSetupApp(tk.Tk):
         RegistrationSuccessDialog(self, station_name, room_num, station_id, admin_pin, dashboard_url)
 
     def _launch_station_monitor(self):
-        hostel_bat = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
-        daemon_keepalive = os.path.join(BASE_DIR, "daemon", "station_keepalive.py")
-        daemon_printer = os.path.join(BASE_DIR, "daemon", "printer_daemon.py")
-        daemon_dir = os.path.join(BASE_DIR, "daemon")
-
-        launched = False
-
-        # 1. PRIMARY: Use HOSTEL_ALWAYS_ONLINE.bat (starts both keepalive & print daemon)
-        if os.path.exists(hostel_bat):
-            try:
-                os.startfile(hostel_bat)
-                launched = True
-            except Exception:
-                pass
-
-        # 2. FALLBACK: Try launching scripts directly with pythonw
-        if not launched:
-            for py_bin in ["pythonw.exe", "pythonw", "python.exe", "python"]:
-                try:
-                    if os.path.exists(daemon_keepalive):
-                        subprocess.Popen([py_bin, daemon_keepalive], cwd=daemon_dir)
-                    if os.path.exists(daemon_printer):
-                        subprocess.Popen([py_bin, daemon_printer], cwd=daemon_dir)
-                    launched = True
-                    break
-                except Exception:
-                    continue
-
-        return launched
+        return launch_hostel_always_online_silent()
 
     def _on_failure(self, error_msg):
         self.btn_submit.config(state="normal", text="Register")
@@ -1331,5 +1375,11 @@ class PrintKuroxSetupApp(tk.Tk):
         self.refresh_devices()
 
 if __name__ == '__main__':
+    force_config = any(arg in sys.argv for arg in ['--config', '--setup', '-c', '/config', '/setup'])
+    if is_already_configured() and not force_config:
+        # Station is already configured! Launch Always-Online silently and do not show setup wizard!
+        launch_hostel_always_online_silent()
+        sys.exit(0)
+
     app = PrintKuroxSetupApp()
     app.mainloop()

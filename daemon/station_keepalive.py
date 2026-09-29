@@ -16,6 +16,7 @@ import sys
 import time
 import socket
 import subprocess
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
 import requests
 import json
 import ctypes
