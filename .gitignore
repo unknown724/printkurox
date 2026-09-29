@@ -76,5 +76,7 @@ daemon/whatsapp_bot/logs/
 dist/
 setup_log.txt
 daemon/debug.txt
+*.pid
+*.bak
 
 

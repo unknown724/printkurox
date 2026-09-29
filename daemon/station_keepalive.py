@@ -391,6 +391,29 @@ def is_process_running(proc_name):
     except Exception:
         return False
 
+def is_pid_alive(pid):
+    """Check if process ID is currently alive via Windows kernel32 OpenProcess."""
+    if not pid or sys.platform != 'win32':
+        return False
+    try:
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        h = kernel32.OpenProcess(0x1000, False, int(pid))
+        if h:
+            kernel32.CloseHandle(h)
+            return True
+    except Exception:
+        pass
+    return False
+
+def is_port_open(port):
+    """Fast socket probe to check if a local daemon server is active."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.4)
+            return s.connect_ex(('127.0.0.1', port)) == 0
+    except Exception:
+        return False
+
 def check_service_status(service_name):
     """Checks if a Windows background service or process is alive."""
     global _PRINT_DAEMON_PROC
@@ -399,6 +422,19 @@ def check_service_status(service_name):
     try:
         if service_name == "PrintKuroxDaemon":
             if _PRINT_DAEMON_PROC is not None and _PRINT_DAEMON_PROC.poll() is None:
+                return "RUNNING"
+            # Check PID file
+            pid_file = os.path.join(BASE_DIR, 'printer_daemon.pid')
+            if os.path.exists(pid_file):
+                try:
+                    with open(pid_file, 'r') as pf:
+                        saved_pid = int(pf.read().strip())
+                    if is_pid_alive(saved_pid):
+                        return "RUNNING"
+                except Exception:
+                    pass
+            # Check local preview server port 7250
+            if is_port_open(7250):
                 return "RUNNING"
             if is_process_running("PrintKurox_Daemon.exe"):
                 return "RUNNING"
@@ -439,20 +475,11 @@ def ensure_services_running():
     status_wa = check_service_status("PrintKuroxWhatsAppBot")
 
     if status_print != "RUNNING":
-        daemon_exe = os.path.join(BASE_DIR, "dist_romen", "PrintKurox_Daemon.exe")
         daemon_py = os.path.join(BASE_DIR, "printer_daemon.py")
+        daemon_exe = os.path.join(BASE_DIR, "dist_romen", "PrintKurox_Daemon.exe")
         
-        if os.path.exists(daemon_exe):
-            try:
-                _PRINT_DAEMON_PROC = subprocess.Popen(
-                    [daemon_exe],
-                    cwd=os.path.dirname(daemon_exe),
-                    creationflags=CREATE_NO_WINDOW if os.name == 'nt' else 0
-                )
-                status_print = "RUNNING"
-            except Exception:
-                pass
-        elif os.path.exists(daemon_py):
+        # 1. PRIMARY: Always run printer_daemon.py via pythonw (latest code, zero window flashing)
+        if os.path.exists(daemon_py):
             for py_cmd in ["pythonw.exe", "pythonw", "python.exe", "python"]:
                 try:
                     _PRINT_DAEMON_PROC = subprocess.Popen(
@@ -464,6 +491,16 @@ def ensure_services_running():
                     break
                 except Exception:
                     continue
+        elif os.path.exists(daemon_exe):
+            try:
+                _PRINT_DAEMON_PROC = subprocess.Popen(
+                    [daemon_exe],
+                    cwd=os.path.dirname(daemon_exe),
+                    creationflags=CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                status_print = "RUNNING"
+            except Exception:
+                pass
 
     return status_print, status_wa
 

@@ -24,6 +24,15 @@ import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
+
+try:
+    import ctypes
+    import ctypes.wintypes
+    import struct
+except Exception:
+    pass
+
 # Determine actual base directory whether running as raw Python or PyInstaller frozen .exe
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -294,7 +303,7 @@ def convert_with_libreoffice(file_path):
     pdf_expected = os.path.splitext(os.path.abspath(file_path))[0] + ".pdf"
     try:
         cmd = [soffice_exe, "--headless", "--convert-to", "pdf:writer_pdf_Export", "--outdir", out_dir, os.path.abspath(file_path)]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=25, creationflags=CREATE_NO_WINDOW)
         if os.path.exists(pdf_expected) and os.path.getsize(pdf_expected) > 500:
             log(f"Converted {os.path.basename(file_path)} to vector PDF via headless LibreOffice", "SUCCESS")
             return pdf_expected
@@ -404,7 +413,8 @@ try {{
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
             capture_output=True,
             text=True,
-            timeout=35
+            timeout=35,
+            creationflags=CREATE_NO_WINDOW
         )
         if "SUCCESS" in res.stdout and os.path.exists(abs_dst):
             log(f"Converted Office document {os.path.basename(file_path)} to authentic vector PDF via Microsoft Office COM", "SUCCESS")
@@ -523,12 +533,74 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
     return file_path
 
 def get_windows_printer_telemetry():
-    """Queries Windows Spooler via PowerShell for live status and queue count."""
+    """Queries Windows Spooler directly via native Win32 API (winspool.drv) for live status and queue count. Zero console popups."""
     target_name = (PRINTER_NAME or "").strip()
+
+    # 1. PRIMARY FAST PATH: Native WinSpool Win32 API via ctypes (takes 0.001s, 0 subprocesses, 0 terminal blinking)
+    if sys.platform == 'win32':
+        try:
+            winspool = ctypes.WinDLL('winspool.drv')
+
+            # Find default printer if target_name is not specified
+            if not target_name:
+                needed_p = ctypes.wintypes.DWORD(0)
+                winspool.GetDefaultPrinterW(None, ctypes.byref(needed_p))
+                if needed_p.value:
+                    buf_p = ctypes.create_unicode_buffer(needed_p.value)
+                    if winspool.GetDefaultPrinterW(buf_p, ctypes.byref(needed_p)):
+                        target_name = buf_p.value
+
+            if target_name:
+                hPrinter = ctypes.wintypes.HANDLE()
+                if winspool.OpenPrinterW(target_name, ctypes.byref(hPrinter), None):
+                    try:
+                        needed = ctypes.wintypes.DWORD()
+                        winspool.GetPrinterW(hPrinter, 2, None, 0, ctypes.byref(needed))
+                        if needed.value > 0:
+                            buf = (ctypes.c_byte * needed.value)()
+                            if winspool.GetPrinterW(hPrinter, 2, buf, needed.value, ctypes.byref(needed)):
+                                # On 64-bit Windows: 13 pointers (104 bytes), followed by 8 DWORD fields:
+                                # attr, prio, def_prio, start_t, until_t, status, cJobs, avg_ppm
+                                attr, prio, def_prio, start_t, until_t, status, cJobs, avg_ppm = struct.unpack_from('<8I', buf, 104)
+                                is_offline = bool(attr & 0x00000400) or bool(status & 0x00000080)
+                                if is_offline or (status in [4, 7, 8, 13]):
+                                    status_text = "Offline"
+                                    is_online = 0
+                                elif status & 0x00000001:
+                                    status_text = "Paused"
+                                    is_online = 1
+                                elif status & 0x00000008:
+                                    status_text = "Paper Jam"
+                                    is_online = 0
+                                elif status & 0x00000010:
+                                    status_text = "Out of Paper"
+                                    is_online = 0
+                                elif status & 0x00000800:
+                                    status_text = "Printing"
+                                    is_online = 1
+                                elif status & 0x00000400:
+                                    status_text = "Busy"
+                                    is_online = 1
+                                else:
+                                    status_text = "Ready"
+                                    is_online = 1
+
+                                return {
+                                    "name": target_name,
+                                    "is_online": is_online,
+                                    "status_text": status_text,
+                                    "spooler_jobs": cJobs
+                                }
+                    finally:
+                        winspool.ClosePrinter(hPrinter)
+        except Exception as win_err:
+            log(f"WinSpool telemetry notice: {win_err}", "DEBUG")
+
+    # 2. FALLBACK: PowerShell with CREATE_NO_WINDOW (guaranteed zero terminal popup)
     try:
         if not target_name:
             ps_find_def = "Get-CimInstance Win32_Printer | Where-Object Default | Select-Object -ExpandProperty Name"
-            r_def = subprocess.run(["powershell", "-NoProfile", "-Command", ps_find_def], capture_output=True, text=True, timeout=5)
+            r_def = subprocess.run(["powershell", "-NoProfile", "-Command", ps_find_def], capture_output=True, text=True, timeout=5, creationflags=CREATE_NO_WINDOW)
             if r_def.returncode == 0 and r_def.stdout.strip():
                 target_name = r_def.stdout.strip().splitlines()[0].strip()
 
@@ -548,28 +620,17 @@ if ($p) {{
     }} | ConvertTo-Json -Compress
 }}
 """
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=5, creationflags=CREATE_NO_WINDOW)
         if res.returncode == 0 and res.stdout.strip():
-            import json
             data = json.loads(res.stdout)
             raw_status = int(data.get("PrinterStatus", 0))
             job_count = int(data.get("JobCount", 0))
             work_offline = bool(data.get("WorkOffline", False))
 
             status_map = {
-                0: "Ready",
-                2: "Ready",
-                3: "Ready",
-                4: "Offline",
-                5: "Out of Paper",
-                6: "Paper Jam",
-                7: "Offline",
-                8: "Offline",
-                9: "Paused",
-                10: "Busy",
-                11: "Printing",
-                13: "Offline",
-                21: "User Intervention"
+                0: "Ready", 2: "Ready", 3: "Ready", 4: "Offline", 5: "Out of Paper",
+                6: "Paper Jam", 7: "Offline", 8: "Offline", 9: "Paused", 10: "Busy",
+                11: "Printing", 13: "Offline", 21: "User Intervention"
             }
             if work_offline or raw_status in [4, 7, 8, 13]:
                 status_text = "Offline"
@@ -586,6 +647,7 @@ if ($p) {{
             }
     except Exception as telem_err:
         log(f"Telemetry query notice: {telem_err}", "DEBUG")
+
     return {
         "name": target_name or "Default Printer",
         "is_online": 0,
@@ -671,7 +733,8 @@ try {{
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
             capture_output=True,
             text=True,
-            timeout=8
+            timeout=8,
+            creationflags=CREATE_NO_WINDOW
         )
         out = (res.stdout or "").strip()
         if "CHANGED" in out or "ALREADY_SET" in out:
@@ -853,7 +916,7 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
 
     log(f"Executing: {' '.join(cmd)}")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
         if result.returncode != 0:
             log(f"SumatraPDF exited with code {result.returncode}: {result.stderr}", "ERROR")
             return False
@@ -1351,6 +1414,13 @@ def main():
 |          Manual Duplex (Scenario B) + Silent Print         |
 +------------------------------------------------------------+
 """)
+    try:
+        pid_file = os.path.join(BASE_DIR, 'printer_daemon.pid')
+        with open(pid_file, 'w') as pf:
+            pf.write(str(os.getpid()))
+    except Exception:
+        pass
+
     log(f"Station Target: [{STATION_ID}] {STATION_NAME}")
     log(f"Printer Target: {PRINTER_NAME or 'Windows Default Printer'}")
     sumatra_found = locate_sumatra()
