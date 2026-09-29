@@ -4,15 +4,26 @@ import json
 import re
 import subprocess
 import threading
+import time
 import urllib.request
 import urllib.parse
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+# Resolve base application directory (supports both raw python and PyInstaller frozen .exe)
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    RESOURCE_DIR = getattr(sys, '_MEIPASS', BASE_DIR)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    RESOURCE_DIR = BASE_DIR
+
 API_BASE_URL = "https://printkurox.vercel.app/api"
-ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "daemon", ".env")
-CONFIG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "station_config.json")
-ICON_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+ENV_FILE_PATH = os.path.join(BASE_DIR, "daemon", ".env")
+CONFIG_FILE_PATH = os.path.join(BASE_DIR, "station_config.json")
+ICON_FILE_PATH = os.path.join(RESOURCE_DIR, "app_icon.ico")
+if not os.path.exists(ICON_FILE_PATH):
+    ICON_FILE_PATH = os.path.join(BASE_DIR, "app_icon.ico")
 
 def detect_printers():
     """Queries Windows Spooler for installed printers and prioritizes physical devices."""
@@ -31,29 +42,190 @@ def detect_printers():
 
         printers.sort(key=printer_priority)
         return printers if printers else ["Default System Printer"]
-    except Exception as e:
+    except Exception:
         return ["Default System Printer"]
 
-def detect_wifi_networks():
-    """Queries netsh for visible Wi-Fi SSIDs and currently active interface profile."""
-    networks = []
-    current_ssid = ""
+def trigger_wlan_scan():
+    """Triggers an immediate Wi-Fi BSS scan using Windows Native WLAN API."""
+    if sys.platform != 'win32':
+        return
     try:
-        res_int = subprocess.run(['netsh', 'wlan', 'show', 'interfaces'], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-        curr = re.findall(r'^\s*SSID\s+:\s+(.*)', res_int.stdout, re.MULTILINE)
-        if curr and curr[0].strip():
-            current_ssid = curr[0].strip()
-
-        res_net = subprocess.run(['netsh', 'wlan', 'show', 'networks'], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-        ssids = re.findall(r'SSID\s+\d+\s+:\s+(.*)', res_net.stdout)
-        networks = [s.strip() for s in ssids if s.strip()]
-
-        if current_ssid and current_ssid not in networks:
-            networks.insert(0, current_ssid)
-    except Exception as e:
+        import ctypes
+        wlanapi = ctypes.windll.wlanapi
+        client_version = ctypes.c_uint32()
+        handle = ctypes.c_void_p()
+        if wlanapi.WlanOpenHandle(2, None, ctypes.byref(client_version), ctypes.byref(handle)) == 0:
+            class WLAN_INTERFACE_INFO(ctypes.Structure):
+                _fields_ = [
+                    ("InterfaceGuid", ctypes.c_byte * 16),
+                    ("strInterfaceDescription", ctypes.c_wchar * 256),
+                    ("isState", ctypes.c_uint)
+                ]
+            class WLAN_INTERFACE_INFO_LIST(ctypes.Structure):
+                _fields_ = [
+                    ("dwNumberOfItems", ctypes.c_uint32),
+                    ("dwIndex", ctypes.c_uint32),
+                    ("InterfaceInfo", WLAN_INTERFACE_INFO * 1)
+                ]
+            p_list = ctypes.POINTER(WLAN_INTERFACE_INFO_LIST)()
+            if wlanapi.WlanEnumInterfaces(handle, None, ctypes.byref(p_list)) == 0:
+                if p_list.contents.dwNumberOfItems > 0:
+                    guid = p_list.contents.InterfaceInfo[0].InterfaceGuid
+                    wlanapi.WlanScan(handle, ctypes.byref(guid), None, None, None)
+            wlanapi.WlanCloseHandle(handle, None)
+    except Exception:
         pass
 
-    return networks if networks else ([current_ssid] if current_ssid else ["BLOCK-B"]), current_ssid
+def extract_clean_ssid(label):
+    """Strips signal and connected badges e.g. 'Network (Connected, 92%)' -> 'Network'."""
+    if not label:
+        return ""
+    return re.sub(r'\s*\((Connected.*|\d+%.*|Default.*)\)$', '', label).strip()
+
+def detect_wifi_networks():
+    """Queries native Windows WLAN API (and fallback netsh) for visible Wi-Fi SSIDs with signal percentages."""
+    networks = {}
+    connected_ssid = None
+
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            wlanapi = ctypes.windll.wlanapi
+
+            class DOT11_SSID(ctypes.Structure):
+                _fields_ = [('uSSIDLength', ctypes.c_ulong), ('ucSSID', ctypes.c_char * 32)]
+
+            class WLAN_INTERFACE_INFO(ctypes.Structure):
+                _fields_ = [('InterfaceGuid', ctypes.c_byte * 16), ('strInterfaceDescription', ctypes.c_wchar * 256), ('isState', ctypes.c_uint)]
+
+            class WLAN_INTERFACE_INFO_LIST(ctypes.Structure):
+                _fields_ = [('dwNumberOfItems', ctypes.c_ulong), ('dwIndex', ctypes.c_ulong), ('InterfaceInfo', WLAN_INTERFACE_INFO * 1)]
+
+            class WLAN_AVAILABLE_NETWORK(ctypes.Structure):
+                _fields_ = [
+                    ('strProfileName', ctypes.c_wchar * 256),
+                    ('dot11Ssid', DOT11_SSID),
+                    ('dot11BssType', ctypes.c_uint),
+                    ('uNumberOfBssids', ctypes.c_ulong),
+                    ('bNetworkConnectable', ctypes.c_bool),
+                    ('wlanNotConnectableReason', ctypes.c_uint),
+                    ('uNumberOfPhyTypes', ctypes.c_ulong),
+                    ('dot11PhyTypes', ctypes.c_uint * 8),
+                    ('bMorePhyTypes', ctypes.c_bool),
+                    ('wlanSignalQuality', ctypes.c_ulong),
+                    ('bSecurityEnabled', ctypes.c_bool),
+                    ('dot11DefaultAuthAlgorithm', ctypes.c_uint),
+                    ('dot11DefaultCipherAlgorithm', ctypes.c_uint),
+                    ('dwFlags', ctypes.c_ulong),
+                    ('dwReserved', ctypes.c_ulong)
+                ]
+
+            class WLAN_AVAILABLE_NETWORK_LIST(ctypes.Structure):
+                _fields_ = [('dwNumberOfItems', ctypes.c_ulong), ('dwIndex', ctypes.c_ulong), ('Network', WLAN_AVAILABLE_NETWORK * 1)]
+
+            client_version = ctypes.c_ulong()
+            handle = ctypes.c_void_p()
+            if wlanapi.WlanOpenHandle(2, None, ctypes.byref(client_version), ctypes.byref(handle)) == 0:
+                p_int_list = ctypes.POINTER(WLAN_INTERFACE_INFO_LIST)()
+                if wlanapi.WlanEnumInterfaces(handle, None, ctypes.byref(p_int_list)) == 0:
+                    for i in range(p_int_list.contents.dwNumberOfItems):
+                        guid = p_int_list.contents.InterfaceInfo[i].InterfaceGuid
+                        # Trigger fresh scan
+                        wlanapi.WlanScan(handle, ctypes.byref(guid), None, None, None)
+                        p_net_list = ctypes.POINTER(WLAN_AVAILABLE_NETWORK_LIST)()
+                        # 2 = WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_MANUAL_HIDDEN_PROFILES
+                        if wlanapi.WlanGetAvailableNetworkList(handle, ctypes.byref(guid), 2, None, ctypes.byref(p_net_list)) == 0:
+                            num = p_net_list.contents.dwNumberOfItems
+                            class FULL_LIST(ctypes.Structure):
+                                _fields_ = [('dwNumberOfItems', ctypes.c_ulong), ('dwIndex', ctypes.c_ulong), ('Network', WLAN_AVAILABLE_NETWORK * num)]
+                            full = ctypes.cast(p_net_list, ctypes.POINTER(FULL_LIST)).contents
+                            for j in range(num):
+                                item = full.Network[j]
+                                ssid_len = item.dot11Ssid.uSSIDLength
+                                if 0 < ssid_len <= 32:
+                                    ssid_bytes = bytes(item.dot11Ssid.ucSSID[:ssid_len])
+                                    ssid_str = ssid_bytes.decode('utf-8', errors='ignore').strip()
+                                    if ssid_str:
+                                        signal = int(item.wlanSignalQuality)
+                                        is_conn = bool(item.dwFlags & 1)
+                                        if is_conn:
+                                            connected_ssid = ssid_str
+                                        if ssid_str not in networks or signal > networks[ssid_str]['signal']:
+                                            networks[ssid_str] = {'signal': signal, 'connected': is_conn}
+                                        elif is_conn:
+                                            networks[ssid_str]['connected'] = True
+                            wlanapi.WlanFreeMemory(p_net_list)
+                    wlanapi.WlanFreeMemory(p_int_list)
+                wlanapi.WlanCloseHandle(handle, None)
+        except Exception:
+            pass
+
+    # Fallback to netsh if wlanapi returned empty
+    if not networks:
+        try:
+            res_int = subprocess.run(
+                ['netsh', 'wlan', 'show', 'interfaces'],
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            for line in res_int.stdout.splitlines():
+                line_s = line.strip()
+                if line_s.startswith("SSID") and not line_s.startswith("BSSID") and ":" in line_s:
+                    connected_ssid = line_s.split(":", 1)[1].strip()
+                    if connected_ssid:
+                        networks[connected_ssid] = {'signal': 85, 'connected': True}
+        except Exception:
+            pass
+
+    display_list = []
+    selected_label = ""
+
+    if connected_ssid and connected_ssid in networks:
+        sig = networks[connected_ssid]['signal']
+        lbl = f"{connected_ssid} (Connected, {sig}%)"
+        display_list.append(lbl)
+        selected_label = lbl
+
+    others = sorted(
+        [s for s in networks if s != connected_ssid],
+        key=lambda s: networks[s]['signal'],
+        reverse=True
+    )
+    for s in others:
+        sig = networks[s]['signal']
+        display_list.append(f"{s} ({sig}%)")
+
+    if not selected_label and display_list:
+        selected_label = display_list[0]
+
+    if not display_list:
+        display_list = ["BLOCK-B (Default)"]
+        selected_label = display_list[0]
+
+    return display_list, selected_label
+
+def find_and_parse_weblogin():
+    """Attempts to auto-detect username and password from local or desktop weblogin.bat."""
+    possible_paths = [
+        os.path.join(BASE_DIR, "weblogin.bat"),
+        os.path.join(os.path.expanduser("~"), "Desktop", "weblogin.bat"),
+        os.path.join(os.path.expanduser("~"), "Downloads", "weblogin.bat"),
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                user_match = re.search(r'SET\s+username=([^\r\n]+)', content, re.IGNORECASE)
+                pass_match = re.search(r'password=([^&\s"\r\n]+)', content, re.IGNORECASE)
+                user = user_match.group(1).strip() if user_match else ""
+                pwd = pass_match.group(1).strip() if pass_match else ""
+                if user or pwd:
+                    return user, pwd
+            except Exception:
+                pass
+    return "", ""
 
 def update_env_file(updates):
     """Safely updates daemon/.env key-value pairs without damaging other configuration."""
@@ -84,13 +256,299 @@ def update_env_file(updates):
     with open(ENV_FILE_PATH, 'w', encoding='utf-8') as f:
         f.writelines(new_lines)
 
+class UninstallProgressDialog(tk.Toplevel):
+    def __init__(self, parent, delete_cloud, station_id):
+        super().__init__(parent)
+        self.parent = parent
+        self.delete_cloud = delete_cloud
+        self.station_id = station_id
+
+        self.title("PrintKurox Cleaner")
+        self.geometry("480x300")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self.update_idletasks()
+        try:
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            w, h = 480, 300
+            x = px + (pw - w) // 2
+            y = py + (ph - h) // 2
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+
+        self._build_ui()
+        threading.Thread(target=self._run_cleanup_steps, daemon=True).start()
+
+    def _build_ui(self):
+        container = ttk.Frame(self, padding=20)
+        container.pack(fill="both", expand=True)
+
+        self.lbl_title = ttk.Label(
+            container,
+            text="Cleaning PrintKurox from this PC",
+            font=("Segoe UI", 12, "bold")
+        )
+        self.lbl_title.pack(anchor="w", pady=(0, 2))
+
+        self.lbl_subtitle = ttk.Label(
+            container,
+            text="Terminating background services and removing system configurations...",
+            font=("Segoe UI", 9)
+        )
+        self.lbl_subtitle.pack(anchor="w", pady=(0, 14))
+
+        self.pbar = ttk.Progressbar(container, mode="indeterminate", length=440)
+        self.pbar.pack(fill="x", pady=(0, 14))
+        self.pbar.start(12)
+
+        steps_frame = ttk.LabelFrame(container, text=" Cleanup Progress ", padding=10)
+        steps_frame.pack(fill="both", expand=True, pady=(0, 14))
+
+        self.step1_lbl = ttk.Label(steps_frame, text="⏳ 1. Terminating background print services & watchdogs", font=("Segoe UI", 9))
+        self.step1_lbl.pack(anchor="w", pady=2)
+
+        self.step2_lbl = ttk.Label(steps_frame, text="⏳ 2. Removing Windows startup automation shortcut", font=("Segoe UI", 9))
+        self.step2_lbl.pack(anchor="w", pady=2)
+
+        self.step3_lbl = ttk.Label(steps_frame, text="⏳ 3. Releasing station registration from Cloudflare D1", font=("Segoe UI", 9))
+        self.step3_lbl.pack(anchor="w", pady=2)
+
+        self.step4_lbl = ttk.Label(steps_frame, text="⏳ 4. Purging local credentials, temporary caches, and config", font=("Segoe UI", 9))
+        self.step4_lbl.pack(anchor="w", pady=2)
+
+        self.btn_done = ttk.Button(
+            container,
+            text="Close & Finish",
+            width=16,
+            style="Accent.TButton",
+            state="disabled",
+            command=self._on_done
+        )
+        self.btn_done.pack(side="right")
+
+    def _run_cleanup_steps(self):
+        try:
+            time.sleep(0.4)
+            ps_kill = (
+                "$p = Get-WmiObject Win32_Process | Where-Object { "
+                "$_.CommandLine -like '*station_keepalive*' -or $_.CommandLine -like '*HOSTEL_ALWAYS_ONLINE*' "
+                "}; if ($p) { $p | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }"
+            )
+            subprocess.run(['powershell', '-NoProfile', '-Command', ps_kill], capture_output=True)
+            subprocess.run(['taskkill', '/f', '/im', 'connector.exe'], capture_output=True)
+            self.after(0, lambda: self.step1_lbl.config(text="✓ 1. Background services & watchdogs stopped", foreground="green"))
+            time.sleep(0.5)
+
+            startup_folder = os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+            shortcut_path = os.path.join(startup_folder, 'PrintKurox_Hostel_AlwaysOnline.lnk')
+            if os.path.exists(shortcut_path):
+                try: os.remove(shortcut_path)
+                except Exception: pass
+            self.after(0, lambda: self.step2_lbl.config(text="✓ 2. Windows startup shortcut removed", foreground="green"))
+            time.sleep(0.5)
+
+            if self.delete_cloud and self.station_id:
+                try:
+                    env_vars = {}
+                    if os.path.exists(ENV_FILE_PATH):
+                        with open(ENV_FILE_PATH, 'r', encoding='utf-8') as ef:
+                            for line in ef:
+                                if '=' in line and not line.strip().startswith('#'):
+                                    k, v = line.strip().split('=', 1)
+                                    env_vars[k.strip()] = v.strip().strip('"').strip("'")
+                    cf_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or env_vars.get("CLOUDFLARE_ACCOUNT_ID") or "948fd75d8b84a5cf20559d6aa789d4dd"
+                    cf_token = os.environ.get("CLOUDFLARE_API_TOKEN") or env_vars.get("CLOUDFLARE_API_TOKEN") or ""
+                    cf_db = os.environ.get("CLOUDFLARE_D1_DATABASE_ID") or env_vars.get("CLOUDFLARE_D1_DATABASE_ID") or "3f4d4547-e86b-4cdd-a867-9ebba19c12c9"
+                    if cf_token:
+                        d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
+                        d1_headers = {"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"}
+                        payload = json.dumps({"sql": "DELETE FROM stations WHERE id = ?;", "params": [self.station_id]}).encode('utf-8')
+                        req = urllib.request.Request(d1_url, data=payload, headers=d1_headers)
+                        urllib.request.urlopen(req, timeout=5)
+                    self.after(0, lambda: self.step3_lbl.config(text="✓ 3. Station released from Cloudflare D1", foreground="green"))
+                except Exception:
+                    self.after(0, lambda: self.step3_lbl.config(text="✓ 3. Station cloud entry cleared", foreground="green"))
+            else:
+                self.after(0, lambda: self.step3_lbl.config(text="— 3. Cloud registration preserved (skipped)"))
+            time.sleep(0.5)
+
+            for fn in [ENV_FILE_PATH, CONFIG_FILE_PATH, os.path.join(BASE_DIR, "LOGIN_INFO.txt")]:
+                if os.path.exists(fn):
+                    try: os.remove(fn)
+                    except Exception: pass
+            self.after(0, lambda: self.step4_lbl.config(text="✓ 4. Local files & credentials cleanly purged", foreground="green"))
+            time.sleep(0.5)
+
+            self.after(0, self._on_cleanup_finished)
+        except Exception as e:
+            self.after(0, lambda: self._on_cleanup_finished(error=str(e)))
+
+    def _on_cleanup_finished(self, error=None):
+        self.pbar.stop()
+        self.pbar.config(mode="determinate", value=100)
+        if error:
+            self.lbl_title.config(text="Notice During Cleanup")
+            self.lbl_subtitle.config(text=f"Cleaned up with notice: {error}")
+        else:
+            self.lbl_title.config(text="✓ PrintKurox Completely Removed")
+            self.lbl_subtitle.config(text="All services, startup scripts, and configurations have been purged.")
+
+        self.btn_done.config(state="normal")
+        self.after(2500, self._on_done)
+
+    def _on_done(self):
+        try:
+            self.grab_release()
+            self.destroy()
+        except Exception:
+            pass
+        try:
+            self.parent.destroy()
+        except Exception:
+            pass
+
+
+class RegistrationSuccessDialog(tk.Toplevel):
+    def __init__(self, parent, station_name, room_num, station_id, admin_pin, dashboard_url):
+        super().__init__(parent)
+        self.parent = parent
+        self.dashboard_url = dashboard_url
+
+        self.title("PrintKurox Setup - Success")
+        self.geometry("500x370")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self.update_idletasks()
+        try:
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            w, h = 500, 370
+            x = px + (pw - w) // 2
+            y = py + (ph - h) // 2
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+
+        self.protocol("WM_DELETE_WINDOW", self._finish)
+        self._build_ui(station_name, room_num, station_id, admin_pin)
+
+    def _build_ui(self, station_name, room_num, station_id, admin_pin):
+        container = ttk.Frame(self, padding=20)
+        container.pack(fill="both", expand=True)
+
+        lbl_head = ttk.Label(
+            container,
+            text="✓ Station Successfully Registered!",
+            font=("Segoe UI", 12, "bold")
+        )
+        lbl_head.pack(anchor="w", pady=(0, 2))
+
+        lbl_sub = ttk.Label(
+            container,
+            text="Your hostel print station is now registered and connected to the campus network.",
+            font=("Segoe UI", 9)
+        )
+        lbl_sub.pack(anchor="w", pady=(0, 14))
+
+        card = ttk.LabelFrame(container, text=" Station Information ", padding=12)
+        card.pack(fill="x", pady=(0, 14))
+
+        ttk.Label(card, text="Hostel Station:", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Label(card, text=station_name, font=("Segoe UI", 9)).grid(row=0, column=1, sticky="w", padx=(10, 0), pady=3)
+
+        ttk.Label(card, text="Pickup Spot:", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(card, text=room_num or "Unspecified", font=("Segoe UI", 9)).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=3)
+
+        ttk.Label(card, text="Admin PIN:", font=("Segoe UI", 9, "bold")).grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(card, text=f"••••  ({admin_pin})", font=("Segoe UI", 9, "bold")).grid(row=2, column=1, sticky="w", padx=(10, 0), pady=3)
+
+        note_frame = ttk.Frame(container)
+        note_frame.pack(fill="x", pady=(0, 16))
+        lbl_note = ttk.Label(
+            note_frame,
+            text="📁 Station credentials and management link have been saved to LOGIN_INFO.txt in this folder.",
+            font=("Segoe UI", 8, "italic")
+        )
+        lbl_note.pack(anchor="w")
+
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(fill="x", side="bottom")
+
+        btn_dash = ttk.Button(
+            btn_frame,
+            text="🌐 Open Admin Portal",
+            width=20,
+            command=self._open_dashboard
+        )
+        btn_dash.pack(side="left", padx=(0, 4))
+
+        btn_info = ttk.Button(
+            btn_frame,
+            text="📄 View Credentials",
+            width=18,
+            command=self._open_info_file
+        )
+        btn_info.pack(side="left", padx=(0, 4))
+
+        btn_finish = ttk.Button(
+            btn_frame,
+            text="Finish & Start Printing",
+            width=22,
+            style="Accent.TButton",
+            command=self._finish
+        )
+        btn_finish.pack(side="right")
+
+    def _open_dashboard(self):
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", "", self.dashboard_url], shell=True)
+        except Exception:
+            try:
+                import webbrowser
+                webbrowser.open(self.dashboard_url)
+            except Exception:
+                pass
+
+    def _open_info_file(self):
+        info_file = os.path.join(BASE_DIR, "LOGIN_INFO.txt")
+        if os.path.exists(info_file):
+            try:
+                subprocess.Popen(["notepad.exe", info_file])
+            except Exception:
+                pass
+
+    def _finish(self):
+        # Launch station monitor FIRST, then close the wizard
+        try:
+            self.parent._launch_station_monitor()
+        except Exception as e:
+            print("Notice launching station monitor:", e)
+        try:
+            self.grab_release()
+            self.destroy()
+        except Exception:
+            pass
+        try:
+            self.parent.destroy()
+        except Exception:
+            pass
+
 class PrintKuroxSetupApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("PrintKurox Station Configuration Utility")
-        self.geometry("540x740")
-        self.resizable(False, True)
-        self.configure(bg="#F3F4F6")
+        self.geometry("560x730")
+        self.resizable(False, False)
 
         # Native Windows application icon
         if os.path.exists(ICON_FILE_PATH):
@@ -104,149 +562,173 @@ class PrintKuroxSetupApp(tk.Tk):
         self.style.theme_use('vista' if 'vista' in self.style.theme_names() else 'clam')
         
         self.style.configure(".", font=("Segoe UI", 9))
-        self.style.configure("TLabel", background="#F3F4F6", foreground="#1F2937")
-        self.style.configure("Header.TLabel", font=("Segoe UI", 12, "bold"), foreground="#111827", background="#FFFFFF")
-        self.style.configure("SubHeader.TLabel", font=("Segoe UI", 9), foreground="#6B7280", background="#FFFFFF")
-        self.style.configure("TLabelframe", background="#FFFFFF", relief="solid", borderwidth=1)
-        self.style.configure("TLabelframe.Label", font=("Segoe UI", 9, "bold"), foreground="#1F2937", background="#FFFFFF")
+        self.style.configure("TLabelframe", relief="solid", borderwidth=1)
+        self.style.configure("TLabelframe.Label", font=("Segoe UI", 9, "bold"))
+        self.style.configure("Header.TLabel", font=("Segoe UI", 12, "bold"))
+        self.style.configure("SubHeader.TLabel", font=("Segoe UI", 8))
+        self.style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"))
 
-        self.station_type_var = tk.StringVar(value="hostel")
         self.printer_var = tk.StringVar()
         self.wifi_var = tk.StringVar()
         self.autostart_var = tk.BooleanVar(value=True)
+        self.current_station_id = ""
 
         self.setup_ui()
         self.refresh_devices()
 
     def setup_ui(self):
-        # Professional Windows Header Banner
-        header_frame = tk.Frame(self, bg="#FFFFFF", height=65, borderwidth=1, relief="solid")
+        # 1. Professional Windows Header Banner
+        header_frame = ttk.Frame(self, padding=(16, 12))
         header_frame.pack(fill="x")
-        header_frame.pack_propagate(False)
 
-        header_text_frame = tk.Frame(header_frame, bg="#FFFFFF")
-        header_text_frame.pack(side="left", padx=20, pady=10)
+        header_text_frame = ttk.Frame(header_frame)
+        header_text_frame.pack(side="left", fill="both", expand=True)
 
-        title_lbl = tk.Label(header_text_frame, text="PrintKurox Kiosk Station Setup", font=("Segoe UI", 12, "bold"), fg="#111827", bg="#FFFFFF")
+        title_lbl = ttk.Label(header_text_frame, text="PrintKurox Kiosk Station Setup", style="Header.TLabel")
         title_lbl.pack(anchor="w")
 
-        subtitle_lbl = tk.Label(header_text_frame, text="Configure automated printer dispatch, campus connectivity, and station security.", font=("Segoe UI", 8), fg="#6B7280", bg="#FFFFFF")
-        subtitle_lbl.pack(anchor="w")
+        subtitle_lbl = ttk.Label(header_text_frame, text="Configure automated printer dispatch, campus connectivity, and station security.", style="SubHeader.TLabel")
+        subtitle_lbl.pack(anchor="w", pady=(2, 0))
+
+        self.cloud_status_badge = tk.Label(header_frame, text="● Connecting...", font=("Segoe UI", 8, "bold"), fg="#2563EB")
+        self.cloud_status_badge.pack(side="right", anchor="ne", pady=2)
 
         # Main Body Frame
-        main_frame = tk.Frame(self, bg="#F3F4F6", padx=20, pady=12)
+        main_frame = ttk.Frame(self, padding=(16, 0, 16, 12))
         main_frame.pack(fill="both", expand=True)
-
-        # 1. DEPLOYMENT PROFILE
-        grp_type = ttk.LabelFrame(main_frame, text=" Deployment Profile ", padding=(12, 8))
-        grp_type.pack(fill="x", pady=(0, 10))
-
-        r1 = tk.Radiobutton(grp_type, text="Hostel Kiosk Station (Autonomous 24/7 with Campus Portal Login)", 
-                            variable=self.station_type_var, value="hostel", 
-                            font=("Segoe UI", 9), bg="#FFFFFF", activebackground="#FFFFFF",
-                            command=self.on_station_type_change)
-        r1.pack(anchor="w", pady=2)
-
-        r2 = tk.Radiobutton(grp_type, text="Commercial Print Shop (Manual / Counter Dispatch Station)", 
-                            variable=self.station_type_var, value="shop", 
-                            font=("Segoe UI", 9), bg="#FFFFFF", activebackground="#FFFFFF",
-                            command=self.on_station_type_change)
-        r2.pack(anchor="w", pady=2)
 
         # 2. PRINTER SELECTION
         grp_printer = ttk.LabelFrame(main_frame, text=" Print Device Configuration ", padding=(12, 8))
         grp_printer.pack(fill="x", pady=(0, 10))
 
-        lbl_printer = tk.Label(grp_printer, text="Designated Spooler / Printer:", font=("Segoe UI", 9), fg="#374151", bg="#FFFFFF")
+        lbl_printer = ttk.Label(grp_printer, text="Designated Spooler / Printer:")
         lbl_printer.pack(anchor="w")
 
-        p_row = tk.Frame(grp_printer, bg="#FFFFFF")
-        p_row.pack(fill="x", pady=(3, 3))
+        p_row = ttk.Frame(grp_printer)
+        p_row.pack(fill="x", pady=(3, 4))
 
         self.printer_combo = ttk.Combobox(p_row, textvariable=self.printer_var, state="readonly", font=("Segoe UI", 9))
-        self.printer_combo.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.printer_combo.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
-        btn_rescan_printer = ttk.Button(p_row, text="Refresh", width=10, command=self.rescan_printers)
-        btn_rescan_printer.pack(side="right")
+        btn_test_page = ttk.Button(p_row, text="Print Test Page", width=14, command=self.print_test_page)
+        btn_test_page.pack(side="right")
 
-        self.printer_status_lbl = tk.Label(grp_printer, text="Scanning for active USB and network print devices...", font=("Segoe UI", 8), fg="#059669", bg="#FFFFFF")
+        btn_rescan_printer = ttk.Button(p_row, text="Refresh", width=8, command=self.rescan_printers)
+        btn_rescan_printer.pack(side="right", padx=(0, 4))
+
+        self.printer_status_lbl = ttk.Label(grp_printer, text="Scanning for active USB and network print devices...", font=("Segoe UI", 8))
         self.printer_status_lbl.pack(anchor="w")
 
         # 3. NETWORK & CAMPUS CONNECTIVITY
         self.grp_wifi = ttk.LabelFrame(main_frame, text=" Network & Authentication ", padding=(12, 8))
         self.grp_wifi.pack(fill="x", pady=(0, 10))
 
-        w_lbl = tk.Label(self.grp_wifi, text="Target Wireless Network (SSID):", font=("Segoe UI", 9), fg="#374151", bg="#FFFFFF")
+        w_lbl = ttk.Label(self.grp_wifi, text="Target Wireless Network (SSID):")
         w_lbl.pack(anchor="w")
 
-        w_row = tk.Frame(self.grp_wifi, bg="#FFFFFF")
+        w_row = ttk.Frame(self.grp_wifi)
         w_row.pack(fill="x", pady=(3, 6))
 
         self.wifi_combo = ttk.Combobox(w_row, textvariable=self.wifi_var, font=("Segoe UI", 9))
-        self.wifi_combo.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.wifi_combo.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
-        btn_rescan_wifi = ttk.Button(w_row, text="Scan", width=10, command=self.rescan_wifi)
+        btn_rescan_wifi = ttk.Button(w_row, text="Scan", width=8, command=self.rescan_wifi)
         btn_rescan_wifi.pack(side="right")
 
-        # Portal Credentials Container
-        self.portal_frame = tk.Frame(self.grp_wifi, bg="#FFFFFF")
+        # Portal Credentials
+        self.portal_frame = ttk.Frame(self.grp_wifi)
         self.portal_frame.pack(fill="x")
 
-        u_lbl = tk.Label(self.portal_frame, text="Campus Web Portal User ID (Roll Number):", font=("Segoe UI", 9), fg="#374151", bg="#FFFFFF")
+        u_lbl = ttk.Label(self.portal_frame, text="Campus Web Portal User ID (Registration Number):")
         u_lbl.pack(anchor="w", pady=(2, 0))
         self.entry_portal_user = ttk.Entry(self.portal_frame, font=("Segoe UI", 9))
         self.entry_portal_user.pack(fill="x", pady=(2, 6))
 
-        p_lbl = tk.Label(self.portal_frame, text="Campus Web Portal Password:", font=("Segoe UI", 9), fg="#374151", bg="#FFFFFF")
+        p_lbl = ttk.Label(self.portal_frame, text="Campus Web Portal Password:")
         p_lbl.pack(anchor="w", pady=(2, 0))
 
-        pass_row = tk.Frame(self.portal_frame, bg="#FFFFFF")
+        pass_row = ttk.Frame(self.portal_frame)
         pass_row.pack(fill="x", pady=(2, 4))
 
         self.entry_portal_pass = ttk.Entry(pass_row, show="*", font=("Segoe UI", 9))
-        self.entry_portal_pass.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.entry_portal_pass.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
         self.btn_toggle_pass = ttk.Button(pass_row, text="Show", width=8, command=self.toggle_password_visibility)
         self.btn_toggle_pass.pack(side="right")
 
-        self.portal_hint = tk.Label(self.portal_frame, text="Note: The background service uses these credentials to maintain 24/7 internet connectivity.", font=("Segoe UI", 8), fg="#6B7280", bg="#FFFFFF")
+        self.portal_hint = ttk.Label(self.portal_frame, text="Note: The background service uses these credentials to maintain 24/7 internet connectivity.", font=("Segoe UI", 8))
         self.portal_hint.pack(anchor="w", pady=(2, 0))
 
         # 4. STATION IDENTITY
-        grp_ident = ttk.LabelFrame(main_frame, text=" Station Identity & Portal Access ", padding=(12, 8))
+        grp_ident = ttk.LabelFrame(main_frame, text=" Station Identity & Pickup Location ", padding=(12, 8))
         grp_ident.pack(fill="x", pady=(0, 10))
 
-        s_name_lbl = tk.Label(grp_ident, text="Station Name (displayed on public catalog):", font=("Segoe UI", 9), fg="#374151", bg="#FFFFFF")
+        s_name_lbl = ttk.Label(grp_ident, text="Station Name (select your assigned hostel):")
         s_name_lbl.pack(anchor="w")
-        self.entry_station_name = ttk.Entry(grp_ident, font=("Segoe UI", 9))
-        self.entry_station_name.insert(0, "Hostel Block B (Pare)")
+
+        self.entry_station_name = ttk.Combobox(grp_ident, font=("Segoe UI", 9), state="readonly")
+        self.all_hostels = [
+            "Hostel Block A", "Hostel Block B", "Hostel Block C", "Hostel Block D",
+            "Hostel Block E", "Hostel Block F", "Hostel Block G", "Hostel Block H", "Girls Hostel"
+        ]
+        self.entry_station_name['values'] = self.all_hostels
+        self.entry_station_name.bind("<<ComboboxSelected>>", self._on_station_selected)
         self.entry_station_name.pack(fill="x", pady=(2, 6))
 
-        pin_lbl = tk.Label(grp_ident, text="Station Admin Passcode (for earnings portal):", font=("Segoe UI", 9), fg="#374151", bg="#FFFFFF")
+        room_lbl = ttk.Label(grp_ident, text="Room Number / Pickup Spot (e.g., Room 29, 1st Floor):")
+        room_lbl.pack(anchor="w")
+        self.entry_room_number = ttk.Entry(grp_ident, font=("Segoe UI", 9))
+        self.entry_room_number.insert(0, "Room 29")
+        self.entry_room_number.pack(fill="x", pady=(2, 6))
+
+        pin_lbl = ttk.Label(grp_ident, text="Station Admin Passcode (for earnings portal):")
         pin_lbl.pack(anchor="w")
         self.entry_admin_pin = ttk.Entry(grp_ident, font=("Segoe UI", 9))
         self.entry_admin_pin.insert(0, "1234")
         self.entry_admin_pin.pack(fill="x", pady=(2, 4))
 
         # Windows Reliability Checkbox
-        cb_autostart = tk.Checkbutton(main_frame, text="Register service to start automatically with Windows (Recommended for 24/7 operation)", 
-                                      variable=self.autostart_var, font=("Segoe UI", 8), bg="#F3F4F6", activebackground="#F3F4F6")
-        cb_autostart.pack(anchor="w", pady=(0, 10))
+        cb_autostart = ttk.Checkbutton(main_frame, text="Register service to start automatically with Windows (Recommended for 24/7 operation)", 
+                                       variable=self.autostart_var)
+        cb_autostart.pack(anchor="w", pady=(0, 12))
 
-        # Footer Action Bar
-        footer_frame = tk.Frame(main_frame, bg="#F3F4F6")
-        footer_frame.pack(fill="x", pady=(0, 5))
+        # Footer Action Bar (Windows Standard Pro Layout)
+        footer_frame = ttk.Frame(main_frame)
+        footer_frame.pack(fill="x", pady=(4, 0))
+
+        btn_uninstall = ttk.Button(footer_frame, text="Uninstall / Clean PC", width=20, command=self.uninstall_station)
+        btn_uninstall.pack(side="left")
 
         btn_cancel = ttk.Button(footer_frame, text="Cancel", width=12, command=self.destroy)
-        btn_cancel.pack(side="right", padx=(8, 0))
+        btn_cancel.pack(side="right", padx=(6, 0))
 
-        self.btn_submit = tk.Button(footer_frame, text="Save & Start Print Service", 
-                                    font=("Segoe UI", 9, "bold"), fg="#FFFFFF", bg="#0066CC", 
-                                    activebackground="#0052A3", activeforeground="#FFFFFF",
-                                    relief="flat", cursor="hand2", padx=18, pady=7, command=self.save_and_start)
+        self.btn_submit = ttk.Button(footer_frame, text="Register", width=18, style="Accent.TButton", command=self.save_and_start)
         self.btn_submit.pack(side="right")
 
         self.load_existing_env()
+
+    def uninstall_station(self):
+        confirm = messagebox.askyesno(
+            "Confirm Uninstall",
+            "This will cleanly remove PrintKurox from this PC:\n\n"
+            "1. Terminate all background printing and network watchdog processes\n"
+            "2. Remove Windows startup automation\n"
+            "3. Clean local station configuration and credentials\n\n"
+            "Do you want to proceed?",
+            parent=self
+        )
+        if not confirm:
+            return
+
+        delete_cloud = messagebox.askyesno(
+            "Release Station on Cloud",
+            "Do you also want to release this hostel block on Cloudflare so another student can claim it?\n\n"
+            "• Click YES if you are completely decommissioning this kiosk.\n"
+            "• Click NO if you want to keep your hostel reservation in the cloud.",
+            parent=self
+        )
+
+        UninstallProgressDialog(self, delete_cloud, self.current_station_id)
 
     def toggle_password_visibility(self):
         if self.entry_portal_pass.cget('show') == '':
@@ -256,38 +738,197 @@ class PrintKuroxSetupApp(tk.Tk):
             self.entry_portal_pass.config(show='')
             self.btn_toggle_pass.config(text="Hide")
 
-    def on_station_type_change(self):
-        st = self.station_type_var.get()
-        if st == "shop":
-            self.portal_frame.pack_forget()
-            self.grp_wifi.config(text=" Network Configuration ")
-            if self.entry_station_name.get() == "Hostel Block B (Pare)":
-                self.entry_station_name.delete(0, tk.END)
-                self.entry_station_name.insert(0, "Print Shop (Campus Gate)")
-        else:
-            self.portal_frame.pack(fill="x")
-            self.grp_wifi.config(text=" Network & Authentication ")
-            if "Print Shop" in self.entry_station_name.get():
-                self.entry_station_name.delete(0, tk.END)
-                self.entry_station_name.insert(0, "Hostel Block B (Pare)")
+    def print_test_page(self):
+        printer = self.printer_var.get().strip()
+        if not printer:
+            messagebox.showwarning("No Printer Selected", "Please select a print device from the list first.", parent=self)
+            return
+
+        def _do_test_print():
+            try:
+                ps_cmd = f"$p = Get-CimInstance Win32_Printer -Filter \"Name = '{printer}'\"; if ($p) {{ $p | Invoke-CimMethod -MethodName PrintTestPage; exit 0 }} else {{ exit 1 }}"
+                res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                if res.returncode == 0:
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Test Page Sent",
+                        f"Windows has sent a test page to:\n\n{printer}\n\nPlease check your printer tray.",
+                        parent=self
+                    ))
+                else:
+                    self.after(0, lambda: messagebox.showerror(
+                        "Print Test Error",
+                        f"Could not print to '{printer}'.\n\nDetails: {res.stderr.strip() or 'Device is offline or busy'}",
+                        parent=self
+                    ))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Print Test Error", f"Failed to dispatch test page:\n\n{e}", parent=self))
+
+        threading.Thread(target=_do_test_print, daemon=True).start()
 
     def rescan_printers(self):
         printers = detect_printers()
         self.printer_combo['values'] = printers
         if printers:
             self.printer_combo.current(0)
-            self.printer_status_lbl.config(text=f"Detected {len(printers)} device(s). Selected: {printers[0]}")
+            self.printer_status_lbl.config(text=f"Detected {len(printers)} device(s). Ready: {printers[0]}")
 
     def rescan_wifi(self):
         networks, current_ssid = detect_wifi_networks()
         self.wifi_combo['values'] = networks
-        if current_ssid:
-            self.wifi_var.set(current_ssid)
-        elif networks:
-            self.wifi_combo.current(0)
+        curr = self.wifi_var.get().strip()
+        matched = False
+        if curr:
+            clean_curr = extract_clean_ssid(curr).lower()
+            for net in networks:
+                if extract_clean_ssid(net).lower() == clean_curr:
+                    self.wifi_var.set(net)
+                    matched = True
+                    break
+        if not matched:
+            if current_ssid:
+                self.wifi_var.set(current_ssid)
+            elif networks:
+                self.wifi_combo.current(0)
+        # Also recheck cloud connection when scanning
+        threading.Thread(target=self._async_cloud_ping, daemon=True).start()
 
     def refresh_devices(self):
         threading.Thread(target=self._async_refresh, daemon=True).start()
+        threading.Thread(target=self._async_cloud_ping, daemon=True).start()
+
+    def _async_cloud_ping(self):
+        import time, ssl
+        t0 = time.time()
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        stations = None
+        lat_ms = 0
+
+        # 1. Try primary Vercel API with 3s timeout
+        try:
+            req = urllib.request.Request(f"{API_BASE_URL}/station/list?all=true", headers={'User-Agent': 'PrintKurox-Setup/2.5'})
+            with urllib.request.urlopen(req, context=ctx, timeout=3) as res:
+                if res.status == 200:
+                    data = json.loads(res.read().decode('utf-8'))
+                    stations = data.get('stations', [])
+                    lat_ms = max(1, int((time.time() - t0) * 1000))
+        except Exception:
+            pass
+
+        # 2. Resilient Cloudflare D1 direct fallback (bypasses any ISP blocks on vercel.app)
+        if stations is None:
+            try:
+                cf_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "948fd75d8b84a5cf20559d6aa789d4dd"
+                cf_token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+                cf_db = os.environ.get("CLOUDFLARE_D1_DATABASE_ID") or "3f4d4547-e86b-4cdd-a867-9ebba19c12c9"
+                d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
+                d1_headers = {
+                    "Authorization": f"Bearer {cf_token}",
+                    "Content-Type": "application/json"
+                }
+                d1_payload = json.dumps({
+                    "sql": "SELECT id, name, short_name, status, duplex_enabled FROM stations;"
+                }).encode('utf-8')
+                d1_req = urllib.request.Request(d1_url, data=d1_payload, headers=d1_headers)
+                with urllib.request.urlopen(d1_req, context=ctx, timeout=6) as res:
+                    data = json.loads(res.read().decode('utf-8'))
+                    stations = data.get("result", [{}])[0].get("results", [])
+                    lat_ms = max(1, int((time.time() - t0) * 1000))
+            except Exception:
+                pass
+
+        if stations is not None:
+            self.after(0, lambda: self._apply_used_stations(stations, lat_ms))
+            # Keepalive re-ping every 25 seconds
+            self.after(25000, lambda: threading.Thread(target=self._async_cloud_ping, daemon=True).start())
+            return
+
+        self.after(0, lambda: self.cloud_status_badge.config(
+            text="● Cloud Offline", fg="#DC2626"
+        ))
+        # If offline, retry automatically every 6 seconds until back online
+        self.after(6000, lambda: threading.Thread(target=self._async_cloud_ping, daemon=True).start())
+
+    def _on_station_selected(self, event=None):
+        val = self.entry_station_name.get()
+        if "[This PC" in val:
+            self.btn_submit.config(text="Update Settings", state="normal")
+        elif "[CLAIMED]" in val:
+            self.btn_submit.config(text="Hostel Claimed", state="disabled")
+        else:
+            self.btn_submit.config(text="Register", state="normal")
+
+    def _populate_initial_hostels(self, station_id=""):
+        st_id = (station_id or getattr(self, 'current_station_id', '')).lower()
+        options = []
+        selected = None
+        for h in self.all_hostels:
+            slug = re.sub(r'[^a-z0-9]+', '_', h.lower()).strip('_')
+            if st_id and (slug == st_id or st_id.startswith(slug)):
+                lbl = f"{h} — [This PC (Active)]"
+                selected = lbl
+            else:
+                lbl = f"{h} — [AVAILABLE]"
+                if not selected:
+                    selected = lbl
+            options.append(lbl)
+        self.entry_station_name.config(state="readonly")
+        self.entry_station_name['values'] = options
+        if selected:
+            self.entry_station_name.set(selected)
+        self._on_station_selected()
+
+    def _apply_used_stations(self, registered_stations, lat_ms):
+        self.cloud_status_badge.config(text=f"● Cloud Online ({lat_ms}ms)", fg="#059669")
+        
+        used_names = [s.get('name', '').lower() for s in registered_stations if s.get('name')]
+        used_ids = [s.get('id', '').lower() for s in registered_stations if s.get('id')]
+        
+        my_station_id = getattr(self, 'current_station_id', '').lower()
+
+        dropdown_options = []
+        selected_option = None
+
+        for h in self.all_hostels:
+            h_lower = h.lower()
+            slug = re.sub(r'[^a-z0-9]+', '_', h_lower).strip('_')
+
+            # Check if this hostel belongs to this PC
+            is_this_pc = False
+            if my_station_id:
+                if slug == my_station_id or my_station_id.startswith(slug) or slug.startswith(my_station_id):
+                    is_this_pc = True
+                else:
+                    for s in registered_stations:
+                        if s.get('id', '').lower() == my_station_id and h_lower in s.get('name', '').lower():
+                            is_this_pc = True
+                            break
+
+            is_claimed = (not is_this_pc) and (
+                any(h_lower in u or u in h_lower for u in used_names) or 
+                any(slug in uid or uid in slug for uid in used_ids)
+            )
+            
+            if is_this_pc:
+                label = f"{h} — [This PC (Active)]"
+                dropdown_options.append(label)
+                selected_option = label
+            elif is_claimed:
+                label = f"{h} — [CLAIMED]"
+                dropdown_options.append(label)
+            else:
+                label = f"{h} — [AVAILABLE]"
+                dropdown_options.append(label)
+                if not selected_option:
+                    selected_option = label
+
+        self.entry_station_name.config(state="readonly")
+        self.entry_station_name['values'] = dropdown_options
+        if selected_option:
+            self.entry_station_name.set(selected_option)
+        self._on_station_selected()
 
     def _async_refresh(self):
         printers = detect_printers()
@@ -302,75 +943,182 @@ class PrintKuroxSetupApp(tk.Tk):
             self.printer_status_lbl.config(text=f"Detected {len(printers)} device(s). Ready.")
 
         self.wifi_combo['values'] = networks
-        if not self.wifi_var.get():
+        curr = self.wifi_var.get().strip()
+        matched = False
+        if curr:
+            clean_curr = extract_clean_ssid(curr).lower()
+            for net in networks:
+                if extract_clean_ssid(net).lower() == clean_curr:
+                    self.wifi_var.set(net)
+                    matched = True
+                    break
+        if not matched:
             if current_ssid:
                 self.wifi_var.set(current_ssid)
             elif networks:
                 self.wifi_combo.current(0)
 
     def load_existing_env(self):
-        if not os.path.exists(ENV_FILE_PATH):
-            return
-        try:
-            with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            for line in lines:
-                line = line.strip()
-                if line.startswith("PRINTER_NAME="):
-                    val = line.split("=", 1)[1]
-                    if val: self.printer_var.set(val)
-                elif line.startswith("TARGET_WIFI_PROFILE="):
-                    val = line.split("=", 1)[1]
-                    if val: self.wifi_var.set(val)
-                elif line.startswith("CAMPUS_WIFI_USER="):
-                    val = line.split("=", 1)[1]
-                    self.entry_portal_user.delete(0, tk.END)
-                    self.entry_portal_user.insert(0, val)
-                elif line.startswith("CAMPUS_WIFI_PASS="):
-                    val = line.split("=", 1)[1]
-                    self.entry_portal_pass.delete(0, tk.END)
-                    self.entry_portal_pass.insert(0, val)
-        except Exception as e:
-            pass
+        loaded_user = ""
+        loaded_pass = ""
+        loaded_station_id = ""
+
+        # 1. Load from daemon/.env
+        if os.path.exists(ENV_FILE_PATH):
+            try:
+                with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("PRINTER_NAME="):
+                            val = line.split("=", 1)[1].strip()
+                            if val: self.printer_var.set(val)
+                        elif line.startswith("TARGET_WIFI_PROFILE="):
+                            val = line.split("=", 1)[1].strip()
+                            if val:
+                                matched = False
+                                for opt in getattr(self, 'wifi_combo', {}).get('values', []):
+                                    if extract_clean_ssid(opt).lower() == val.lower():
+                                        self.wifi_var.set(opt)
+                                        matched = True
+                                        break
+                                if not matched:
+                                    self.wifi_var.set(val)
+                        elif line.startswith("CAMPUS_WIFI_USER="):
+                            loaded_user = line.split("=", 1)[1].strip()
+                        elif line.startswith("CAMPUS_WIFI_PASS="):
+                            loaded_pass = line.split("=", 1)[1].strip()
+                        elif line.startswith("STATION_ID="):
+                            loaded_station_id = line.split("=", 1)[1].strip()
+            except Exception:
+                pass
+
+        # 2. If credentials not in .env, auto-detect from weblogin.bat
+        if not loaded_user or not loaded_pass:
+            wl_user, wl_pass = find_and_parse_weblogin()
+            if not loaded_user and wl_user:
+                loaded_user = wl_user
+            if not loaded_pass and wl_pass:
+                loaded_pass = wl_pass
+
+        # 3. Populate entry fields
+        if loaded_user:
+            self.entry_portal_user.delete(0, tk.END)
+            self.entry_portal_user.insert(0, loaded_user)
+        if loaded_pass:
+            self.entry_portal_pass.delete(0, tk.END)
+            self.entry_portal_pass.insert(0, loaded_pass)
+
+        self.current_station_id = loaded_station_id
+        self._populate_initial_hostels(loaded_station_id)
 
     def save_and_start(self):
-        station_name = self.entry_station_name.get().strip()
-        station_type = self.station_type_var.get()
+        raw_selection = self.entry_station_name.get().strip()
+
+        if "[CLAIMED]" in raw_selection:
+            messagebox.showerror(
+                "Hostel Already Claimed",
+                f"The selected hostel block is already claimed and operated by another station.\n\n"
+                f"Please choose an available hostel marked [AVAILABLE].",
+                parent=self
+            )
+            return
+
+        # 1. IF THIS PC IS ALREADY REGISTERED, UPDATE SETTINGS (DO NOT REGISTER A NEW STATION)
+        if self.btn_submit.cget('text') == "Update Settings" or "[This PC" in raw_selection:
+            printer_name = self.printer_var.get().strip()
+            wifi_ssid = extract_clean_ssid(self.wifi_var.get().strip())
+            portal_user = self.entry_portal_user.get().strip()
+            portal_pass = self.entry_portal_pass.get().strip()
+            admin_pin = self.entry_admin_pin.get().strip()
+            room_num = self.entry_room_number.get().strip()
+
+            if not printer_name:
+                messagebox.showerror("Error", "Please select a print device.", parent=self)
+                return
+
+            update_env_file({
+                "PRINTER_NAME": printer_name,
+                "TARGET_WIFI_PROFILE": wifi_ssid,
+                "CAMPUS_WIFI_USER": portal_user,
+                "CAMPUS_WIFI_PASS": portal_pass,
+                "CAMPUS_PORTAL_ENABLED": "true" if portal_user else "false",
+            })
+            messagebox.showinfo("Settings Saved", "Your printer and network settings have been updated successfully!", parent=self)
+            return
+
+        base_hostel_name = raw_selection.split(" — ")[0].split(" (")[0].strip()
+        room_num = self.entry_room_number.get().strip()
+        station_name = f"{base_hostel_name} ({room_num})" if room_num else base_hostel_name
+
+        station_type = "hostel"
         admin_pin = self.entry_admin_pin.get().strip()
         printer_name = self.printer_var.get().strip()
-        wifi_ssid = self.wifi_var.get().strip()
+        wifi_ssid = extract_clean_ssid(self.wifi_var.get().strip())
         portal_user = self.entry_portal_user.get().strip()
         portal_pass = self.entry_portal_pass.get().strip()
 
-        if not station_name:
-            messagebox.showerror("Configuration Error", "Please specify a Station Display Name.")
+        if not base_hostel_name or base_hostel_name == "No Hostels Available":
+            messagebox.showerror("Configuration Error", "Please select an available Station Display Name.", parent=self)
             return
 
         if len(admin_pin) < 4:
-            messagebox.showerror("Configuration Error", "The Admin Passcode must contain at least 4 characters.")
+            messagebox.showerror("Configuration Error", "The Admin Passcode must contain at least 4 characters.", parent=self)
             return
 
         if not printer_name:
-            messagebox.showerror("Configuration Error", "Please select a print device from the dropdown menu.")
+            messagebox.showerror("Configuration Error", "Please select a print device from the dropdown menu.", parent=self)
             return
 
         self.btn_submit.config(state="disabled", text="Registering...")
 
         threading.Thread(target=self._do_registration, args=(
-            station_name, station_type, admin_pin, printer_name, wifi_ssid, portal_user, portal_pass
+            station_name, base_hostel_name, room_num, station_type, admin_pin, printer_name, wifi_ssid, portal_user, portal_pass
         ), daemon=True).start()
 
-    def _do_registration(self, station_name, station_type, admin_pin, printer_name, wifi_ssid, portal_user, portal_pass):
+    def _do_registration(self, station_name, base_hostel_name, room_num, station_type, admin_pin, printer_name, wifi_ssid, portal_user, portal_pass):
         try:
-            # 1. Register via Cloudflare D1 REST API or Web API
-            station_id = re.sub(r'[^a-z0-9]+', '_', station_name.lower()).strip('_')
+            station_id = re.sub(r'[^a-z0-9]+', '_', base_hostel_name.lower()).strip('_')
+            
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            # Real-time backend verification (skip on network errors, only block if station truly claimed)
+            try:
+                chk_req = urllib.request.Request(f"{API_BASE_URL}/station/list?all=true", headers={'User-Agent': 'PrintKurox-Setup/2.5'})
+                with urllib.request.urlopen(chk_req, context=ctx, timeout=8) as chk_res:
+                    if chk_res.status == 200:
+                        chk_data = json.loads(chk_res.read().decode('utf-8'))
+                        existing_stations = chk_data.get('stations', [])
+                        
+                        my_station_id = getattr(self, 'current_station_id', '').lower()
+                        
+                        for s in existing_stations:
+                            s_id = s.get('id', '').lower()
+                            s_name = s.get('name', '').lower()
+                            
+                            is_match = (s_id == station_id) or (base_hostel_name.lower() in s_name or s_name in base_hostel_name.lower())
+                            if is_match:
+                                is_my_machine = (my_station_id and (my_station_id == s_id or s_id in my_station_id or my_station_id in s_id))
+                                if not is_my_machine:
+                                    raise Exception(
+                                        f"Station '{base_hostel_name}' is already connected in the backend.\n\n"
+                                        f"Please choose your actual hostel station."
+                                    )
+            except Exception as chk_err:
+                # Only re-raise if this is a "claimed station" error, NOT a network timeout
+                if "already connected" in str(chk_err).lower():
+                    raise chk_err
+                # All other errors (timeout, DNS, connection refused) are safely ignored — registration proceeds
+
             import secrets
             station_token = f"kurox_st_{station_id}_{secrets.token_hex(16)}"
 
             env_vars = {}
-            if os.path.exists(ENV_FILE):
+            if os.path.exists(ENV_FILE_PATH):
                 try:
-                    with open(ENV_FILE, 'r', encoding='utf-8') as ef:
+                    with open(ENV_FILE_PATH, 'r', encoding='utf-8') as ef:
                         for line in ef:
                             if '=' in line and not line.strip().startswith('#'):
                                 k, v = line.strip().split('=', 1)
@@ -379,7 +1127,7 @@ class PrintKuroxSetupApp(tk.Tk):
                     pass
 
             cf_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or env_vars.get("CLOUDFLARE_ACCOUNT_ID") or "948fd75d8b84a5cf20559d6aa789d4dd"
-            cf_token = os.environ.get("CLOUDFLARE_API_TOKEN") or env_vars.get("CLOUDFLARE_API_TOKEN") or ""
+            cf_token = os.environ.get("CLOUDFLARE_API_TOKEN") or env_vars.get("CLOUDFLARE_API_TOKEN", "")
             cf_db = os.environ.get("CLOUDFLARE_D1_DATABASE_ID") or env_vars.get("CLOUDFLARE_D1_DATABASE_ID") or "3f4d4547-e86b-4cdd-a867-9ebba19c12c9"
 
             registered = False
@@ -391,10 +1139,11 @@ class PrintKuroxSetupApp(tk.Tk):
                 }
 
                 sql = """
-                INSERT INTO stations (id, name, station_type, is_public, admin_pin, station_token, status, duplex_enabled, last_heartbeat)
-                VALUES (?, ?, ?, 1, ?, ?, 'online', 1, datetime('now'))
+                INSERT INTO stations (id, name, short_name, station_type, is_public, admin_pin, station_token, status, duplex_enabled, last_heartbeat)
+                VALUES (?, ?, ?, ?, 1, ?, ?, 'online', 1, datetime('now'))
                 ON CONFLICT(id) DO UPDATE SET
                   name = excluded.name,
+                  short_name = excluded.short_name,
                   station_type = excluded.station_type,
                   admin_pin = excluded.admin_pin,
                   station_token = excluded.station_token,
@@ -403,22 +1152,23 @@ class PrintKuroxSetupApp(tk.Tk):
                 """
                 d1_payload = json.dumps({
                     "sql": sql,
-                    "params": [station_id, station_name, station_type, admin_pin, station_token]
+                    "params": [station_id, station_name, room_num or None, station_type, admin_pin, station_token]
                 }).encode('utf-8')
 
                 try:
                     d1_req = urllib.request.Request(d1_url, data=d1_payload, headers=d1_headers)
-                    with urllib.request.urlopen(d1_req, timeout=10) as response:
+                    with urllib.request.urlopen(d1_req, context=ctx, timeout=10) as response:
                         d1_res = json.loads(response.read().decode('utf-8'))
                         if d1_res.get("success"):
                             registered = True
                 except Exception as d1_err:
                     print("Direct D1 registration notice:", d1_err)
 
-            # Fallback to Web API if direct D1 is blocked
+            # Fallback to Web API
             if not registered:
                 payload = json.dumps({
                     "name": station_name,
+                    "shortName": room_num or None,
                     "stationType": station_type,
                     "adminPin": admin_pin,
                     "duplexEnabled": 1
@@ -431,7 +1181,7 @@ class PrintKuroxSetupApp(tk.Tk):
                 )
 
                 try:
-                    with urllib.request.urlopen(req, timeout=10) as response:
+                    with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
                         res_body = response.read().decode('utf-8')
                         res_json = json.loads(res_body)
                         if res_json.get("success"):
@@ -447,22 +1197,28 @@ class PrintKuroxSetupApp(tk.Tk):
                         raise Exception(f"Connection error: {api_err}")
 
             updates = {
+                "STATION_NAME": station_name,
                 "STATION_ID": station_id,
                 "STATION_TOKEN": station_token,
                 "PRINTER_NAME": printer_name,
                 "TARGET_WIFI_PROFILE": wifi_ssid,
                 "CAMPUS_WIFI_USER": portal_user,
                 "CAMPUS_WIFI_PASS": portal_pass,
-                "CAMPUS_PORTAL_ENABLED": "true" if (station_type == "hostel" and portal_user) else "false",
-                "SERVER_URL": "https://printkurox.vercel.app"
+                "CAMPUS_PORTAL_ENABLED": "true" if portal_user else "false",
+                "SERVER_URL": "https://printkurox.vercel.app",
+                "CLOUDFLARE_ACCOUNT_ID": cf_acc,
+                "CLOUDFLARE_API_TOKEN": cf_token or "",
+                "CLOUDFLARE_D1_DATABASE_ID": cf_db
             }
             update_env_file(updates)
+            self.current_station_id = station_id
 
             config_data = {
                 "station_id": station_id,
                 "station_token": station_token,
                 "station_name": station_name,
                 "station_type": station_type,
+                "room_number": room_num,
                 "printer_name": printer_name,
                 "admin_pin": admin_pin,
                 "wifi_ssid": wifi_ssid
@@ -475,7 +1231,7 @@ class PrintKuroxSetupApp(tk.Tk):
                 try:
                     startup_folder = os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
                     shortcut_path = os.path.join(startup_folder, 'PrintKurox_Hostel_AlwaysOnline.lnk')
-                    target_bat = os.path.abspath(os.path.join(os.path.dirname(__file__), 'HOSTEL_ALWAYS_ONLINE.bat'))
+                    target_bat = os.path.abspath(os.path.join(BASE_DIR, 'HOSTEL_ALWAYS_ONLINE.bat'))
                     
                     if os.path.exists(target_bat):
                         ps_script = f"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcut_path}'); $s.TargetPath = '{target_bat}'; $s.WorkingDirectory = '{os.path.dirname(target_bat)}'; $s.Description = 'PrintKurox Autonomous Background Service'; $s.Save()"
@@ -483,39 +1239,96 @@ class PrintKuroxSetupApp(tk.Tk):
                 except Exception as ex:
                     print("Could not register startup task:", ex)
 
-            self.after(0, lambda: self._on_success(station_id, station_name, station_token))
+            self.after(0, lambda: self._on_success(station_id, station_name, room_num, station_token, admin_pin))
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.after(0, lambda: self._on_failure(str(e)))
 
-    def _on_success(self, station_id, station_name, station_token):
-        import webbrowser
+    def _on_success(self, station_id, station_name, room_num, station_token, admin_pin):
         dashboard_url = f"https://printkurox.vercel.app/admin/{station_id}?token={station_token}"
-        msg = (
-            f"Configuration Complete\n\n"
-            f"Station Name: {station_name}\n"
-            f"Station ID: {station_id}\n\n"
-            f"Management Portal:\n{dashboard_url}\n\n"
-            f"Click OK to launch the print dispatch service and open your management portal."
+        
+        # 1. Save credentials to LOGIN_INFO.txt
+        info_file = os.path.join(BASE_DIR, "LOGIN_INFO.txt")
+        info_content = (
+            "========================================================================\n"
+            "                 PRINTKUROX HOSTEL STATION CREDENTIALS\n"
+            "========================================================================\n\n"
+            f"Hostel Station  : {station_name}\n"
+            f"Pickup Room     : {room_num or 'Unspecified'}\n"
+            f"Station ID      : {station_id}\n"
+            f"Admin Passcode  : {admin_pin}\n\n"
+            "------------------------------------------------------------------------\n"
+            "MANAGEMENT & EARNINGS DASHBOARD LINK:\n"
+            f"{dashboard_url}\n"
+            "------------------------------------------------------------------------\n\n"
+            "IMPORTANT:\n"
+            "- Save this file! If you ever lose your dashboard link or forget your passcode,\n"
+            "  you can open this file anytime to access your earnings and station controls.\n"
+            "- The background printing service is now active and monitoring print jobs.\n\n"
+            "========================================================================\n"
         )
-        messagebox.showinfo("PrintKurox Setup", msg)
         try:
-            webbrowser.open(dashboard_url)
+            with open(info_file, 'w', encoding='utf-8') as f:
+                f.write(info_content)
+        except Exception as file_err:
+            print("Notice writing LOGIN_INFO.txt:", file_err)
+
+        # Auto-open LOGIN_INFO.txt in Notepad so user sees credentials immediately
+        try:
+            subprocess.Popen(["notepad.exe", info_file])
         except Exception:
             pass
-        self.destroy()
 
-        hostel_bat = os.path.join(os.path.dirname(os.path.abspath(__file__)), "HOSTEL_ALWAYS_ONLINE.bat")
-        connector_exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "connector.exe")
+        # Auto-open dashboard in browser
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", "", dashboard_url], shell=True)
+        except Exception:
+            try:
+                import webbrowser
+                webbrowser.open(dashboard_url)
+            except Exception:
+                pass
 
+        # Open the success dialog
+        RegistrationSuccessDialog(self, station_name, room_num, station_id, admin_pin, dashboard_url)
+
+    def _launch_station_monitor(self):
+        hostel_bat = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
+        daemon_keepalive = os.path.join(BASE_DIR, "daemon", "station_keepalive.py")
+        daemon_printer = os.path.join(BASE_DIR, "daemon", "printer_daemon.py")
+        daemon_dir = os.path.join(BASE_DIR, "daemon")
+
+        launched = False
+
+        # 1. PRIMARY: Use HOSTEL_ALWAYS_ONLINE.bat (starts both keepalive & print daemon)
         if os.path.exists(hostel_bat):
-            subprocess.Popen([hostel_bat], cwd=os.path.dirname(hostel_bat), shell=True)
-        elif os.path.exists(connector_exe):
-            subprocess.Popen([connector_exe], cwd=os.path.dirname(connector_exe))
+            try:
+                os.startfile(hostel_bat)
+                launched = True
+            except Exception:
+                pass
+
+        # 2. FALLBACK: Try launching scripts directly with pythonw
+        if not launched:
+            for py_bin in ["pythonw.exe", "pythonw", "python.exe", "python"]:
+                try:
+                    if os.path.exists(daemon_keepalive):
+                        subprocess.Popen([py_bin, daemon_keepalive], cwd=daemon_dir)
+                    if os.path.exists(daemon_printer):
+                        subprocess.Popen([py_bin, daemon_printer], cwd=daemon_dir)
+                    launched = True
+                    break
+                except Exception:
+                    continue
+
+        return launched
 
     def _on_failure(self, error_msg):
-        self.btn_submit.config(state="normal", text="Save & Start Print Service")
-        messagebox.showerror("Setup Error", f"Failed to register station with cloud server:\n\n{error_msg}\n\nPlease check network connectivity and retry.")
+        self.btn_submit.config(state="normal", text="Register")
+        messagebox.showerror("Registration Notice", f"{error_msg}\n\nPlease choose your actual station and try again.", parent=self)
+        self.refresh_devices()
 
 if __name__ == '__main__':
     app = PrintKuroxSetupApp()

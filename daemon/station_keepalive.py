@@ -19,12 +19,22 @@ import subprocess
 import requests
 import json
 import ctypes
+import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from dotenv import load_dotenv
+import tkinter as tk
+from tkinter import ttk, messagebox
+import pystray
+from PIL import Image
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
 load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+ICON_PATH = os.path.join(ROOT_DIR, "app_icon.ico")
+if not os.path.exists(ICON_PATH):
+    ICON_PATH = os.path.join(BASE_DIR, "app_icon.ico")
 
 # Configuration
 STATION_ID = os.getenv('STATION_ID', 'block_b')
@@ -32,9 +42,9 @@ STATION_NAME = os.getenv('STATION_NAME', 'NERIST Block B (Pare Hostel)')
 PRINTER_NAME = os.getenv('PRINTER_NAME', 'EPSON L3210 Series')
 SERVER_URL = os.getenv('SERVER_URL', 'https://printkurox.vercel.app').rstrip('/')
 
-CF_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID', '')
+CF_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID') or '948fd75d8b84a5cf20559d6aa789d4dd'
 CF_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN', '')
-CF_D1_DB_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID', '')
+CF_D1_DB_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID') or '3f4d4547-e86b-4cdd-a867-9ebba19c12c9'
 STATION_TOKEN = os.getenv('STATION_TOKEN', '')
 
 # Campus Wi-Fi Captive Portal Settings (Cyberoam / Sophos)
@@ -60,7 +70,14 @@ STATION_SLOTS = {
     'romen': 154,
     'romen_xerox': 154,
 }
-STATION_SLOT = STATION_SLOTS.get(STATION_ID, 1)
+def resolve_station_slot(s_id):
+    norm = s_id.lower()
+    for k, v in STATION_SLOTS.items():
+        if k in norm:
+            return v
+    return 1
+
+STATION_SLOT = resolve_station_slot(STATION_ID)
 
 # =============================================================================
 # 1. WINDOWS ANTI-SLEEP KEEP-ALIVE (PREVENT LAPTOP & WI-FI STANDBY)
@@ -104,16 +121,10 @@ def send_d1_heartbeat():
             "Authorization": f"Bearer {CF_API_TOKEN}",
             "Content-Type": "application/json"
         }
-        sql = """
-        INSERT INTO daemon_heartbeat (id, updated_at, station_id)
-        VALUES (?, datetime('now'), ?)
-        ON CONFLICT(id) DO UPDATE SET
-          updated_at = datetime('now'),
-          station_id = excluded.station_id;
-        """
+        sql = "UPDATE stations SET last_heartbeat = datetime('now'), status = 'online' WHERE id = ?;"
         payload = {
             "sql": sql,
-            "params": [STATION_SLOT, STATION_ID]
+            "params": [STATION_ID]
         }
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=5.0)
@@ -230,6 +241,48 @@ def keepalive_campus_portal():
     except Exception:
         pass
 
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
+
+# In-memory Win32 process enumeration (prevents console creation and screen flicker)
+TH32CS_SNAPPROCESS = 0x00000002
+if sys.platform == 'win32':
+    from ctypes import wintypes
+    class PROCESSENTRY32(ctypes.Structure):
+        _fields_ = [
+            ('dwSize', wintypes.DWORD),
+            ('cntUsage', wintypes.DWORD),
+            ('th32ProcessID', wintypes.DWORD),
+            ('th32DefaultHeapID', ctypes.c_size_t),
+            ('th32ModuleID', wintypes.DWORD),
+            ('cntThreads', wintypes.DWORD),
+            ('th32ParentProcessID', wintypes.DWORD),
+            ('pcPriClassBase', wintypes.LONG),
+            ('dwFlags', wintypes.DWORD),
+            ('szExeFile', ctypes.c_char * 260)
+        ]
+
+def is_process_running(process_name):
+    if sys.platform != 'win32':
+        return False
+    try:
+        hSnapshot = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if hSnapshot == -1:
+            return False
+        entry = PROCESSENTRY32()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+        p_name_lower = process_name.lower().encode('utf-8')
+        try:
+            success = ctypes.windll.kernel32.Process32First(hSnapshot, ctypes.byref(entry))
+            while success:
+                if entry.szExeFile.lower() == p_name_lower:
+                    return True
+                success = ctypes.windll.kernel32.Process32Next(hSnapshot, ctypes.byref(entry))
+            return False
+        finally:
+            ctypes.windll.kernel32.CloseHandle(hSnapshot)
+    except Exception:
+        return False
+
 def get_wifi_interface_info():
     """
     Returns (state, connected_ssid, connected_profile) from netsh wlan show interfaces.
@@ -237,7 +290,13 @@ def get_wifi_interface_info():
     if sys.platform != 'win32':
         return "unknown", None, None
     try:
-        res = subprocess.run(["netsh", "wlan", "show", "interfaces"], capture_output=True, text=True, timeout=5)
+        res = subprocess.run(
+            ["netsh", "wlan", "show", "interfaces"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=CREATE_NO_WINDOW
+        )
         state = None
         ssid = None
         profile = None
@@ -255,8 +314,8 @@ def get_wifi_interface_info():
 
 def auto_reconnect_wifi(target_profile=TARGET_WIFI_PROFILE):
     """
-    Actively checks, searches, and reconnects to target Wi-Fi (e.g. BLOCK-B).
-    Returns: (success: bool, status_msg: str)
+    Actively checks and only reconnects if completely disconnected.
+    If already connected to ANY Wi-Fi network (mobile hotspot, home, etc.), leaves it untouched!
     """
     if sys.platform != 'win32':
         return False, "Non-Windows OS"
@@ -264,22 +323,32 @@ def auto_reconnect_wifi(target_profile=TARGET_WIFI_PROFILE):
     try:
         state, current_ssid, current_profile = get_wifi_interface_info()
         
-        # If already connected to target profile or SSID
-        if state == "connected" and (current_profile == target_profile or current_ssid == target_profile):
-            return True, f"Connected to {target_profile}"
+        # If already connected to ANY Wi-Fi network, DO NOT disconnect or force-switch!
+        if state == "connected":
+            active_net = current_profile or current_ssid or "Active Wi-Fi"
+            return True, f"Connected ({active_net})"
         
         print(f"[Wi-Fi Watchdog] Wi-Fi is '{state}'. Searching and connecting to '{target_profile}'...")
         
         # 1. Ensure WLAN interface is enabled
         try:
-            subprocess.run(["netsh", "interface", "set", "interface", "name=Wi-Fi", "admin=ENABLED"],
-                           capture_output=True, timeout=3)
+            subprocess.run(
+                ["netsh", "interface", "set", "interface", "name=Wi-Fi", "admin=ENABLED"],
+                capture_output=True,
+                timeout=3,
+                creationflags=CREATE_NO_WINDOW
+            )
         except Exception:
             pass
 
         # 2. Trigger scan by querying available networks
         try:
-            subprocess.run(["netsh", "wlan", "show", "networks"], capture_output=True, timeout=5)
+            subprocess.run(
+                ["netsh", "wlan", "show", "networks"],
+                capture_output=True,
+                timeout=5,
+                creationflags=CREATE_NO_WINDOW
+            )
         except Exception:
             pass
             
@@ -287,7 +356,7 @@ def auto_reconnect_wifi(target_profile=TARGET_WIFI_PROFILE):
         cmd = ["netsh", "wlan", "connect"]
         if target_profile:
             cmd.append(f"name={target_profile}")
-        subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+        subprocess.run(cmd, capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW)
         
         # 4. Wait up to 10 seconds for association
         for _ in range(10):
@@ -303,73 +372,117 @@ def auto_reconnect_wifi(target_profile=TARGET_WIFI_PROFILE):
 # =============================================================================
 # 4. SERVICE MONITOR & AUTO-HEAL
 # =============================================================================
+_PRINT_DAEMON_PROC = None
+
+def is_process_running(proc_name):
+    """Checks if a process name or script is running via tasklist."""
+    if sys.platform != 'win32':
+        return False
+    try:
+        res = subprocess.run(
+            ["tasklist", "/fi", f"imagename eq {proc_name}"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            creationflags=CREATE_NO_WINDOW
+        )
+        return proc_name.lower() in res.stdout.lower()
+    except Exception:
+        return False
+
 def check_service_status(service_name):
     """Checks if a Windows background service or process is alive."""
+    global _PRINT_DAEMON_PROC
     if sys.platform != 'win32':
         return "UNKNOWN"
     try:
-        res = subprocess.run(["sc", "query", service_name], capture_output=True, text=True, timeout=3)
+        if service_name == "PrintKuroxDaemon":
+            if _PRINT_DAEMON_PROC is not None and _PRINT_DAEMON_PROC.poll() is None:
+                return "RUNNING"
+            if is_process_running("PrintKurox_Daemon.exe"):
+                return "RUNNING"
+            return "STANDBY"
+        res = subprocess.run(
+            ["sc", "query", service_name],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            creationflags=CREATE_NO_WINDOW
+        )
         if "RUNNING" in res.stdout:
             return "RUNNING"
         elif "STOPPED" in res.stdout:
             return "STOPPED"
         elif "does not exist" in res.stdout or "1060" in res.stdout:
-            return "NOT_INSTALLED"
+            return "OPTIONAL" if service_name == "PrintKuroxWhatsAppBot" else "STANDBY"
         return "INACTIVE"
     except Exception:
         return "CHECK_ERROR"
 
+shared_status = {
+    'hb_success': True,
+    'hb_info': 'Connecting...',
+    'portal_status': f"Configured ({CAMPUS_WIFI_USER})" if CAMPUS_WIFI_USER else "Disabled",
+    'has_internet': True,
+    'heartbeat_count': 0,
+    'svc_print': 'RUNNING',
+    'last_time': datetime.now().strftime("%I:%M:%S %p")
+}
+status_lock = threading.Lock()
+watchdog_running = True
+
 def ensure_services_running():
     """Checks and restarts services if they are stopped."""
+    global _PRINT_DAEMON_PROC
     status_print = check_service_status("PrintKuroxDaemon")
     status_wa = check_service_status("PrintKuroxWhatsAppBot")
 
-    if status_print == "STOPPED":
-        try:
-            subprocess.run(["net", "start", "PrintKuroxDaemon"], capture_output=True, timeout=5)
-        except Exception:
-            pass
-
-    if status_wa == "STOPPED":
-        try:
-            subprocess.run(["net", "start", "PrintKuroxWhatsAppBot"], capture_output=True, timeout=5)
-        except Exception:
-            pass
+    if status_print != "RUNNING":
+        daemon_exe = os.path.join(BASE_DIR, "dist_romen", "PrintKurox_Daemon.exe")
+        daemon_py = os.path.join(BASE_DIR, "printer_daemon.py")
+        
+        if os.path.exists(daemon_exe):
+            try:
+                _PRINT_DAEMON_PROC = subprocess.Popen(
+                    [daemon_exe],
+                    cwd=os.path.dirname(daemon_exe),
+                    creationflags=CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                status_print = "RUNNING"
+            except Exception:
+                pass
+        elif os.path.exists(daemon_py):
+            for py_cmd in ["pythonw.exe", "pythonw", "python.exe", "python"]:
+                try:
+                    _PRINT_DAEMON_PROC = subprocess.Popen(
+                        [py_cmd, daemon_py],
+                        cwd=BASE_DIR,
+                        creationflags=CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
+                    status_print = "RUNNING"
+                    break
+                except Exception:
+                    continue
 
     return status_print, status_wa
 
-# =============================================================================
-# 5. MAIN WATCHDOG LOOP & HUD
-# =============================================================================
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-def main():
-    print("[INIT] Activating Windows Anti-Sleep Keepalive Mode...")
+def watchdog_worker():
+    global watchdog_running
     set_windows_anti_sleep(True)
-
-    print(f"[INIT] Checking Wi-Fi link to '{TARGET_WIFI_PROFILE}'...")
     wifi_ok, wifi_msg = auto_reconnect_wifi(TARGET_WIFI_PROFILE)
-    print(f"[INIT] Wi-Fi: {wifi_msg}")
-    
-    # If captive portal detected right away on boot, authenticate immediately
+
     has_internet, net_reason = check_internet_probe()
     if net_reason == "CAPTIVE_PORTAL":
-        print("[INIT] Campus portal detected. Logging in...")
-        ok, msg = login_campus_portal()
-        print(f"[INIT] Portal Login: {msg}")
+        login_campus_portal()
 
-    print("[INIT] Starting Always-Online Watchdog loop...")
     heartbeat_count = 0
     fail_count = 0
     portal_status_msg = f"Configured ({CAMPUS_WIFI_USER})" if CAMPUS_WIFI_USER else "Disabled"
     last_portal_ping = 0
 
-    try:
-        while True:
-            # 1. Check Internet & Captive Portal Status
+    while watchdog_running:
+        try:
             has_internet, net_reason = check_internet_probe()
-
             if net_reason == "CAPTIVE_PORTAL":
                 portal_status_msg = "Logging in to Campus Portal..."
                 ok, msg = login_campus_portal()
@@ -395,51 +508,284 @@ def main():
             else:
                 fail_count = 0
                 portal_status_msg = f"Authenticated ({CAMPUS_WIFI_USER})"
-                # Send periodic portal keepalive every 90 seconds
                 if time.time() - last_portal_ping > 90:
                     keepalive_campus_portal()
                     last_portal_ping = time.time()
 
-            # 2. Transmit Cloud D1 Heartbeat (guarantees website displays ONLINE)
             hb_success, hb_info = send_d1_heartbeat()
             if hb_success:
                 heartbeat_count += 1
 
-            # 3. Ensure Daemons are running
             svc_print, svc_wa = ensure_services_running()
 
-            # 4. Refresh Windows anti-sleep assertion
-            set_windows_anti_sleep(True)
+            with status_lock:
+                shared_status['hb_success'] = hb_success
+                shared_status['hb_info'] = hb_info
+                shared_status['portal_status'] = portal_status_msg
+                shared_status['has_internet'] = has_internet
+                shared_status['heartbeat_count'] = heartbeat_count
+                shared_status['svc_print'] = svc_print
+                shared_status['last_time'] = datetime.now().strftime("%I:%M:%S %p")
 
-            # 5. Draw Clean Live Dashboard
-            clear_screen()
-            now_str = datetime.now().strftime("%I:%M:%S %p")
-            print("===============================================================================")
-            print("         PRINTKUROX HOSTEL STATION — ALWAYS-ONLINE WATCHDOG")
-            print("===============================================================================")
-            print(f" Station Name    : {STATION_NAME} [{STATION_ID.upper()}]")
-            print(f" Web Status      : {'\033[92m[ONLINE - ALWAYS CONNECTED]\033[0m' if hb_success else '\033[91m[SYNCING...]\033[0m'}")
-            print(f" Campus Wi-Fi    : \033[92m[{portal_status_msg}]\033[0m")
-            print(f" Anti-Sleep      : \033[92m[ACTIVE]\033[0m Laptop & Wi-Fi will NOT sleep")
-            print(f" Cloud Heartbeat : {'\033[92mOK\033[0m (' + hb_info + ')' if hb_success else '\033[91mFAILED: ' + hb_info + '\033[0m'}")
-            print(f" Total Syncs     : {heartbeat_count} consecutive successful heartbeats")
-            print(f" Internet Link   : {'\033[92mSTABLE\033[0m' if has_internet else '\033[91m' + net_reason + ' (Resolving...)\033[0m'}")
-            print(f" Print Daemon    : {svc_print}")
-            print(f" WhatsApp Bot    : {svc_wa}")
-            print(f" Last Updated    : {now_str}")
-            print("===============================================================================")
-            print(" Keep this program open to ensure the hostel station is always connected 24/7.")
-            print(" Press Ctrl + C to stop.")
-            print("===============================================================================")
+        except Exception as ex:
+            print("Watchdog loop notice:", ex)
 
-            # Heartbeat cadence: 15 seconds (well inside the website's 45s threshold, uses only ~5.7% of Cloudflare D1 daily free tier)
-            time.sleep(15)
+        time.sleep(10)
 
-    except KeyboardInterrupt:
-        print("\n[STOPPING] Restoring standard Windows power state...")
-        set_windows_anti_sleep(False)
-        print("Watchdog stopped safely.")
-        sys.exit(0)
+
+class StationMonitorApp:
+    def __init__(self, root, start_minimized=False):
+        self.root = root
+        self.root.title("PrintKurox Station Monitor")
+        self.root.geometry("480x490")
+        self.root.resizable(False, False)
+
+        if os.path.exists(ICON_PATH):
+            try:
+                self.root.iconbitmap(ICON_PATH)
+            except Exception:
+                pass
+
+        self.style = ttk.Style(self.root)
+        self.style.theme_use('vista' if 'vista' in self.style.theme_names() else 'clam')
+        self.style.configure(".", font=("Segoe UI", 9))
+        self.style.configure("Header.TLabel", font=("Segoe UI", 12, "bold"))
+        self.style.configure("SubHeader.TLabel", font=("Segoe UI", 9))
+        self.style.configure("StatusOnline.TLabel", font=("Segoe UI", 10, "bold"), foreground="#16a34a")
+        self.style.configure("StatusOffline.TLabel", font=("Segoe UI", 10, "bold"), foreground="#dc2626")
+        self.style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"))
+
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+
+        self._build_ui()
+        self._setup_tray()
+
+        if start_minimized:
+            self.root.withdraw()
+
+        self.root.after(1000, self._periodic_ui_update)
+
+    def _build_ui(self):
+        container = ttk.Frame(self.root, padding=20)
+        container.pack(fill="both", expand=True)
+
+        hdr_frame = ttk.Frame(container)
+        hdr_frame.pack(fill="x", pady=(0, 10))
+
+        self.lbl_station_name = ttk.Label(
+            hdr_frame,
+            text=f"{STATION_NAME}",
+            style="Header.TLabel"
+        )
+        self.lbl_station_name.pack(anchor="w")
+
+        lbl_sub = ttk.Label(
+            hdr_frame,
+            text="Autonomous Always-Online Watchdog & Print Dispatcher",
+            style="SubHeader.TLabel"
+        )
+        lbl_sub.pack(anchor="w")
+
+        cards_frame = ttk.LabelFrame(container, text=" Live Station Telemetry ", padding=14)
+        cards_frame.pack(fill="both", expand=True, pady=(0, 12))
+
+        ttk.Label(cards_frame, text="Cloud Status:", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", pady=4)
+        self.lbl_web_status = ttk.Label(cards_frame, text="● Connecting...", style="StatusOnline.TLabel")
+        self.lbl_web_status.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=4)
+
+        ttk.Label(cards_frame, text="Cloud Heartbeat:", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=4)
+        self.lbl_heartbeat = ttk.Label(cards_frame, text="Syncing...", font=("Segoe UI", 9))
+        self.lbl_heartbeat.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=4)
+
+        ttk.Label(cards_frame, text="Campus Wi-Fi:", font=("Segoe UI", 9, "bold")).grid(row=2, column=0, sticky="w", pady=4)
+        self.lbl_wifi = ttk.Label(cards_frame, text=f"Checking ({TARGET_WIFI_PROFILE})...", font=("Segoe UI", 9))
+        self.lbl_wifi.grid(row=2, column=1, sticky="w", padx=(10, 0), pady=4)
+
+        ttk.Label(cards_frame, text="Print Dispatcher:", font=("Segoe UI", 9, "bold")).grid(row=3, column=0, sticky="w", pady=4)
+        self.lbl_daemon = ttk.Label(cards_frame, text="Active", font=("Segoe UI", 9))
+        self.lbl_daemon.grid(row=3, column=1, sticky="w", padx=(10, 0), pady=4)
+
+        ttk.Label(cards_frame, text="Laptop Power:", font=("Segoe UI", 9, "bold")).grid(row=4, column=0, sticky="w", pady=4)
+        self.lbl_power = ttk.Label(cards_frame, text="Anti-Sleep Mode (Active 24/7)", font=("Segoe UI", 9))
+        self.lbl_power.grid(row=4, column=1, sticky="w", padx=(10, 0), pady=4)
+
+        ttk.Label(cards_frame, text="Sync Statistics:", font=("Segoe UI", 9, "bold")).grid(row=5, column=0, sticky="w", pady=4)
+        self.lbl_stats = ttk.Label(cards_frame, text="0 heartbeats sent", font=("Segoe UI", 8, "italic"))
+        self.lbl_stats.grid(row=5, column=1, sticky="w", padx=(10, 0), pady=4)
+
+        tip_frame = ttk.Frame(container)
+        tip_frame.pack(fill="x", pady=(0, 14))
+        lbl_tip = ttk.Label(
+            tip_frame,
+            text="💡 Tip: Clicking [X] will minimize this station to the Windows System Tray near the clock without disconnecting.",
+            font=("Segoe UI", 8, "italic"),
+            wraplength=440
+        )
+        lbl_tip.pack(anchor="w")
+
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(fill="x", side="bottom")
+
+        btn_hide = ttk.Button(btn_frame, text="Minimize to Tray", command=self.hide_to_tray)
+        btn_hide.pack(side="left", expand=True, fill="x", padx=(0, 4))
+
+        btn_info = ttk.Button(btn_frame, text="📄 View Login Info", command=self.open_login_info)
+        btn_info.pack(side="left", expand=True, fill="x", padx=(4, 4))
+
+        btn_dash = ttk.Button(btn_frame, text="🌐 Open Admin Portal", style="Accent.TButton", command=self.open_dashboard)
+        btn_dash.pack(side="right", expand=True, fill="x", padx=(4, 0))
+
+    def _setup_tray(self):
+        try:
+            if os.path.exists(ICON_PATH):
+                tray_img = Image.open(ICON_PATH)
+            else:
+                tray_img = Image.new('RGB', (64, 64), color=(34, 197, 94))
+
+            def _show_action(icon, item):
+                self.show_from_tray()
+
+            def _hide_action(icon, item):
+                self.hide_to_tray()
+
+            def _dash_action(icon, item):
+                self.open_dashboard()
+
+            def _info_action(icon, item):
+                self.open_login_info()
+
+            def _exit_action(icon, item):
+                self.root.after(0, self.confirm_exit)
+
+            menu = pystray.Menu(
+                pystray.MenuItem("Open Status Monitor", _show_action, default=True),
+                pystray.MenuItem("Open Admin Dashboard", _dash_action),
+                pystray.MenuItem("Open Login Info (LOGIN_INFO.txt)", _info_action),
+                pystray.MenuItem("Minimize to Tray", _hide_action),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Exit & Stop Station", _exit_action)
+            )
+
+            self.tray_icon = pystray.Icon(
+                "PrintKuroxStation",
+                tray_img,
+                f"PrintKurox - {STATION_NAME} [ONLINE]",
+                menu
+            )
+            self.tray_icon.run_detached()
+        except Exception as e:
+            print("Notice setting up system tray:", e)
+            self.tray_icon = None
+
+    def hide_to_tray(self):
+        self.root.withdraw()
+        if self.tray_icon:
+            try:
+                self.tray_icon.notify(
+                    "PrintKurox is running in the background.\nDouble-click the tray icon near the clock to open.",
+                    f"{STATION_NAME} Active"
+                )
+            except Exception:
+                pass
+
+    def show_from_tray(self):
+        self.root.after(0, lambda: (self.root.deiconify(), self.root.lift(), self.root.focus_force()))
+
+    def open_dashboard(self):
+        dash_url = f"{SERVER_URL}/admin/{STATION_ID}?token={STATION_TOKEN}"
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", "", dash_url], shell=True)
+        except Exception:
+            try:
+                import webbrowser
+                webbrowser.open(dash_url)
+            except Exception:
+                pass
+
+    def open_login_info(self):
+        possible_paths = [
+            os.path.join(ROOT_DIR, "LOGIN_INFO.txt"),
+            os.path.join(BASE_DIR, "LOGIN_INFO.txt"),
+            os.path.join(ROOT_DIR, "LOGIN_INFO.TXT"),
+        ]
+        for p in possible_paths:
+            if os.path.exists(p):
+                try:
+                    subprocess.Popen(["notepad.exe", p])
+                    return
+                except Exception:
+                    pass
+
+    def confirm_exit(self):
+        confirm = messagebox.askyesno(
+            "Exit PrintKurox Station",
+            "Stopping PrintKurox will take this print station offline on campus.\n\n"
+            "Students will no longer be able to send print jobs to this machine.\n\n"
+            "Are you sure you want to stop?",
+            parent=self.root
+        )
+        if confirm:
+            global watchdog_running
+            watchdog_running = False
+            if self.tray_icon:
+                try: self.tray_icon.stop()
+                except Exception: pass
+            set_windows_anti_sleep(False)
+            self.root.destroy()
+            sys.exit(0)
+
+    def _periodic_ui_update(self):
+        with status_lock:
+            st = dict(shared_status)
+
+        if st.get('hb_success'):
+            self.lbl_web_status.config(text="● ONLINE (Always Connected)", style="StatusOnline.TLabel")
+            self.lbl_heartbeat.config(text=f"✓ OK ({st.get('hb_info', 'D1')})", foreground="#16a34a")
+        else:
+            self.lbl_web_status.config(text="● Connecting...", style="StatusOffline.TLabel")
+            self.lbl_heartbeat.config(text=f"Syncing... ({st.get('hb_info', '')})", foreground="#d97706")
+
+        self.lbl_wifi.config(text=st.get('portal_status', 'Connected'))
+        self.lbl_daemon.config(text=f"{st.get('svc_print', 'RUNNING')}")
+        self.lbl_stats.config(
+            text=f"{st.get('heartbeat_count', 0)} consecutive heartbeats · Last sync: {st.get('last_time', '--')}"
+        )
+
+        if self.tray_icon:
+            try:
+                status_word = "ONLINE" if st.get('hb_success') else "SYNCING"
+                self.tray_icon.title = f"PrintKurox - {STATION_NAME} [{status_word}]"
+            except Exception:
+                pass
+
+        self.root.after(1000, self._periodic_ui_update)
+
+
+_APP_MUTEX = None
+
+def main():
+    global _APP_MUTEX
+    if sys.platform == 'win32':
+        ERROR_ALREADY_EXISTS = 183
+        mutex_name = f"PrintKurox_Hostel_Keepalive_Mutex_{STATION_ID}"
+        _APP_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+        if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            # Another instance is already running! Bring existing window to front and exit
+            try:
+                hwnd = ctypes.windll.user32.FindWindowW(None, "PrintKurox Station Monitor")
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9) # SW_RESTORE
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            sys.exit(0)
+
+    threading.Thread(target=watchdog_worker, daemon=True).start()
+
+    root = tk.Tk()
+    start_min = ("--minimized" in sys.argv) or ("--silent" in sys.argv)
+    app = StationMonitorApp(root, start_minimized=start_min)
+    root.mainloop()
 
 if __name__ == '__main__':
     main()

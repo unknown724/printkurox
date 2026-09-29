@@ -10,8 +10,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Quick Wi-Fi Auto-Connect probe for Block B
-netsh wlan connect name="BLOCK-B" >nul 2>&1
+start "" pythonw station_keepalive.py
+start "" pythonw printer_daemon.py
+exit /b 0
 
-python station_keepalive.py
-pause
