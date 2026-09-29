@@ -78,5 +78,8 @@ setup_log.txt
 daemon/debug.txt
 *.pid
 *.bak
+station_config.json
+LOGIN_INFO.txt
+weblogin.bat
 
 

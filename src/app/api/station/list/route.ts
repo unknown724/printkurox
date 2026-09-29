@@ -33,8 +33,8 @@ export async function GET(req: NextRequest) {
 
     // Fetch stations (public only for students, or all if requested by admin)
     const sql = includeAll
-      ? `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, admin_pin as adminPin, station_token as stationToken, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota, created_at as createdAt FROM stations ORDER BY created_at ASC`
-      : `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota FROM stations WHERE is_public = 1 ORDER BY created_at ASC`;
+      ? `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, admin_pin as adminPin, station_token as stationToken, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota, owner_print_enabled as ownerPrintEnabled, created_at as createdAt FROM stations ORDER BY created_at ASC`
+      : `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota, owner_print_enabled as ownerPrintEnabled FROM stations WHERE is_public = 1 ORDER BY created_at ASC`;
 
     const rows = await queryD1(sql);
 
@@ -86,7 +86,11 @@ export async function GET(req: NextRequest) {
         type: row.type || 'hostel',
         isPublic: row.isPublic === 1,
         whatsappNumber: row.whatsappNumber,
+        adminPin: row.adminPin,
         stationToken: row.stationToken,
+        upiId: row.upiId,
+        monthlyFreeQuota: row.monthlyFreeQuota,
+        ownerPrintEnabled: row.ownerPrintEnabled !== 0,
         status: isOnline ? 'online' : 'offline',
         offlineText: isOnline ? null : (offlineMinutes > 0 ? `Offline for ${offlineMinutes} min` : 'Offline'),
         duplexEnabled: row.duplexEnabled === 1,
@@ -104,6 +108,26 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+
+    // Check for toggling owner printing permission
+    if (body.action === 'TOGGLE_OWNER_PRINT') {
+      const { stationId, enabled } = body;
+      if (!stationId) {
+        return NextResponse.json({ error: 'Missing stationId' }, { status: 400 });
+      }
+      const intVal = enabled ? 1 : 0;
+      await executeD1(
+        `UPDATE stations SET owner_print_enabled = ? WHERE id = ?`,
+        [intVal, stationId]
+      );
+      return NextResponse.json({
+        success: true,
+        stationId,
+        ownerPrintEnabled: Boolean(enabled),
+        message: `Owner printing ${enabled ? 'ENABLED' : 'DISABLED'} for station ${stationId}`,
+      });
+    }
+
     const {
       name,
       shortName,

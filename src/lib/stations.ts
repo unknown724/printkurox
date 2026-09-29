@@ -309,6 +309,10 @@ export function normalizeStationId(stationId?: string | null): string {
   if (key === 'romen' || key === 'romen_xerox' || key === 'romen_xerox_main_gate') {
     return 'romen_xerox';
   }
+  const cleanKey = key.replace(/^hostel_/, '').replace(/_pare$/, '').replace(/_main_gate$/, '');
+  if (STATIONS[cleanKey]) {
+    return cleanKey;
+  }
   return key;
 }
 

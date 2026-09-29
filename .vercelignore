@@ -1,0 +1,23 @@
+# Ignore Python and Desktop App files
+*.exe
+*.zip
+*.bat
+*.py
+*.spec
+*.log
+__pycache__/
+/daemon/
+/temp_print/
+dist/
+build/
+scratch/
+dist_stations/
+*.png
+*.ico
+*.pdf
+PrintKurox_Hardware_Budget_Proposal.html
+PrintKurox_Hardware_Budget_Proposal.md
+
+# Next.js / Node defaults (Vercel ignores these by default anyway, but good to be explicit)
+node_modules/
+.next/

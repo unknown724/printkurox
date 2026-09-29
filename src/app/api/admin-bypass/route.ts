@@ -6,7 +6,7 @@ import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange, transformPdfForPrint } from '@/lib/pdf-utils';
 import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { validateAdminPin, verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
-import { validateStationPin, getStationConfig } from '@/lib/stations';
+import { validateStationPin, validateStationPinWithRoleAsync, getStationConfig } from '@/lib/stations';
 import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -51,7 +51,8 @@ export async function POST(req: NextRequest) {
     // If not already an authorized device or station admin, validate PIN
     if (!isDeviceAdmin && !isStationAdmin) {
       const inputPin = pin || stationPinCookie;
-      const isPinValid = Boolean(inputPin && (validateStationPin(stationId, inputPin) || validateAdminPin(inputPin)));
+      const stationAuth = await validateStationPinWithRoleAsync(stationId, inputPin || '');
+      const isPinValid = Boolean(inputPin && (stationAuth.isValid || validateAdminPin(inputPin)));
 
       if (!isPinValid) {
         // Only hit D1 for rate limiting on failed passcode attempts to prevent brute force
@@ -70,6 +71,35 @@ export async function POST(req: NextRequest) {
         const status = failResult.locked ? 429 : 401;
         return NextResponse.json({ error: failResult.message }, { status });
       }
+    }
+
+    // Handle Cash Verification for In-Person Student Orders
+    if (body.action === 'VERIFY_CASH') {
+      const { targetJobId } = body;
+      if (!targetJobId) {
+        return NextResponse.json({ error: 'Missing targetJobId' }, { status: 400 });
+      }
+      const cashPayId = `CASH_COLLECTED_${Date.now()}`;
+      const upd = await executeD1(
+        `UPDATE print_jobs SET status = 'PAID', payment_id = ? WHERE id = ? AND (status = 'PENDING_PAYMENT' OR payment_id IS NULL)`,
+        [cashPayId, targetJobId]
+      );
+      if (!upd) {
+        return NextResponse.json({ error: 'Failed to approve cash order or already paid' }, { status: 400 });
+      }
+
+      // Instant local wake trigger to kiosk daemon (0ms queue polling delay)
+      fetch('http://127.0.0.1:7250/poll-now', {
+        method: 'POST',
+        signal: AbortSignal.timeout(300),
+      }).catch(() => {});
+
+      return NextResponse.json({
+        success: true,
+        jobId: targetJobId,
+        paymentId: cashPayId,
+        message: 'Order verified! Cash collected and print job dispatched to printer.',
+      });
     }
 
     if (!fileKey || !fileName || !docPages) {
@@ -120,16 +150,16 @@ export async function POST(req: NextRequest) {
     let adminPaymentId = `ADMIN_BYPASS_${Date.now()}`;
 
     if (!isMasterAdmin) {
-      // Station Owner Free Print Quota Check (Anti-Abuse)
-      const { checkOwnerFreeQuota } = await import('@/lib/settlement-service');
-      const pagesToPrint = (pricing.totalPages || activePagesCount) * Math.max(1, Math.floor(copies || 1));
-      const quotaCheck = await checkOwnerFreeQuota(stationId, pagesToPrint);
-
-      if (!quotaCheck.allowed) {
-        return NextResponse.json({ error: quotaCheck.error }, { status: 403 });
+      // Check if owner printing is active on this station
+      const stRow = await queryD1<{ owner_print_enabled?: number }>(
+        `SELECT owner_print_enabled FROM stations WHERE id = ? OR id = ? LIMIT 1`,
+        [stationId, rawStationId]
+      );
+      if (stRow.length > 0 && stRow[0].owner_print_enabled === 0) {
+        return NextResponse.json({ error: 'Owner personal printing is currently disabled by administrator.' }, { status: 403 });
       }
 
-      adminPaymentId = `OWNER_FREE_PRINT_${Date.now()}`;
+      adminPaymentId = `OWNER_PRINT_${Date.now()}`;
     }
 
     // Generate unique pickup code (21,600 collision-resistant namespace)

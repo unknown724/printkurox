@@ -83,6 +83,23 @@ def is_already_configured():
             pass
     return False
 
+def get_cf_env():
+    env_vars = {}
+    for p in [os.path.join(BASE_DIR, ".env.local"), os.path.join(BASE_DIR, ".env"), os.path.join(BASE_DIR, "daemon", ".env")]:
+        if os.path.exists(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as ef:
+                    for line in ef:
+                        if '=' in line and not line.strip().startswith('#'):
+                            k, v = line.strip().split('=', 1)
+                            env_vars[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception:
+                pass
+    acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or env_vars.get("CLOUDFLARE_ACCOUNT_ID", "948fd75d8b84a5cf20559d6aa789d4dd")
+    token = os.environ.get("CLOUDFLARE_API_TOKEN") or env_vars.get("CLOUDFLARE_API_TOKEN", "")
+    db = os.environ.get("CLOUDFLARE_D1_DATABASE_ID") or env_vars.get("CLOUDFLARE_D1_DATABASE_ID", "3f4d4547-e86b-4cdd-a867-9ebba19c12c9")
+    return acc, token, db
+
 def detect_printers():
     """Queries Windows Spooler for installed printers and prioritizes physical devices."""
     try:
@@ -586,11 +603,13 @@ class RegistrationSuccessDialog(tk.Toplevel):
                 pass
 
     def _finish(self):
-        # Launch station monitor FIRST, then close the wizard
+        # Launch HOSTEL_ALWAYS_ONLINE.bat visibly
         try:
-            self.parent._launch_station_monitor()
+            bat_path = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
+            if os.path.exists(bat_path):
+                subprocess.Popen(["cmd.exe", "/c", "start", "", bat_path], cwd=BASE_DIR)
         except Exception as e:
-            print("Notice launching station monitor:", e)
+            print("Notice launching bat:", e)
         try:
             self.grab_release()
             self.destroy()
@@ -763,19 +782,15 @@ class PrintKuroxSetupApp(tk.Tk):
         self.btn_submit = ttk.Button(footer_frame, text="Register", width=18, style="Accent.TButton", command=self.save_and_start)
         self.btn_submit.pack(side="right")
 
-        self.btn_launch_now = ttk.Button(footer_frame, text="🚀 Start Station Monitor", width=22, command=self.launch_and_exit)
-        self.btn_launch_now.pack(side="right", padx=(0, 6))
+        self.btn_launch_now = ttk.Button(footer_frame, text="🚀 Launch Station Monitor", width=24, command=self.launch_and_exit)
 
         self.load_existing_env()
 
     def launch_and_exit(self):
-        launch_hostel_always_online_silent()
-        info_file = os.path.join(BASE_DIR, "LOGIN_INFO.txt")
-        if os.path.exists(info_file):
-            try:
-                subprocess.Popen(["notepad.exe", info_file])
-            except Exception:
-                pass
+        # Launch HOSTEL_ALWAYS_ONLINE.bat visibly
+        bat_path = os.path.join(BASE_DIR, "HOSTEL_ALWAYS_ONLINE.bat")
+        if os.path.exists(bat_path):
+            subprocess.Popen(["cmd.exe", "/c", "start", "", bat_path], cwd=BASE_DIR)
         self.destroy()
 
     def uninstall_station(self):
@@ -877,10 +892,10 @@ class PrintKuroxSetupApp(tk.Tk):
         stations = None
         lat_ms = 0
 
-        # 1. Try primary Vercel API with 3s timeout
+        # 1. Try primary Vercel API with 8s timeout for campus Wi-Fi latency
         try:
             req = urllib.request.Request(f"{API_BASE_URL}/station/list?all=true", headers={'User-Agent': 'PrintKurox-Setup/2.5'})
-            with urllib.request.urlopen(req, context=ctx, timeout=3) as res:
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as res:
                 if res.status == 200:
                     data = json.loads(res.read().decode('utf-8'))
                     stations = data.get('stations', [])
@@ -891,19 +906,18 @@ class PrintKuroxSetupApp(tk.Tk):
         # 2. Resilient Cloudflare D1 direct fallback (bypasses any ISP blocks on vercel.app)
         if stations is None:
             try:
-                cf_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "948fd75d8b84a5cf20559d6aa789d4dd"
-                cf_token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
-                cf_db = os.environ.get("CLOUDFLARE_D1_DATABASE_ID") or "3f4d4547-e86b-4cdd-a867-9ebba19c12c9"
-                d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
-                d1_headers = {
-                    "Authorization": f"Bearer {cf_token}",
-                    "Content-Type": "application/json"
-                }
+                cf_acc, cf_token, cf_db = get_cf_env()
+                if cf_token:
+                    d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
+                    d1_headers = {
+                        "Authorization": f"Bearer {cf_token}",
+                        "Content-Type": "application/json"
+                    }
                 d1_payload = json.dumps({
                     "sql": "SELECT id, name, short_name, status, duplex_enabled FROM stations;"
                 }).encode('utf-8')
                 d1_req = urllib.request.Request(d1_url, data=d1_payload, headers=d1_headers)
-                with urllib.request.urlopen(d1_req, context=ctx, timeout=6) as res:
+                with urllib.request.urlopen(d1_req, context=ctx, timeout=8) as res:
                     data = json.loads(res.read().decode('utf-8'))
                     stations = data.get("result", [{}])[0].get("results", [])
                     lat_ms = max(1, int((time.time() - t0) * 1000))
@@ -926,10 +940,16 @@ class PrintKuroxSetupApp(tk.Tk):
         val = self.entry_station_name.get()
         if "[This PC" in val:
             self.btn_submit.config(text="Update Settings", state="normal")
+            if hasattr(self, 'btn_launch_now'):
+                self.btn_launch_now.pack(side="right", padx=(0, 6))
         elif "[CLAIMED]" in val:
             self.btn_submit.config(text="Hostel Claimed", state="disabled")
+            if hasattr(self, 'btn_launch_now'):
+                self.btn_launch_now.pack_forget()
         else:
             self.btn_submit.config(text="Register", state="normal")
+            if hasattr(self, 'btn_launch_now'):
+                self.btn_launch_now.pack_forget()
 
     def _populate_initial_hostels(self, station_id=""):
         st_id = (station_id or getattr(self, 'current_station_id', '')).lower()
@@ -945,11 +965,19 @@ class PrintKuroxSetupApp(tk.Tk):
                 if not selected:
                     selected = lbl
             options.append(lbl)
-        self.entry_station_name.config(state="readonly")
-        self.entry_station_name['values'] = options
         if selected:
             self.entry_station_name.set(selected)
         self._on_station_selected()
+        
+        # Lock only the station hostel name (room number and passcode remain editable)
+        if st_id:
+            self.entry_station_name.config(state="disabled")
+            self.entry_room_number.config(state="normal")
+            self.entry_admin_pin.config(state="normal")
+        else:
+            self.entry_station_name.config(state="readonly")
+            self.entry_room_number.config(state="normal")
+            self.entry_admin_pin.config(state="normal")
 
     def _apply_used_stations(self, registered_stations, lat_ms):
         self.cloud_status_badge.config(text=f"● Cloud Online ({lat_ms}ms)", fg="#059669")
@@ -995,11 +1023,20 @@ class PrintKuroxSetupApp(tk.Tk):
                 if not selected_option:
                     selected_option = label
 
-        self.entry_station_name.config(state="readonly")
         self.entry_station_name['values'] = dropdown_options
         if selected_option:
             self.entry_station_name.set(selected_option)
         self._on_station_selected()
+
+        # Lock only the station hostel name (room number and passcode remain editable)
+        if my_station_id:
+            self.entry_station_name.config(state="disabled")
+            self.entry_room_number.config(state="normal")
+            self.entry_admin_pin.config(state="normal")
+        else:
+            self.entry_station_name.config(state="readonly")
+            self.entry_room_number.config(state="normal")
+            self.entry_admin_pin.config(state="normal")
 
     def _async_refresh(self):
         printers = detect_printers()
@@ -1107,6 +1144,11 @@ class PrintKuroxSetupApp(tk.Tk):
                 messagebox.showerror("Error", "Please select a print device.", parent=self)
                 return
 
+            if len(admin_pin) < 4:
+                messagebox.showerror("Configuration Error", "The Admin Passcode must contain at least 4 characters.", parent=self)
+                return
+
+            # Update daemon/.env (for live Wi-Fi auto-login and printing daemon)
             update_env_file({
                 "PRINTER_NAME": printer_name,
                 "TARGET_WIFI_PROFILE": wifi_ssid,
@@ -1114,7 +1156,39 @@ class PrintKuroxSetupApp(tk.Tk):
                 "CAMPUS_WIFI_PASS": portal_pass,
                 "CAMPUS_PORTAL_ENABLED": "true" if portal_user else "false",
             })
-            messagebox.showinfo("Settings Saved", "Your printer and network settings have been updated successfully!", parent=self)
+
+            # Update local station_config.json
+            if os.path.exists(CONFIG_FILE_PATH):
+                try:
+                    with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                        cfg = json.load(f)
+                    cfg["printer_name"] = printer_name
+                    cfg["wifi_ssid"] = wifi_ssid
+                    cfg["room_number"] = room_num
+                    cfg["admin_pin"] = admin_pin
+                    with open(CONFIG_FILE_PATH, 'w', encoding='utf-8') as f:
+                        json.dump(cfg, f, indent=2)
+                except Exception:
+                    pass
+
+            # Sync updated room number and admin PIN directly to Cloudflare D1
+            st_id = getattr(self, 'current_station_id', '')
+            if st_id:
+                def _sync_cloud_update():
+                    try:
+                        cf_acc, cf_token, cf_db = get_cf_env()
+                        if cf_token:
+                            d1_url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/d1/database/{cf_db}/query"
+                            d1_headers = {"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"}
+                            sql = "UPDATE stations SET short_name = ?, admin_pin = ? WHERE id = ?;"
+                            payload = json.dumps({"sql": sql, "params": [room_num, admin_pin, st_id]}).encode('utf-8')
+                            req = urllib.request.Request(d1_url, data=payload, headers=d1_headers)
+                            urllib.request.urlopen(req, timeout=8)
+                    except Exception as e:
+                        print("Notice updating cloud settings:", e)
+                threading.Thread(target=_sync_cloud_update, daemon=True).start()
+
+            messagebox.showinfo("Settings Saved", "Your printer, Wi-Fi password, room number, and admin passcode have been updated successfully!", parent=self)
             return
 
         base_hostel_name = raw_selection.split(" — ")[0].split(" (")[0].strip()
@@ -1186,20 +1260,7 @@ class PrintKuroxSetupApp(tk.Tk):
             import secrets
             station_token = f"kurox_st_{station_id}_{secrets.token_hex(16)}"
 
-            env_vars = {}
-            if os.path.exists(ENV_FILE_PATH):
-                try:
-                    with open(ENV_FILE_PATH, 'r', encoding='utf-8') as ef:
-                        for line in ef:
-                            if '=' in line and not line.strip().startswith('#'):
-                                k, v = line.strip().split('=', 1)
-                                env_vars[k.strip()] = v.strip().strip('"').strip("'")
-                except Exception:
-                    pass
-
-            cf_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or env_vars.get("CLOUDFLARE_ACCOUNT_ID") or "948fd75d8b84a5cf20559d6aa789d4dd"
-            cf_token = os.environ.get("CLOUDFLARE_API_TOKEN") or env_vars.get("CLOUDFLARE_API_TOKEN", "")
-            cf_db = os.environ.get("CLOUDFLARE_D1_DATABASE_ID") or env_vars.get("CLOUDFLARE_D1_DATABASE_ID") or "3f4d4547-e86b-4cdd-a867-9ebba19c12c9"
+            cf_acc, cf_token, cf_db = get_cf_env()
 
             registered = False
             if cf_token:
@@ -1260,12 +1321,14 @@ class PrintKuroxSetupApp(tk.Tk):
                             station_token = res_json.get("station_token", station_token)
                             registered = True
                         else:
-                            raise Exception(res_json.get("error", "Unknown registration error"))
+                            err_msg = res_json.get("error") or res_json.get("message") or "Unknown registration error"
+                            raise Exception(str(err_msg))
                 except urllib.error.HTTPError as http_err:
                     raise Exception(f"Cloud Server returned HTTP {http_err.code} ({http_err.reason})")
                 except Exception as api_err:
                     if not registered:
-                        raise Exception(f"Connection error: {api_err}")
+                        err_str = str(api_err) if str(api_err) and str(api_err) != "None" else "Cloud connection failed"
+                        raise Exception(err_str)
 
             updates = {
                 "STATION_NAME": station_name,
@@ -1316,7 +1379,8 @@ class PrintKuroxSetupApp(tk.Tk):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.after(0, lambda: self._on_failure(str(e)))
+            err_str = str(e) if str(e) and str(e) != "None" else "Registration failed: Could not communicate with server."
+            self.after(0, lambda: self._on_failure(err_str))
 
     def _on_success(self, station_id, station_name, room_num, station_token, admin_pin):
         dashboard_url = f"https://printkurox.vercel.app/admin/{station_id}?token={station_token}"
@@ -1347,23 +1411,9 @@ class PrintKuroxSetupApp(tk.Tk):
         except Exception as file_err:
             print("Notice writing LOGIN_INFO.txt:", file_err)
 
-        # Auto-open LOGIN_INFO.txt in Notepad so user sees credentials immediately
-        try:
-            subprocess.Popen(["notepad.exe", info_file])
-        except Exception:
-            pass
+        # Credentials saved to LOGIN_INFO.txt (not opened automatically)
 
-        # Auto-open dashboard in browser
-        try:
-            subprocess.Popen(["cmd.exe", "/c", "start", "", dashboard_url], shell=True)
-        except Exception:
-            try:
-                import webbrowser
-                webbrowser.open(dashboard_url)
-            except Exception:
-                pass
-
-        # Open the success dialog
+        # Open the success dialog (dashboard can be opened manually via 'Open Admin Portal')
         RegistrationSuccessDialog(self, station_name, room_num, station_id, admin_pin, dashboard_url)
 
     def _launch_station_monitor(self):
@@ -1375,11 +1425,6 @@ class PrintKuroxSetupApp(tk.Tk):
         self.refresh_devices()
 
 if __name__ == '__main__':
-    force_config = any(arg in sys.argv for arg in ['--config', '--setup', '-c', '/config', '/setup'])
-    if is_already_configured() and not force_config:
-        # Station is already configured! Launch Always-Online silently and do not show setup wizard!
-        launch_hostel_always_online_silent()
-        sys.exit(0)
-
+    # Always open the full setup and control application
     app = PrintKuroxSetupApp()
     app.mainloop()

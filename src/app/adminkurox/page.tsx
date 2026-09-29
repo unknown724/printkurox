@@ -38,6 +38,8 @@ import {
   ExternalLink,
   Sliders,
   Wallet,
+  Globe,
+  Power,
 } from 'lucide-react';
 import { getClientDetailedDevice } from '@/lib/device-detection';
 import { broadcastHostelChangeSetting } from '@/lib/useHostelChangeSetting';
@@ -237,6 +239,9 @@ export default function AdminKuroxPage() {
   const [settleErrorMsg, setSettleErrorMsg] = useState<string | null>(null);
   const [historyModalStation, setHistoryModalStation] = useState<any | null>(null);
   const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
+  const [copiedUpiStationId, setCopiedUpiStationId] = useState<string | null>(null);
+  const [copiedPinStationId, setCopiedPinStationId] = useState<string | null>(null);
+  const [copiedWebLinkStationId, setCopiedWebLinkStationId] = useState<string | null>(null);
   const [calibTotal, setCalibTotal] = useState<number>(24741);
   const [calibBw, setCalibBw] = useState<number>(13845);
   const [calibColor, setCalibColor] = useState<number>(10828);
@@ -578,6 +583,30 @@ export default function AdminKuroxPage() {
       setTimeout(() => setStationPricingError(null), 4000);
     } finally {
       setDeletingStation(false);
+    }
+  };
+
+  const handleToggleOwnerPrint = async (stationId: string, currentEnabled: boolean) => {
+    try {
+      const res = await fetch('/api/station/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'TOGGLE_OWNER_PRINT',
+          stationId,
+          enabled: !currentEnabled,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to toggle owner printing');
+      }
+      setStationPricingSuccess(`Owner printing ${!currentEnabled ? 'ENABLED' : 'DISABLED'} for ${stationId}`);
+      await fetchDbStations();
+      setTimeout(() => setStationPricingSuccess(null), 3500);
+    } catch (err: any) {
+      setStationPricingError(err.message || 'Failed to update owner printing setting');
+      setTimeout(() => setStationPricingError(null), 4000);
     }
   };
 
@@ -1185,42 +1214,150 @@ export default function AdminKuroxPage() {
                         )}
                       </div>
 
-                      {/* Station Custodian Admin Portal Access Bar */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-zinc-100/70 dark:bg-white/[0.03] border border-zinc-200/60 dark:border-white/5 text-[11px]">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <KeyRound className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                          <span className="text-zinc-500 shrink-0 font-medium">Station Admin:</span>
-                          <span className="font-mono text-zinc-800 dark:text-zinc-200 font-semibold truncate select-all">
-                            /admin/{station.id}
-                          </span>
+                      {/* Station Access, Public Website & Passcode Panel */}
+                      <div className="space-y-2.5 p-3 rounded-xl bg-zinc-100/70 dark:bg-white/[0.03] border border-zinc-200/60 dark:border-white/5 text-[11px]">
+                        
+                        {/* 1. Student / Public Website Print Link */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pb-2 border-b border-zinc-200/60 dark:border-white/5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Globe className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <span className="text-zinc-500 shrink-0 font-medium">Student Website Link:</span>
+                            <span className="font-mono text-zinc-800 dark:text-zinc-200 font-semibold truncate select-all">
+                              /?station={station.id}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (typeof window !== 'undefined') {
+                                  const fullUrl = `${window.location.origin}/?station=${station.id}`;
+                                  navigator.clipboard.writeText(fullUrl);
+                                  setCopiedWebLinkStationId(station.id);
+                                  setTimeout(() => setCopiedWebLinkStationId(null), 3000);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                              title="Copy Student Print Link"
+                            >
+                              {copiedWebLinkStationId === station.id ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-500" />
+                                  <span className="text-emerald-500">Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>Copy Website Link</span>
+                                </>
+                              )}
+                            </button>
+                            <Link
+                              href={`/?station=${station.id}`}
+                              target="_blank"
+                              className="px-2 py-1 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center gap-1 transition-colors border border-emerald-500/20"
+                              title="Open Student Web View"
+                            >
+                              <span>Open</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
+
+                        {/* 2. Station Admin Password & Direct Master Access Link */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-0.5">
+                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <KeyRound className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                              <span className="text-zinc-500 font-medium">Station Password:</span>
+                              <span className="font-mono text-zinc-900 dark:text-white font-bold px-2 py-0.5 rounded bg-zinc-200/80 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 select-all tracking-wider">
+                                {station.adminPin || '1234'}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(station.adminPin || '1234');
+                                setCopiedPinStationId(station.id);
+                                setTimeout(() => setCopiedPinStationId(null), 3000);
+                              }}
+                              className="px-2 py-0.5 rounded-lg bg-zinc-200/80 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer border border-zinc-300/80 dark:border-zinc-700"
+                              title="Copy Passcode"
+                            >
+                              {copiedPinStationId === station.id ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-500" />
+                                  <span className="text-emerald-500">Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>Copy PIN</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (typeof window !== 'undefined') {
+                                  const directUrl = `${window.location.origin}/admin/${station.id}?master=true&token=${station.stationToken || ''}&pin=${station.adminPin || ''}`;
+                                  navigator.clipboard.writeText(directUrl);
+                                  setStationPricingSuccess(`Copied direct access link: ${directUrl}`);
+                                  setTimeout(() => setStationPricingSuccess(null), 4000);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                              title="Copy Direct Access Link"
+                            >
+                              <Copy className="w-3 h-3" />
+                              <span>Copy Admin Link</span>
+                            </button>
+                            <Link
+                              href={`/admin/${station.id}?master=true&token=${station.stationToken || ''}&pin=${station.adminPin || ''}`}
+                              target="_blank"
+                              className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                              title="Direct 1-Click Access to Station Custom Panel (No Password Prompt)"
+                            >
+                              <Sparkles className="w-3 h-3 text-blue-200" />
+                              <span>Direct Access Portal ↗</span>
+                            </Link>
+                          </div>
+                        </div>
+
+                        {/* 3. Owner Personal Printing Permission Toggle */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-1.5 border-t border-zinc-200/60 dark:border-white/5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <Printer className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                              <span className="text-zinc-500 font-medium text-xs">Owner Printing:</span>
+                            </div>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              station.ownerPrintEnabled !== false
+                                ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30'
+                                : 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
+                            }`}>
+                              {station.ownerPrintEnabled !== false ? 'ON (Allowed)' : 'OFF (Hidden & Disabled)'}
+                            </span>
+                          </div>
+
                           <button
                             type="button"
-                            onClick={() => {
-                              if (typeof window !== 'undefined') {
-                                const fullUrl = `${window.location.origin}/admin/${station.id}`;
-                                navigator.clipboard.writeText(fullUrl);
-                                setStationPricingSuccess(`Copied admin portal link: ${fullUrl}`);
-                                setTimeout(() => setStationPricingSuccess(null), 4000);
-                              }
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
-                            title="Copy Portal Link for Hostel Custodian"
+                            onClick={() => handleToggleOwnerPrint(station.id, station.ownerPrintEnabled !== false)}
+                            className={`px-3 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
+                              station.ownerPrintEnabled !== false
+                                ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                                : 'bg-purple-600 hover:bg-purple-500 text-white'
+                            }`}
+                            title={station.ownerPrintEnabled !== false ? 'Disable owner printing and hide all UI from owner dashboard' : 'Enable owner printing for this station'}
                           >
-                            <Copy className="w-3 h-3" />
-                            <span>Copy Link</span>
+                            <Power className="w-3 h-3" />
+                            <span>{station.ownerPrintEnabled !== false ? 'Turn OFF' : 'Turn ON'}</span>
                           </button>
-                          <Link
-                            href={`/admin/${station.id}${station.stationToken ? `?token=${station.stationToken}` : ''}`}
-                            target="_blank"
-                            className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold flex items-center gap-1 transition-colors shadow-2xs"
-                            title="Open Station Admin Portal"
-                          >
-                            <span>Open Portal</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </Link>
                         </div>
+
                       </div>
 
                       {!isEditing ? (
@@ -1317,11 +1454,35 @@ export default function AdminKuroxPage() {
 
                                 {/* UPI & Actions */}
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-blue-500/10 text-[11px]">
-                                  <div className="flex items-center gap-1.5 min-w-0">
+                                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                                     <span className="text-zinc-500 shrink-0 font-medium">UPI:</span>
-                                    <span className="font-mono text-zinc-800 dark:text-zinc-200 font-semibold truncate select-all">
+                                    <span className="font-mono text-zinc-900 dark:text-zinc-100 font-bold truncate select-all px-2 py-0.5 rounded bg-zinc-200/70 dark:bg-white/5 border border-zinc-300 dark:border-white/10">
                                       {effectiveUpi || 'Not set'}
                                     </span>
+                                    {effectiveUpi && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(effectiveUpi);
+                                          setCopiedUpiStationId(station.id);
+                                          setTimeout(() => setCopiedUpiStationId(null), 3000);
+                                        }}
+                                        className="px-2 py-0.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-semibold text-[10px] flex items-center gap-1 transition-colors cursor-pointer border border-blue-500/20"
+                                        title="Copy UPI ID to clipboard for payment"
+                                      >
+                                        {copiedUpiStationId === station.id ? (
+                                          <>
+                                            <Check className="w-3 h-3 text-emerald-500" />
+                                            <span className="text-emerald-500">Copied!</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Copy className="w-3 h-3" />
+                                            <span>Copy UPI</span>
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
                                   </div>
 
                                   <div className="flex items-center gap-1.5 shrink-0">

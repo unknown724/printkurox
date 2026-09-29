@@ -723,5 +723,64 @@ body,
   animation-play-state: paused;
 }
 
+/* =========================================================
+   SILKY SMOOTH PROGRESS & SCAN ANIMATIONS
+   ========================================================= */
+@keyframes shimmerBar {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer-bar {
+  background: linear-gradient(
+    90deg,
+    rgba(99, 102, 241, 0.9) 0%,
+    rgba(168, 85, 247, 0.95) 25%,
+    rgba(255, 255, 255, 0.95) 50%,
+    rgba(168, 85, 247, 0.95) 75%,
+    rgba(99, 102, 241, 0.9) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmerBar 2.2s linear infinite;
+}
+
+@keyframes scanLaser {
+  0% {
+    top: 0%;
+    opacity: 0.2;
+  }
+  50% {
+    top: 100%;
+    opacity: 0.9;
+  }
+  100% {
+    top: 0%;
+    opacity: 0.2;
+  }
+}
+
+.animate-scan-laser {
+  animation: scanLaser 2s ease-in-out infinite;
+}
+
+@keyframes pulseHalo {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-halo {
+  animation: pulseHalo 2.5s ease-in-out infinite;
+}
+
 
 

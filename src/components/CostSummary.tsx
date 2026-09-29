@@ -16,6 +16,9 @@ import {
   WifiOff,
   MessageCircle,
   Phone,
+  Building2,
+  MapPin,
+  ChevronRight,
 } from 'lucide-react';
 import { PricingResult, PageConfig } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
@@ -98,8 +101,8 @@ export function CostSummary({
     whatsappUrl: string;
   } | null>(null);
 
-  // Live printer status
-  const { online: printerOnline, loading: statusLoading } = usePrinterStatus(30_000);
+  // Live printer status for this station
+  const { online: printerOnline, loading: statusLoading } = usePrinterStatus(30_000, station.id);
 
   // Student phone number for silent auto-prefill in Razorpay (from localStorage if saved)
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -430,8 +433,70 @@ export function CostSummary({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3.5">
+      {/* =========================================================================
+          PROMINENT HIGHLIGHTED STATION VERIFICATION CARD
+          Positioned directly between Print & Advanced Settings and Order Summary
+          so users can verify or change their pickup hostel before checkout.
+          ========================================================================= */}
+      <div className="relative rounded-2xl border-2 border-amber-500/40 dark:border-amber-400/50 bg-gradient-to-r from-amber-50/70 via-white to-amber-50/40 dark:from-amber-950/25 dark:via-[#14151a] dark:to-zinc-950/60 backdrop-blur-xl p-3 sm:p-3.5 shadow-md shadow-amber-500/10 overflow-hidden animate-fade-in-up">
+        {/* Luminous Top Perimeter Accent */}
+        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 animate-pulse" />
 
+        <div className="flex items-start justify-between gap-2.5">
+          <div className="flex items-start gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 shadow-2xs">
+              <Building2 className="w-5 h-5" />
+            </div>
+
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] font-mono font-black uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                  Pickup Station
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-200/80 dark:bg-white/10 text-zinc-700 dark:text-zinc-300 font-semibold border border-zinc-300 dark:border-white/10">
+                  {printerOnline ? '🟢 Live Online' : '🟡 Standby'}
+                </span>
+              </div>
+
+              {/* Bold High-Contrast Station Name */}
+              <h4 className="text-sm sm:text-base font-black text-zinc-950 dark:text-white tracking-tight flex items-center gap-1.5 flex-wrap">
+                <span className="bg-amber-400/25 dark:bg-amber-400/20 text-amber-950 dark:text-amber-300 px-2 py-0.5 rounded-lg border border-amber-400/40">
+                  {station.name}
+                </span>
+              </h4>
+
+              <p className="text-[11px] text-zinc-600 dark:text-zinc-400 flex items-center gap-1 font-medium truncate">
+                <MapPin className="w-3 h-3 text-amber-500 shrink-0" />
+                <span className="truncate">
+                  {station.id.includes('block_b') || station.id === 'main'
+                    ? 'Room 29 (1st Floor) · Pare Hostel'
+                    : station.id.includes('block_c')
+                    ? 'Ground Floor Common Area · Dibang Hostel'
+                    : station.address || `${station.name}, NERIST`}
+                </span>
+              </p>
+            </div>
+          </div>
+
+          {onOpenStationModal && (
+            <button
+              type="button"
+              onClick={onOpenStationModal}
+              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-zinc-950 font-bold text-xs flex items-center gap-1 shrink-0 shadow-sm shadow-amber-500/25 border border-amber-400/60 transition-all cursor-pointer"
+              title="Change your pickup hostel station"
+            >
+              <span>Change</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="mt-2 pt-2 border-t border-amber-500/20 text-[10px] sm:text-[11px] text-amber-800 dark:text-amber-300/80 font-medium flex items-center justify-between gap-2">
+          <span>⚠️ Check carefully: Your printout will be placed at this hostel tray.</span>
+        </div>
+      </div>
 
       {/* Itemized Summary Card (Glassmorphic with Qronos Moving Border Beam) */}
       <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/95 backdrop-blur-xl shadow-xs overflow-hidden group">

@@ -74,9 +74,20 @@ export function AutoUpdateNotifier() {
     };
   }, []);
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     setIsUpdating(true);
-    // Force a fresh reload bypassing any browser memory cache
+    try {
+      if (typeof window !== 'undefined' && 'caches' in window) {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map((name) => caches.delete(name)));
+      }
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.unregister();
+        }
+      }
+    } catch {}
     const currentUrl = new URL(window.location.href);
     currentUrl.searchParams.set('_v', Date.now().toString());
     window.location.href = currentUrl.toString();

@@ -350,6 +350,7 @@ function HomePageContent() {
               localStorage.setItem('nerist_selected_station', newStationId);
               setPreferredStation(newStationId);
             }
+            setStation(getStationConfig(newStationId));
             const params = new URLSearchParams(searchParams.toString());
             params.set('station', newStationId);
             router.push(`/?${params.toString()}`);

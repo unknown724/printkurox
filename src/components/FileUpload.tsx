@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, ChangeEvent, DragEvent } from 'react';
+import React, { useState, useEffect, useRef, ChangeEvent, DragEvent } from 'react';
 import {
   UploadCloud,
   FileText,
@@ -231,6 +231,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [displayProgress, setDisplayProgress] = useState(0);
   const [uploadPhase, setUploadPhase] = useState<'optimizing' | 'converting-docx' | 'uploading' | 'processing' | null>(null);
   const [docxProgress, setDocxProgress] = useState<{ current: number; total: number } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -241,6 +242,51 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const isAddingMoreRef = useRef(false);
+
+  // Smooth continuous progress interpolation ticker so progress never appears frozen at 0% or 5%
+  useEffect(() => {
+    if (!isUploading) {
+      setDisplayProgress(0);
+      return;
+    }
+
+    // Instantly show immediate activity at 8% upon upload start
+    setDisplayProgress((prev) => Math.max(prev, 8));
+
+    const interval = setInterval(() => {
+      setDisplayProgress((prev) => {
+        // If real uploadProgress is higher, accelerate smoothly toward it
+        if (uploadProgress > prev) {
+          const step = Math.max(1, Math.ceil((uploadProgress - prev) / 3));
+          return Math.min(uploadProgress, prev + step);
+        }
+
+        // Target thresholds based on current phase so progress never stalls:
+        let cap = 90;
+        if (uploadPhase === 'converting-docx') {
+          cap = docxProgress && docxProgress.total > 0
+            ? Math.min(65, Math.round((docxProgress.current / docxProgress.total) * 65))
+            : 42;
+        } else if (uploadPhase === 'optimizing') {
+          cap = 30;
+        } else if (uploadPhase === 'uploading') {
+          cap = 82;
+        } else if (uploadPhase === 'processing') {
+          cap = 96;
+        }
+
+        if (prev < cap) {
+          const remaining = cap - prev;
+          const increment = remaining > 20 ? 2 : remaining > 8 ? 1 : Math.random() < 0.4 ? 1 : 0;
+          return prev + increment;
+        }
+
+        return prev;
+      });
+    }, 110);
+
+    return () => clearInterval(interval);
+  }, [isUploading, uploadProgress, uploadPhase, docxProgress]);
 
   // Synchronize local rawFiles when uploadedBatch is cleared or updated
   if (prevBatch !== uploadedBatch) {
@@ -309,6 +355,7 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
               const convRes = await fetch('/api/convert-docx', {
                 method: 'POST',
                 body: formData,
+                signal: AbortSignal.timeout(4000),
               });
 
               if (convRes.ok) {
@@ -542,25 +589,27 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
     e.target.value = '';
   };
 
-  // Status message for upload modal/bars
+  // Status message for upload modal/bars with dynamic phase updates
   const statusHeadline =
     uploadPhase === 'converting-docx'
-      ? `Processing Document… ${docxProgress && docxProgress.total > 1 ? `(Page ${docxProgress.current} of ${docxProgress.total})` : ''}`
+      ? `Formatting Word Document… ${docxProgress && docxProgress.total > 1 ? `(Page ${docxProgress.current} of ${docxProgress.total})` : ''}`
       : uploadPhase === 'optimizing'
       ? 'Optimizing for Print…'
       : uploadPhase === 'processing'
-      ? 'Preparing Print Documents…'
-      : uploadProgress > 0 && uploadProgress < 100
-      ? `Uploading Files… ${uploadProgress}%`
+      ? 'Preparing Print Preview…'
+      : displayProgress >= 100
+      ? 'Upload Complete!'
+      : displayProgress > 0
+      ? `Uploading Files… ${displayProgress}%`
       : 'Uploading Files…';
 
   const statusSubtext =
     uploadPhase === 'converting-docx'
-      ? 'Formatting typography, margins and high-resolution layout'
+      ? 'Formatting typography, margins and high-resolution A4 layout'
       : uploadPhase === 'optimizing'
       ? 'Enhancing resolution and color balance for standard A4'
       : uploadPhase === 'processing'
-      ? 'Organizing pages and preparing document preview'
+      ? 'Organizing pages and generating print studio preview'
       : 'Securely uploading your files for printing';
 
   // If one or more files are uploaded
@@ -695,10 +744,10 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
               <Loader2 className="w-4 h-4 animate-spin shrink-0 text-zinc-900 dark:text-white" />
               <span className="font-medium">{statusHeadline}</span>
             </div>
-            <div className="w-full bg-zinc-200 dark:bg-white/[0.08] rounded-full h-1.5 overflow-hidden">
+            <div className="w-full bg-zinc-200 dark:bg-white/[0.08] rounded-full h-1.5 overflow-hidden relative">
               <div
-                className="bg-zinc-900 dark:bg-gradient-to-r dark:from-zinc-300 dark:via-white dark:to-zinc-100 h-1.5 transition-all duration-200 rounded-full dark:shadow-[0_0_10px_rgba(255,255,255,0.7)]"
-                style={{ width: `${uploadProgress}%` }}
+                className="animate-shimmer-bar h-1.5 transition-all duration-300 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]"
+                style={{ width: `${displayProgress}%` }}
               />
             </div>
           </div>
@@ -819,10 +868,26 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
         )}
 
         {isUploading ? (
-          <div className="flex flex-col items-center py-3 space-y-3.5 w-full max-w-[280px]">
-            {/* Spinning Indicator with specular ring */}
-            <div className="relative flex items-center justify-center w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-white/[0.05] border border-zinc-200 dark:border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(0,0,0,0.4)]">
-              <Loader2 className="w-6 h-6 text-zinc-900 dark:text-white animate-spin" />
+          <div className="flex flex-col items-center py-4 space-y-4 w-full max-w-[300px]">
+            {/* Spinning Indicator with glowing halo aura and dynamic document badge */}
+            <div className="relative flex items-center justify-center w-14 h-14 rounded-2xl bg-zinc-100 dark:bg-white/[0.06] border border-zinc-200 dark:border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_8px_24px_rgba(0,0,0,0.4)]">
+              <div className="absolute inset-0 rounded-2xl bg-indigo-500/20 blur-md animate-pulse-halo" />
+              <div className="relative z-10 flex items-center justify-center">
+                {uploadPhase === 'converting-docx' ? (
+                  <div className="relative">
+                    <FileText className="w-6 h-6 text-blue-500 dark:text-blue-400" />
+                    <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+                    </span>
+                  </div>
+                ) : (
+                  <div className="relative flex items-center justify-center">
+                    <Loader2 className="w-7 h-7 text-indigo-500 dark:text-indigo-400 animate-spin" />
+                    <Sparkles className="w-3.5 h-3.5 text-zinc-900 dark:text-white absolute" />
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Active file badge if available */}
@@ -841,16 +906,25 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
               </p>
             </div>
 
-            {/* Structured Progress Bar */}
+            {/* Structured Fluid Progress Bar with Shimmer */}
             <div className="w-full space-y-1.5 pt-1">
               <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-zinc-500 dark:text-zinc-400">Upload progress</span>
-                <span className="font-semibold text-zinc-900 dark:text-white">{uploadProgress}%</span>
+                <span className="text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>
+                    {uploadPhase === 'converting-docx'
+                      ? 'Converting Word Layout…'
+                      : uploadPhase === 'processing'
+                      ? 'Preparing visualizer…'
+                      : 'Uploading files…'}
+                  </span>
+                </span>
+                <span className="font-bold text-zinc-900 dark:text-white">{displayProgress}%</span>
               </div>
-              <div className="w-full bg-zinc-200 dark:bg-white/[0.08] rounded-full h-1.5 overflow-hidden">
+              <div className="w-full bg-zinc-200 dark:bg-white/[0.08] rounded-full h-2 overflow-hidden relative">
                 <div
-                  className="bg-zinc-900 dark:bg-gradient-to-r dark:from-zinc-300 dark:via-white dark:to-zinc-100 h-1.5 transition-all duration-200 rounded-full dark:shadow-[0_0_12px_rgba(255,255,255,0.8)]"
-                  style={{ width: `${uploadProgress}%` }}
+                  className="animate-shimmer-bar h-2 transition-all duration-300 ease-out rounded-full shadow-[0_0_12px_rgba(99,102,241,0.5)]"
+                  style={{ width: `${displayProgress}%` }}
                 />
               </div>
             </div>

@@ -44,40 +44,6 @@ export function PrintSettings({
 
   return (
     <div className="space-y-3">
-      {/* 0. Target Printer Station & Hostel Pickup Destination (Compact & Professional) */}
-      <div className="rounded-2xl border border-blue-500/20 dark:border-blue-500/15 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-2.5 sm:p-3 shadow-xs flex items-center justify-between gap-2.5">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 border border-blue-500/20 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
-            <Building2 className="w-4 h-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-bold text-xs sm:text-sm text-zinc-900 dark:text-zinc-100 truncate">
-                {currentStation.name}
-              </span>
-              <span className="inline-flex items-center gap-1 text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0">
-                <span className={`w-1 h-1 rounded-full ${printerOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-                {printerOnline ? 'Online' : 'Standby'}
-              </span>
-            </div>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-1">
-              <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-              <span className="truncate">{currentStation.address}</span>
-            </p>
-          </div>
-        </div>
-
-        {onOpenStationModal && (
-          <button
-            type="button"
-            onClick={onOpenStationModal}
-            className="h-7.5 sm:h-8 px-2.5 sm:px-3 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 hover:bg-zinc-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-zinc-800 dark:text-zinc-200 font-semibold text-xs flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
-          >
-            <span>Change</span>
-            <ChevronRight className="w-3 h-3 opacity-60" />
-          </button>
-        )}
-      </div>
       {/* 1. Color Mode - Glassmorphic Card with Campus Discount Rates */}
       <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/90 backdrop-blur-xl p-4 shadow-xs space-y-3 overflow-hidden">
         {/* Luminous top edge sheen */}
