@@ -864,6 +864,11 @@ class PrintKuroxSetupApp(tk.Tk):
         self.autostart_var = tk.BooleanVar(value=True)
         self.current_station_id = ""
         self.spooler_running = False
+        self.tray_icon = None
+        self._tray_notified = False
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close_window)
+        self._init_tray_icon()
 
         if "--background" in sys.argv or "--silent" in sys.argv:
             self.withdraw()
@@ -873,6 +878,71 @@ class PrintKuroxSetupApp(tk.Tk):
         else:
             self.setup_ui()
             self.refresh_devices()
+
+    def _init_tray_icon(self):
+        try:
+            from PIL import Image
+            import pystray
+
+            icon_path = ICON_FILE_PATH if os.path.exists(ICON_FILE_PATH) else None
+            if icon_path:
+                img = Image.open(icon_path)
+            else:
+                img = Image.new('RGB', (32, 32), color=(37, 99, 235))
+
+            def on_open(icon, item):
+                self.after(0, self.show_window)
+
+            def on_portal(icon, item):
+                self.after(0, self._open_admin_portal)
+
+            def on_exit(icon, item):
+                icon.stop()
+                self.after(0, self.quit_app)
+
+            menu = pystray.Menu(
+                pystray.MenuItem("Open Station Manager", on_open, default=True),
+                pystray.MenuItem("Open Admin Web Portal", on_portal),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Exit PrintKurox", on_exit)
+            )
+
+            self.tray_icon = pystray.Icon("PrintKurox", img, "PrintKurox Station Manager", menu)
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        except Exception as e:
+            print("Notice initializing tray:", e)
+
+    def _on_close_window(self):
+        if is_already_configured():
+            self.withdraw()
+            if not getattr(self, '_tray_notified', False):
+                self._tray_notified = True
+                try:
+                    if self.tray_icon and hasattr(self.tray_icon, 'notify'):
+                        self.tray_icon.notify("PrintKurox is running in the background.", "Station Active")
+                except Exception:
+                    pass
+        else:
+            self.quit_app()
+
+    def show_window(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def hide_to_tray(self):
+        self.withdraw()
+        self._on_close_window()
+
+    def quit_app(self):
+        self.spooler_running = False
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
+        self.destroy()
+        sys.exit(0)
 
     def setup_ui(self):
         for w in self.winfo_children():
@@ -1741,6 +1811,9 @@ class PrintKuroxSetupApp(tk.Tk):
         btn_test = ttk.Button(act_row, text="🖨️ Print Test Page", command=self._print_test_page_dashboard)
         btn_test.pack(side="left", padx=(0, 6))
 
+        btn_tray = ttk.Button(act_row, text="⬇️ Minimize to Tray", command=self.hide_to_tray)
+        btn_tray.pack(side="left", padx=(0, 6))
+
         btn_reconfig = ttk.Button(act_row, text="⚙️ Reconfigure", command=self._reconfigure_station)
         btn_reconfig.pack(side="left")
 
@@ -1772,7 +1845,10 @@ class PrintKuroxSetupApp(tk.Tk):
         )
         btn_uninstall.pack(side="left")
 
-        lbl_keep = ttk.Label(bottom_bar, text="Minimizing this window keeps printing active.", font=("Segoe UI", 8, "italic"))
+        btn_exit = ttk.Button(bottom_bar, text="Exit App", width=10, command=self.quit_app)
+        btn_exit.pack(side="right", padx=(8, 0))
+
+        lbl_keep = ttk.Label(bottom_bar, text="Closing window minimizes to System Tray.", font=("Segoe UI", 8, "italic"))
         lbl_keep.pack(side="right")
 
         # Start Spooler Worker thread if not already running
