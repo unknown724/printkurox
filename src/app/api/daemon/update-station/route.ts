@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify station token matches
-    const rows = await queryD1(
+    const rows = await queryD1<{ id: string; station_token?: string }>(
       'SELECT id, station_token FROM stations WHERE id = ?',
       [stationId]
     );
