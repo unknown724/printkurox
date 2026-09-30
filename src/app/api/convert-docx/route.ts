@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
             'Content-Type': 'application/octet-stream',
             'X-File-Extension': ext,
             'X-Original-Filename': fileName,
+            'ngrok-skip-browser-warning': 'true',
           },
           signal: AbortSignal.timeout(30000),
         });
