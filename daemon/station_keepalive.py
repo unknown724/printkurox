@@ -536,8 +536,16 @@ def watchdog_worker():
     fail_count = 0
     portal_status_msg = f"Configured ({CAMPUS_WIFI_USER})" if CAMPUS_WIFI_USER else "Disabled"
     last_portal_ping = 0
+    last_converter_ping = 0
 
     while watchdog_running:
+        # Keep cloud DOCX converter on Render warm (every 8 minutes)
+        if time.time() - last_converter_ping > 480:
+            try:
+                requests.get("https://printkurox-converter.onrender.com/health", timeout=4.0)
+                last_converter_ping = time.time()
+            except Exception:
+                pass
         try:
             has_internet, net_reason = check_internet_probe()
             if net_reason == "CAPTIVE_PORTAL":
