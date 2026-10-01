@@ -475,7 +475,10 @@ export default function StationAdminPage() {
 
       const bypassRes = await fetch('/api/admin-bypass', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(savedToken ? { 'x-station-token': savedToken } : {}),
+        },
         body: JSON.stringify({
           fileKey: fileKey,
           fileName: freeFile.name,
@@ -485,7 +488,8 @@ export default function StationAdminPage() {
           isDuplex: false, // Single-Sided Only (No duplex)
           copies: freeCopies,
           station_id: stationId,
-          pin: savedPass || savedToken || password,
+          pin: savedPass || password,
+          token: savedToken,
         }),
       });
 
@@ -606,6 +610,9 @@ export default function StationAdminPage() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem(`station_pass_${stationId}`, password);
+    }
     fetchDashboard({ pin: password });
   };
 

@@ -1329,9 +1329,12 @@ class PrintKuroxSetupApp(tk.Tk):
         used_ids = [s.get('id', '').lower() for s in registered_stations if s.get('id')]
         
         my_station_id = getattr(self, 'current_station_id', '').lower()
+        current_selection = self.entry_station_name.get().strip()
 
         dropdown_options = []
+        matching_user_option = None
         selected_option = None
+        first_available = None
 
         for h in self.all_hostels:
             h_lower = h.lower()
@@ -1356,19 +1359,31 @@ class PrintKuroxSetupApp(tk.Tk):
             if is_this_pc:
                 label = f"{h} — [This PC (Active)]"
                 dropdown_options.append(label)
-                selected_option = label
+                if not selected_option:
+                    selected_option = label
             elif is_claimed:
                 label = f"{h} — [CLAIMED]"
                 dropdown_options.append(label)
             else:
                 label = f"{h} — [AVAILABLE]"
                 dropdown_options.append(label)
-                if not selected_option:
-                    selected_option = label
+                if not first_available:
+                    first_available = label
+
+            # Track if this option corresponds to what the user currently has selected
+            if current_selection and (h_lower in current_selection.lower() or slug in current_selection.lower()):
+                matching_user_option = label
 
         self.entry_station_name['values'] = dropdown_options
-        if selected_option:
-            self.entry_station_name.set(selected_option)
+
+        # PRESERVE USER SELECTION: Never force-switch the user to Block A if they already chose a hostel!
+        if matching_user_option:
+            self.entry_station_name.set(matching_user_option)
+        elif not current_selection:
+            default_pick = selected_option or first_available or (dropdown_options[0] if dropdown_options else "")
+            if default_pick:
+                self.entry_station_name.set(default_pick)
+
         self._on_station_selected()
 
         # Lock only the station hostel name (room number and passcode remain editable)

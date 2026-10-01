@@ -6,7 +6,7 @@ import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 import { parsePageRange, transformPdfForPrint } from '@/lib/pdf-utils';
 import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { validateAdminPin, verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
-import { validateStationPin, validateStationPinWithRoleAsync, getStationConfig } from '@/lib/stations';
+import { validateStationPin, validateStationPinWithRoleAsync, getStationConfig, validateStationTokenAsync } from '@/lib/stations';
 import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -48,8 +48,34 @@ export async function POST(req: NextRequest) {
     const stationPinCookie = req.cookies.get('station_admin_pin')?.value;
     const isStationAdmin = stationPinCookie ? validateStationPin(stationId, stationPinCookie) : false;
 
-    // If not already an authorized device or station admin, validate PIN
-    if (!isDeviceAdmin && !isStationAdmin) {
+    // Check station token from body, header, or token-formatted pin
+    const candidateToken =
+      body.token ||
+      req.headers.get('x-station-token') ||
+      (typeof pin === 'string' && pin.startsWith('kurox_st_') ? pin : null);
+
+    let isTokenValid = false;
+    if (candidateToken) {
+      try {
+        const tokenAuth = await validateStationTokenAsync(candidateToken);
+        if (tokenAuth.isValid && tokenAuth.station) {
+          const tId = tokenAuth.station.id;
+          if (
+            tId === stationId ||
+            tId === rawStationId ||
+            tId === 'main' ||
+            tId === 'block_b'
+          ) {
+            isTokenValid = true;
+          }
+        }
+      } catch (tokErr) {
+        console.warn('Error validating station token in admin-bypass:', tokErr);
+      }
+    }
+
+    // If not already an authorized device, station admin, or valid station token, validate PIN
+    if (!isDeviceAdmin && !isStationAdmin && !isTokenValid) {
       const inputPin = pin || stationPinCookie;
       const stationAuth = await validateStationPinWithRoleAsync(stationId, inputPin || '');
       const isPinValid = Boolean(inputPin && (stationAuth.isValid || validateAdminPin(inputPin)));
