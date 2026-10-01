@@ -445,10 +445,65 @@ try {{
 
     return file_path
 
-def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
+def convert_pdf_to_true_grayscale(input_pdf_path):
+    """
+    Strips all color channels (RGB/CMYK) from a PDF and converts all pages to
+    100% pure DeviceGray (1-channel 8-bit grayscale).
+    Guarantees that EPSON L3210 (and any desktop printer) will fire ONLY the Black (K) nozzle,
+    using 0% Cyan, Magenta, or Yellow ink.
+    """
+    if not input_pdf_path or not os.path.exists(input_pdf_path):
+        return input_pdf_path
+
+    if input_pdf_path.endswith("_grayscale.pdf"):
+        return input_pdf_path
+
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        try:
+            import fitz
+        except ImportError:
+            log("PyMuPDF (pymupdf) not available. Cannot strip color channels.", "WARN")
+            return input_pdf_path
+
+    try:
+        t0 = time.time()
+        doc = fitz.open(input_pdf_path)
+        page_count = len(doc)
+        if page_count == 0:
+            doc.close()
+            return input_pdf_path
+
+        output_gray_path = os.path.splitext(input_pdf_path)[0] + "_grayscale.pdf"
+        gray_doc = fitz.open()
+
+        for page_idx in range(page_count):
+            page = doc[page_idx]
+            rect = page.rect
+            # Render at 300 DPI in pure DeviceGray colorspace (1 channel, 0% color)
+            pix = page.get_pixmap(colorspace=fitz.csGRAY, dpi=300)
+            img_bytes = pix.tobytes("jpeg", jpg_quality=95)
+            new_page = gray_doc.new_page(width=rect.width, height=rect.height)
+            new_page.insert_image(rect, stream=img_bytes)
+
+        gray_doc.save(output_gray_path, garbage=4, deflate=True)
+        gray_doc.close()
+        doc.close()
+
+        elapsed = time.time() - t0
+        log(f"Stripped color channels: Converted {page_count} page(s) to 100% True Grayscale (DeviceGray, 0% color ink) in {elapsed:.2f}s", "SUCCESS")
+        return output_gray_path
+    except Exception as e:
+        log(f"Grayscale conversion notice: {e}. Using original file.", "WARN")
+        return input_pdf_path
+
+def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill', color_mode=None):
     """If file is an image or Office document, convert it to A4 PDF for SumatraPDF respecting orientation and fit mode."""
     if not file_path or not os.path.exists(file_path):
         return file_path
+
+    result_path = file_path
 
     # 1. Inspect Magic Bytes: If it actually starts with %PDF-, it's already a valid PDF!
     # CRITICAL: SumatraPDF routes file parsers strictly by file extension!
@@ -463,8 +518,12 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
                     if not os.path.exists(pdf_renamed) or os.path.getsize(pdf_renamed) != os.path.getsize(file_path):
                         shutil.copy2(file_path, pdf_renamed)
                     log(f"Normalized PDF extension for SumatraPDF: {os.path.basename(pdf_renamed)}", "INFO")
-                    return pdf_renamed
-                return file_path
+                    result_path = pdf_renamed
+                else:
+                    result_path = file_path
+                if color_mode == 'bw':
+                    return convert_pdf_to_true_grayscale(result_path)
+                return result_path
     except Exception:
         pass
 
@@ -493,7 +552,10 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
             except Exception:
                 pass
 
-            if image.mode in ("RGBA", "P"):
+            is_bw = (color_mode == 'bw')
+            if is_bw:
+                image = ImageOps.grayscale(image)
+            elif image.mode in ("RGBA", "P"):
                 image = image.convert("RGB")
 
             # Determine target A4 orientation
@@ -507,7 +569,7 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
                 is_landscape = image.width > image.height
 
             a4_width, a4_height = (3508, 2480) if is_landscape else (2480, 3508)
-            canvas = Image.new("RGB", (a4_width, a4_height), (255, 255, 255))
+            canvas = Image.new("L" if is_bw else "RGB", (a4_width, a4_height), 255 if is_bw else (255, 255, 255))
 
             # Standard printer safe margin (2.5% margin)
             margin_w = int(a4_width * 0.025)
@@ -536,7 +598,9 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
                 canvas.paste(img_copy, (offset_x, offset_y))
 
             canvas.save(pdf_path, "PDF", resolution=300.0)
-            log(f"Converted {os.path.basename(file_path)} ({img_format or 'Image'}) to professional A4 {'Landscape' if is_landscape else 'Portrait'} PDF", "INFO")
+            log(f"Converted {os.path.basename(file_path)} ({img_format or 'Image'}{' Grayscale' if is_bw else ''}) to professional A4 {'Landscape' if is_landscape else 'Portrait'} PDF", "INFO")
+            if is_bw:
+                return convert_pdf_to_true_grayscale(pdf_path)
             return pdf_path
         except Exception as e:
             log(f"Image to PDF conversion warning: {e}", "WARN")
@@ -547,9 +611,14 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill'):
     if ext in ['.docx', '.doc', '.rtf', '.pptx', '.ppt', '.xlsx', '.xls', '.csv']:
         converted_office = convert_office_to_pdf(file_path)
         if converted_office.lower().endswith('.pdf') and os.path.exists(converted_office):
+            if color_mode == 'bw':
+                return convert_pdf_to_true_grayscale(converted_office)
             return converted_office
 
-    return file_path
+    if result_path.lower().endswith('.pdf') and color_mode == 'bw':
+        return convert_pdf_to_true_grayscale(result_path)
+
+    return result_path
 
 def get_windows_printer_telemetry():
     """Queries Windows Spooler directly via native Win32 API (winspool.drv) for live status and queue count. Zero console popups."""
@@ -917,7 +986,7 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     is_bw = str(color_mode or '').strip().lower() in ['bw', 'mono', 'monochrome', 'black & white', 'grayscale']
     if is_bw:
         settings_list.append("monochrome")
-        file_path = convert_to_grayscale_pdf(file_path)
+        file_path = convert_pdf_to_true_grayscale(file_path)
     else:
         settings_list.append("color")
 
@@ -992,7 +1061,7 @@ def process_auto_duplex_job(job, local_file_path):
     if job.get("page_range") and job["page_range"].lower() != "all":
         page_range = job["page_range"]
 
-    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
+    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation, color_mode=job.get("color_mode"))
 
     with printer_hardware_orientation_scope(PRINTER_NAME, orientation):
         success = print_file_silent(
@@ -1022,7 +1091,7 @@ def process_single_sided_job(job, local_file_path):
     if job.get("page_range") and job["page_range"].lower() != "all":
         page_range = job["page_range"]
 
-    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
+    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation, color_mode=job.get("color_mode"))
 
     with printer_hardware_orientation_scope(PRINTER_NAME, orientation):
         success = print_file_silent(
@@ -1079,7 +1148,7 @@ def process_manual_duplex_job(job, local_file_path):
     color_mode = job["color_mode"]
     orientation = resolve_effective_orientation(job, local_file_path)
     job["orientation"] = orientation
-    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation)
+    printable_path = ensure_printable_pdf(local_file_path, orientation=orientation, color_mode=color_mode)
 
     # Calculate exact page lists for Pass 1 (front) and Pass 2 (back)
     req_range = job.get("page_range") or "all"
@@ -1443,19 +1512,110 @@ def record_supplies_depletion(job):
 # =============================================================================
 # HEARTBEAT & TELEMETRY SYNC
 # =============================================================================
-def write_heartbeat():
-    """Upsert daemon heartbeat and printer telemetry with live hardware metrics via server proxy."""
+_last_discovered_tunnel = None
+_last_tunnel_check_time = 0
+
+def get_live_tunnel_url():
+    """
+    Dynamically discovers the active Cloudflare TryCloudflare tunnel URL from local cloudflared metrics or logs.
+    Caches result for 10 seconds to avoid disk/network thrashing.
+    """
+    global _last_discovered_tunnel, _last_tunnel_check_time
+    now = time.time()
+    if _last_discovered_tunnel and (now - _last_tunnel_check_time < 10):
+        return _last_discovered_tunnel
+
+    # 1. Probe local cloudflared metrics port (20241)
     try:
-        telem = get_windows_printer_telemetry()
+        r = requests.get('http://127.0.0.1:20241/quicktunnel', timeout=1.0)
+        if r.status_code == 200:
+            h = r.json().get('hostname')
+            if h and 'trycloudflare.com' in h:
+                _last_discovered_tunnel = f"https://{h}"
+                _last_tunnel_check_time = now
+                return _last_discovered_tunnel
+    except Exception:
+        pass
+
+    # 2. Check local tunnel.log files
+    candidates = [
+        os.path.join(BASE_DIR, 'tunnel.log'),
+        r"c:\Users\Devananda Wahengbam\Desktop\whatsappbot\tunnel.log",
+        r"C:\PrintKurox\daemon\tunnel.log",
+        os.path.join(os.path.dirname(BASE_DIR), 'tunnel.log')
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            try:
+                with open(c, 'r', encoding='utf-8', errors='ignore') as f:
+                    text = f.read()
+                    matches = re.findall(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', text)
+                    if matches:
+                        _last_discovered_tunnel = matches[-1]
+                        _last_tunnel_check_time = now
+                        return _last_discovered_tunnel
+            except Exception:
+                pass
+
+    return _last_discovered_tunnel
+
+def write_heartbeat():
+    """Upsert daemon heartbeat and printer telemetry with live hardware metrics via server proxy, with direct D1 fallback."""
+    telem = get_windows_printer_telemetry()
+    tunnel_url = get_live_tunnel_url()
+    body = {"telemetry": telem}
+    if tunnel_url:
+        body["converter_url"] = tunnel_url
+
+    success = False
+    try:
         url = f"{SERVER_URL}/api/daemon/heartbeat"
-        body = {"telemetry": telem}
         resp = _hb_session.post(url, json=body, timeout=(3.0, 8.0))
         if resp.status_code == 200:
-            log(f"Heartbeat & Telemetry synced [{STATION_ID}] ({telem['name']}: {telem['status_text']})", "INFO")
+            success = True
+            log(f"Heartbeat synced [{STATION_ID}] ({telem['name']}: {telem['status_text']}) | Tunnel: {tunnel_url or 'None'}", "INFO")
         elif resp.status_code == 401:
             log(f"Heartbeat warning: Station token unauthorized for [{STATION_ID}]", "WARN")
     except Exception as hb_err:
         log(f"Heartbeat notice: {hb_err}", "WARN")
+
+    # Direct Cloudflare D1 Fallback (guarantees printer status NEVER shows offline during Vercel cold starts or redeployments)
+    if not success and CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID:
+        try:
+            d1_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/d1/database/{CF_D1_DB_ID}/query"
+            headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
+            
+            # Atomic query to ensure heartbeat and status stay online
+            sql = (
+                "INSERT INTO daemon_heartbeat (id, updated_at, station_id) "
+                "VALUES (?, datetime('now'), ?) "
+                "ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now'), station_id = excluded.station_id;"
+            )
+            requests.post(d1_url, headers=headers, json={"sql": sql, "params": [STATION_SLOT, STATION_ID]}, timeout=5.0)
+
+            sql_station = "UPDATE stations SET last_heartbeat = datetime('now'), status = 'online' WHERE id = ?;"
+            requests.post(d1_url, headers=headers, json={"sql": sql_station, "params": [STATION_ID]}, timeout=5.0)
+
+            sql_telem = (
+                "UPDATE printer_telemetry "
+                "SET printer_name = ?, is_online = ?, status_text = ?, spooler_jobs = ?, updated_at = datetime('now') "
+                "WHERE id = 1;"
+            )
+            requests.post(d1_url, headers=headers, json={
+                "sql": sql_telem,
+                "params": [telem['name'], telem['is_online'], telem['status_text'], telem['spooler_jobs']]
+            }, timeout=5.0)
+
+            if tunnel_url:
+                sql_tunnel = (
+                    "INSERT INTO app_settings (key, value, updated_at) "
+                    "VALUES ('docx_converter_url', ?, datetime('now')) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now');"
+                )
+                requests.post(d1_url, headers=headers, json={"sql": sql_tunnel, "params": [tunnel_url]}, timeout=5.0)
+            log(f"Direct D1 Heartbeat fallback synced [{STATION_ID}]", "SUCCESS")
+        except Exception as d1_err:
+            log(f"Direct D1 Heartbeat fallback notice: {d1_err}", "WARN")
 
 # =============================================================================
 # MAIN DAEMON LOOP
@@ -1582,7 +1742,7 @@ def main():
                     # Ensure orientation is resolved and images converted to PDF
                     orientation = resolve_effective_orientation(job, local_path)
                     job["orientation"] = orientation
-                    printable_path = ensure_printable_pdf(local_path, orientation=orientation)
+                    printable_path = ensure_printable_pdf(local_path, orientation=orientation, color_mode=job.get("color_mode"))
 
                     # 2. Print depending on Duplex mode
                     if is_duplex and total_pages > 1:

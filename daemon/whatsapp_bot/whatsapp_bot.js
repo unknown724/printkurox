@@ -42,6 +42,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { convertDocxToPdf, findSoffice } = require('./docx_converter');
+const { handleStudentMessage } = require('./student_bot_module');
+const { generatePreviewImage } = require('./pdf_preview_renderer');
 
 // Configuration from .env
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
@@ -293,21 +295,38 @@ function formatPageRange(pages) {
  * Resolve phone number for a sender JID or fallback to kiosk station contact
  */
 async function resolveUserPhone(sock, senderJid) {
-  if (!senderJid) return STATION_CONTACT;
+  if (!senderJid) return null;
+  let raw = '';
   if (senderJid.endsWith('@s.whatsapp.net')) {
-    const raw = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-    if (raw.length >= 10) return raw.slice(-10);
-  }
-  if (senderJid.endsWith('@lid') && sock?.signalRepository?.lidMapping?.getPNForLID) {
-    try {
-      const pn = await sock.signalRepository.lidMapping.getPNForLID(senderJid);
-      if (pn) {
-        const raw = pn.split('@')[0].replace(/[^0-9]/g, '');
-        if (raw.length >= 10) return raw.slice(-10);
+    raw = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+  } else if (senderJid.endsWith('@lid')) {
+    const lidNum = senderJid.split('@')[0];
+    if (lidMappingCache.has(lidNum)) {
+      raw = lidMappingCache.get(lidNum).split('@')[0].replace(/[^0-9]/g, '');
+    } else {
+      try {
+        const authDir = path.join(__dirname, 'session_auth');
+        const revPath = path.join(authDir, `lid-mapping-${lidNum}_reverse.json`);
+        if (fs.existsSync(revPath)) {
+          const pn = JSON.parse(fs.readFileSync(revPath, 'utf8'));
+          if (pn) raw = String(pn).replace(/[^0-9]/g, '');
+        }
+      } catch (e) {}
+      if (!raw && sock?.signalRepository?.lidMapping?.getPNForLID) {
+        try {
+          const pn = await sock.signalRepository.lidMapping.getPNForLID(senderJid);
+          if (pn) raw = pn.split('@')[0].replace(/[^0-9]/g, '');
+        } catch (e) {}
       }
-    } catch (e) {}
+    }
   }
-  return STATION_CONTACT;
+  if (raw && raw.length >= 10) {
+    const tenDigit = raw.slice(-10);
+    if (/^[6-9]\d{9}$/.test(tenDigit)) {
+      return tenDigit;
+    }
+  }
+  return null;
 }
 
 /**
@@ -339,11 +358,43 @@ async function sendSessionExpiredMessage(sock, senderJid) {
 // NATIVE FLOW ACTION BUTTONS DISPATCHER (ZERO DUPLICATE MESSAGES)
 // ============================================================================
 
+// In-Memory LID Mapping Cache to eliminate synchronous disk reads on every message
+const lidMappingCache = new Map();
+
 /**
  * Dispatch single-card native WhatsApp action buttons (IndiGo-style tap buttons)
  * Injects binary XML envelope (<biz><interactive ...> + <bot ...>)
  */
 async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintKurox AutoPrint', buttons = [] }) {
+  if (!jid || !body) return null;
+
+  // Resolve @lid to @s.whatsapp.net if possible (instant in-memory cache)
+  let targetJid = jid;
+  if (jid.endsWith('@lid')) {
+    const lidNum = jid.split('@')[0];
+    if (lidMappingCache.has(lidNum)) {
+      targetJid = lidMappingCache.get(lidNum);
+    } else {
+      try {
+        const authDir = path.join(__dirname, 'session_auth');
+        const revPath = path.join(authDir, `lid-mapping-${lidNum}_reverse.json`);
+        if (fs.existsSync(revPath)) {
+          const pn = JSON.parse(fs.readFileSync(revPath, 'utf8'));
+          if (pn) {
+            targetJid = `${pn}@s.whatsapp.net`;
+            lidMappingCache.set(lidNum, targetJid);
+          }
+        } else if (sock?.signalRepository?.lidMapping?.getPNForLID) {
+          const pn = await sock.signalRepository.lidMapping.getPNForLID(jid);
+          if (pn) {
+            targetJid = `${pn}@s.whatsapp.net`;
+            lidMappingCache.set(lidNum, targetJid);
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
   const nativeButtons = buttons.map((btn) => {
     if (btn.url) {
       return {
@@ -366,7 +417,7 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
 
   try {
     const waMsg = generateWAMessageFromContent(
-      jid,
+      targetJid,
       {
         viewOnceMessage: {
           message: {
@@ -418,13 +469,10 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
           },
         ],
       },
-      {
-        tag: 'bot',
-        attrs: { biz_bot: '1' },
-      },
+
     ];
 
-    await sock.relayMessage(jid, waMsg.message, {
+    await sock.relayMessage(targetJid, waMsg.message, {
       messageId: waMsg.key.id,
       additionalNodes,
     });
@@ -433,14 +481,19 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
     }
     return waMsg;
   } catch (btnErr) {
-    console.warn('[WA-Bot] sendInteractiveButtons notice:', btnErr.message);
+    console.warn('[WA-Bot] sendInteractiveButtons relay error:', btnErr.message);
+    // Send fallback text only if relayMessage failed
+    try {
+      const buttonPrompts = buttons
+        .map((b, idx) => b.url ? `🔗 *${b.text}:* ${b.url}` : `🔘 *${b.text}*`)
+        .join('\n');
+      const fallback = `${title ? '*' + title + '*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n' : ''}${body}${buttonPrompts ? '\n\n' + buttonPrompts : ''}${footer ? '\n\n_' + footer + '_' : ''}`;
+      await sock.sendMessage(targetJid, { text: fallback.trim() });
+    } catch (e) {}
     return null;
   }
 }
 
-/**
- * Dispatch Step 1: Color Selection (Single Card, Zero Spam)
- */
 async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeMb) {
   const isBulk = totalPages >= 10;
   const title = `*PrintKurox* · Color Selection`;
@@ -570,17 +623,24 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
   // Auto-resolve phone number for Razorpay to skip phone input screen
   const prefillPhone = await resolveUserPhone(sock, senderJid);
 
+  // Immediate typing feedback for responsive user feel
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+
   if (razorpay && !paymentLinkUrl) {
+    const customerPayload = {
+      name: senderName || 'Student',
+    };
+    if (prefillPhone) {
+      customerPayload.contact = prefillPhone;
+    }
+
     try {
       const rzpLink = await razorpay.paymentLink.create({
         amount: totalAmount * 100,
         currency: 'INR',
         accept_partial: false,
         description: `Print: ${session.fileName.slice(0, 30)} (${session.copies || 1}x, ${session.colorMode}, ${session.orientation || 'portrait'})`,
-        customer: {
-          name: senderName || 'Student',
-          contact: prefillPhone,
-        },
+        customer: customerPayload,
         upi_link: true,
         notify: { sms: false, email: false },
         reminder_enable: false,
@@ -598,23 +658,54 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
 
       paymentLinkUrl = rzpLink.short_url;
       paymentLinkId = rzpLink.id;
-      console.log(`[WA-Bot] Razorpay link created (contact: ${prefillPhone}): ${paymentLinkUrl}`);
+      console.log(`[WA-Bot] Razorpay link created (contact: ${customerPayload.contact || 'none'}): ${paymentLinkUrl}`);
     } catch (rzpErr) {
-      console.error('[WA-Bot] Razorpay link creation error:', rzpErr);
+      console.error('[WA-Bot] Razorpay link creation initial error:', rzpErr.error?.description || rzpErr.message);
+      // Auto-retry without contact parameter in case phone number format was rejected by Razorpay
+      try {
+        const rzpRetry = await razorpay.paymentLink.create({
+          amount: totalAmount * 100,
+          currency: 'INR',
+          accept_partial: false,
+          description: `Print: ${session.fileName.slice(0, 30)} (${session.copies || 1}x, ${session.colorMode})`,
+          customer: { name: senderName || 'Student' },
+          upi_link: true,
+          notify: { sms: false, email: false },
+          reminder_enable: false,
+          notes: {
+            station_id: currentStation.id,
+            pickup_code: pickupCode,
+            sender_jid: senderJid,
+          },
+        });
+        paymentLinkUrl = rzpRetry.short_url;
+        paymentLinkId = rzpRetry.id;
+        console.log(`[WA-Bot] Razorpay retry succeeded without contact: ${paymentLinkUrl}`);
+      } catch (retryErr) {
+        console.error('[WA-Bot] Razorpay link retry failed:', retryErr.error?.description || retryErr.message);
+      }
     }
   }
 
-  // Ensure background R2 upload has fully settled before creating order
-  if (session.uploadPromise) {
-    try {
-      await session.uploadPromise;
-    } catch (upErr) {
-      console.warn('[WA-Bot] Upload promise wait notice:', upErr.message);
-    }
+  // Guaranteed Fallback UPI payment URL if Razorpay API was unavailable
+  if (!paymentLinkUrl) {
+    const fallbackVpa = process.env.STATION_UPI_VPA || '9362980761@upi';
+    paymentLinkUrl = `upi://pay?pa=${encodeURIComponent(fallbackVpa)}&pn=PrintKurox&am=${totalAmount}&cu=INR&tn=Print_${pickupCode}`;
+    console.log(`[WA-Bot] Using Direct Fallback UPI Link: ${paymentLinkUrl}`);
   }
 
-  // Save order to Cloudflare D1
-  await executeD1(
+  // Pre-generate preview image in background so "Preview Document" responds in 0ms!
+  if (session.fileBuffer || session.imageBuffer) {
+    generatePreviewImage({
+      inputBuffer: session.fileBuffer || session.imageBuffer,
+      fileName: session.fileName,
+      colorMode: session.colorMode || 'bw',
+      selectedPages: session.selectedPages,
+    }).catch(() => {});
+  }
+
+  // Save order to Cloudflare D1 in background (non-blocking for ultra-fast card dispatch)
+  executeD1(
     `INSERT INTO print_jobs (
       id, pickup_code, file_key, file_name, total_pages, page_range,
       color_mode, is_duplex, copies, duplex_sheets, single_sheets,
@@ -641,7 +732,9 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
       session.orientation || 'portrait',
       currentStation.id,
     ]
-  );
+  ).catch((d1Err) => {
+    console.error('[WA-Bot D1 Background Insert Error]:', d1Err);
+  });
 
   session.stage = 'AWAITING_PAYMENT';
   session.jobId = jobId;
@@ -672,18 +765,19 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
     (isBulk ? ` _(🎉 Saved ₹${totalSavings}!)_` : '') + `\n` +
     (isBulk ? `⚡ _Applied ₹${ratePerPage}/p volume offer (10+ pages, single page only)_\n` : '') +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `👉 *Tap below to pay via UPI (GPay / PhonePe / Paytm).*\n` +
-    `🖨️ Your document will print automatically once paid!\n\n` +
-    (paymentLinkUrl ? `🔗 *Direct UPI Payment Link:*\n${paymentLinkUrl}\n\n` : '') +
+    (paymentLinkUrl ? `👉 *1-TAP PAYMENT LINK (UPI / GPay / PhonePe):*\n🔗 ${paymentLinkUrl}\n\n` : '') +
+    `_Tap link above or button below to pay. Prints automatically once paid!_\n` +
     `_Code: ${pickupCode} · Valid for 30 minutes._`;
 
   const actionButtons = [];
+  // 1-Tap UPI CTA button (Directly opens GPay / PhonePe / Paytm / UPI)
   if (paymentLinkUrl) {
     actionButtons.push({
-      text: `💳 Pay ₹${totalAmount} (1-Tap UPI)`,
+      text: `💳 Pay ₹${totalAmount} via UPI`,
       url: paymentLinkUrl,
     });
   }
+
   // Only offer counter cash payment if explicitly allowed for this station (e.g. Romen Xerox)
   if (currentStation.allowCounterPayment) {
     actionButtons.push({
@@ -697,7 +791,7 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
   });
   actionButtons.push({
     id: 'btn_reset',
-    text: '🔄 Reset / Change Settings',
+    text: '🔄 Change Settings',
   });
 
   await sendInteractiveButtons({
@@ -719,6 +813,114 @@ async function sendDocumentSummaryCard(sock, senderJid, session, senderName = 'S
 
 async function sendDedicatedPaymentCard({ sock, senderJid, senderName = 'Student', session }) {
   return sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+}
+
+/**
+ * Send High-Resolution In-Chat Photo/Document Layout Preview
+ * Replaces external web links with direct WhatsApp photo/image preview
+ */
+async function sendDocumentVisualPreview({ sock, senderJid, senderName = 'Student', session }) {
+  if (!session) {
+    await sendSessionExpiredMessage(sock, senderJid);
+    return;
+  }
+
+  const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
+  const orientLabel = session.orientation === 'landscape' ? 'Landscape (Wide)' : 'Portrait (Vertical)';
+  const colorLabel = session.colorMode === 'color' ? '🎨 Color' : '⚫ Black & White';
+  const totalAmount = session.totalPrice || 1;
+  const totalCopies = session.copies || 1;
+
+  // Immediate typing feedback
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+
+  let previewBuffer = null;
+  const inputBuffer = session.fileBuffer || session.imageBuffer;
+
+  if (inputBuffer) {
+    try {
+      const prevResult = await generatePreviewImage({
+        inputBuffer,
+        fileName: session.fileName,
+        colorMode: session.colorMode || 'bw',
+        selectedPages: session.selectedPages,
+      });
+      if (prevResult && prevResult.buffer) {
+        previewBuffer = prevResult.buffer;
+      }
+    } catch (prevErr) {
+      console.warn('[WA-Bot] Preview generation warning:', prevErr.message);
+    }
+  }
+
+  if (!previewBuffer && session.imageBuffer) {
+    previewBuffer = session.imageBuffer;
+  }
+
+  if (previewBuffer) {
+    const pagesNote = session.totalPages > 1
+      ? `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n`
+      : `📑 *Pages:* 1 page\n`;
+
+    const previewCaption =
+      `📄 *Document Layout Preview:*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📄 *File:* ${session.fileName}\n` +
+      `🖨️ *Print Mode:* ${colorLabel}\n` +
+      `📐 *Orientation:* ${orientLabel} (Natural)\n` +
+      `${pagesNote}` +
+      `💰 *Total Amount:* *₹${totalAmount}* (${totalCopies} ${totalCopies === 1 ? 'copy' : 'copies'})\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      (session.paymentLinkUrl ? `👉 *1-Tap Payment Link:*\n🔗 ${session.paymentLinkUrl}\n\n` : '') +
+      `_Tap button below or link above to pay!_`;
+
+    const actionButtons = [];
+    if (session.paymentLinkUrl) {
+      actionButtons.push({
+        text: `💳 Pay ₹${totalAmount} via UPI`,
+        url: session.paymentLinkUrl,
+      });
+    }
+    actionButtons.push({
+      id: 'btn_reset',
+      text: '🔄 Change Settings',
+    });
+
+    // 1. Send the rendered preview photo directly to WhatsApp
+    await sock.sendMessage(senderJid, {
+      image: previewBuffer,
+      caption: previewCaption,
+    });
+
+    // 2. Send 1-tap interactive button card directly under the image
+    if (actionButtons.length > 0) {
+      await sendInteractiveButtons({
+        sock,
+        jid: senderJid,
+        title: '💳 Print Authorization',
+        body: `Ready to print? Complete payment below to start printing immediately at *${session.station?.name || defaultStation.name}*!`,
+        footer: 'PrintKurox AutoPrint',
+        buttons: actionButtons,
+      });
+    }
+    console.log(`[WA-Bot] Dispatched photo preview directly to ${senderName} (${senderJid})`);
+  } else {
+    // Graceful fallback if buffer unavailable
+    const previewUrl = `${PUBLIC_KIOSK_URL}/preview?key=${encodeURIComponent(session.fileKey)}&name=${encodeURIComponent(session.fileName)}&pages=${session.totalPages}&mode=${session.colorMode}`;
+    await sock.sendMessage(senderJid, {
+      text:
+        `👁️ *Document Layout Preview:*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📄 *File:* ${session.fileName}\n` +
+        `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
+        `📐 *Orientation:* ${orientLabel} (Natural)\n` +
+        `🖨️ *Print Mode:* ${colorLabel}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🔍 *Tap to view preview online:*\n` +
+        `${previewUrl}\n\n` +
+        `_Tap "Pay via UPI" above to print!_`,
+    });
+  }
 }
 
 /**
@@ -920,9 +1122,9 @@ async function sendQueueStagingCard({ sock, senderJid, session, justAddedFileNam
     `*Would you like to add more files or proceed to print?*`;
 
   const buttons = [
-    { id: 'btn_queue_add_more', text: '➕ Upload More Files' },
-    { id: 'btn_queue_continue', text: `➡️ Continue (${count} ${count === 1 ? 'File' : 'Files'})` },
-    { id: 'btn_queue_clear', text: '🗑️ Clear Queue' },
+    { id: 'btn_queue_add_more', text: '➕ Add More PDF / Files' },
+    { id: 'btn_queue_continue', text: `✅ Continue (${count} ${count === 1 ? 'File' : 'Files'})` },
+    { id: 'btn_queue_clear', text: '❌ Cancel / Clear Queue' },
   ];
 
   await sendInteractiveButtons({
@@ -974,18 +1176,23 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
 
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        if (f.isPdf) {
+        const isPdf = f.isPdf || (f.buffer && f.buffer.length >= 4 && f.buffer.slice(0, 4).toString() === '%PDF') || (f.fileName && f.fileName.toLowerCase().endsWith('.pdf')) || (f.mimeType && f.mimeType.includes('pdf'));
+        const isImg = !isPdf && (f.isImg || (f.mimeType && f.mimeType.startsWith('image/')) || (f.fileName && /\.(jpe?g|png|webp|bmp)$/i.test(f.fileName)));
+
+        if (isPdf) {
           try {
             const srcDoc = await PDFDocument.load(f.buffer, { ignoreEncryption: true });
+            srcDoc.isEncrypted = false;
             const indices = srcDoc.getPageIndices();
             const copiedPages = await mergedPdf.copyPages(srcDoc, indices);
             for (const p of copiedPages) {
               mergedPdf.addPage(p);
             }
+            console.log(`[WA-Bot] 📑 Appended PDF item ${i + 1}/${files.length} (${copiedPages.length} pages): ${f.fileName}`);
           } catch (pdfErr) {
-            console.warn(`[WA-Bot] Could not append PDF item ${i + 1}:`, pdfErr.message);
+            console.warn(`[WA-Bot] ⚠️ Could not append PDF item ${i + 1}:`, pdfErr.message);
           }
-        } else if (f.isImg) {
+        } else if (isImg) {
           try {
             let embeddedImage;
             const isPng = f.buffer.length > 24 && f.buffer[0] === 0x89 && f.buffer[1] === 0x50;
@@ -1068,9 +1275,18 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
   session.orientation = isLandscapeDefault ? 'landscape' : 'portrait';
   session.timestamp = Date.now();
   session.imageBuffer = (!isMergedBatch && finalMimeType.startsWith('image/')) ? finalBuffer : null;
+  session.fileBuffer = finalBuffer;
   session.isMergedBatch = isMergedBatch;
   session.batchCount = files.length;
   session.uploadPromise = r2UploadPromise;
+
+  // Pre-generate preview image in background for instant 0ms preview response
+  generatePreviewImage({
+    inputBuffer: finalBuffer,
+    fileName: finalFileName,
+    colorMode: 'bw',
+    selectedPages: null,
+  }).catch(() => {});
 
   if (isMergedBatch) {
     await sock.sendMessage(senderJid, {
@@ -1091,6 +1307,30 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
 /**
  * Ingestion Debounce Processor: Appends buffered files to the user's print queue
  */
+
+async function downloadMediaWithRetry(msg, sock, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const buf = await downloadMediaMessage(
+        msg,
+        'buffer',
+        {},
+        {
+          logger: pino({ level: 'silent' }),
+          reuploadRequest: sock.updateMediaMessage,
+        }
+      );
+      if (buf && buf.length > 0) return buf;
+    } catch (err) {
+      console.warn('[WA-Bot] Media download attempt ' + attempt + '/' + maxAttempts + ' failed:', err.message);
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+  }
+  return null;
+}
+
 async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName }) {
   const entry = incomingFileBuffers.get(normalizedJid);
   if (!entry || entry.files.length === 0) return;
@@ -1099,8 +1339,12 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
 
   let session = userSessions.get(senderJid) || userSessions.get(normalizedJid);
 
-  // If session expired or completed, start a fresh session
-  if (!session || (isSessionExpired(session) && session.stage !== 'COMPLETED') || session.stage === 'COMPLETED') {
+  // Intentional addition window: 3 minutes (180,000ms)
+  // If user sends files within 3 minutes of previous files, add them to the batch!
+  const isRecentBatch = session && (Date.now() - (session.timestamp || 0) < 180000) && session.stage !== 'COMPLETED' && session.stage !== 'AWAITING_PAYMENT';
+  const shouldRetainQueue = isRecentBatch;
+
+  if (!session || !shouldRetainQueue || isSessionExpired(session) || session.stage === 'COMPLETED') {
     session = {
       stage: 'QUEUE_STAGING',
       senderJid,
@@ -1145,9 +1389,11 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
     let pages = 1;
     let isLandscape = false;
 
-    if (file.isPdf) {
+    const isPdfItem = file.isPdf || (file.buffer && file.buffer.length >= 4 && file.buffer.slice(0, 4).toString() === '%PDF') || (file.fileName && file.fileName.toLowerCase().endsWith('.pdf')) || (file.mimeType && file.mimeType.includes('pdf'));
+    if (isPdfItem) {
       try {
         const pdfDoc = await PDFDocument.load(file.buffer, { ignoreEncryption: true });
+        pdfDoc.isEncrypted = false;
         pages = pdfDoc.getPageCount();
         const firstPage = pdfDoc.getPages()[0];
         if (firstPage) {
@@ -1155,7 +1401,19 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
           isLandscape = width > height;
         }
       } catch (err) {
-        pages = 1;
+        console.warn(`[WA-Bot] pdf-lib load failed on ${file.fileName}, attempting secondary regex parse:`, err.message);
+        try {
+          const binStr = file.buffer.toString('binary');
+          const matches = binStr.match(/\/Type\s*\/Page(?!s)\b/g);
+          if (matches && matches.length > 0) {
+            pages = matches.length;
+            console.log(`[WA-Bot] Regex fallback parsed ${pages} pages for ${file.fileName}`);
+          } else {
+            pages = 1;
+          }
+        } catch (e2) {
+          pages = 1;
+        }
       }
     } else if (file.isImg) {
       pages = 1;
@@ -1171,20 +1429,26 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
       pages,
       isLandscape,
       sizeMb,
-      isPdf: file.isPdf,
+      isPdf: isPdfItem,
       isImg: file.isImg,
     });
 
     justAddedNames.push(file.fileName);
   }
 
-  session.stage = 'QUEUE_STAGING';
   session.timestamp = Date.now();
   session.senderName = senderName;
 
-  // Render the Queue Staging Card with options to add more files or continue
-  await sendQueueStagingCard({ sock, senderJid, session, justAddedFileNames: justAddedNames });
-  console.log(`[WA-Bot] Added ${justAddedNames.length} file(s) to queue for ${senderName}. Total queued: ${session.queuedFiles.length}`);
+  console.log(`[WA-Bot] Processed ${justAddedNames.length} file(s) for ${senderName}. Total queued in batch: ${session.queuedFiles.length}`);
+
+  if (session.queuedFiles.length === 1) {
+    // Single file: directly advance to Step 1 (Color Selection) immediately with zero extra clicks/wait!
+    await continueWithQueuedFiles({ sock, senderJid, session, senderName });
+  } else {
+    // Multi-file batch: show queue staging card so student can manage batch
+    session.stage = 'QUEUE_STAGING';
+    await sendQueueStagingCard({ sock, senderJid, session, justAddedFileNames: justAddedNames });
+  }
 }
 
 // ============================================================================
@@ -1194,10 +1458,17 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
 async function startBot() {
   const authDir = path.join(__dirname, 'session_auth');
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
-  const { version, isLatest } = await fetchLatestBaileysVersion();
+  let version = [2, 3000, 1015901307];
+  try {
+    const vData = await fetchLatestBaileysVersion();
+    if (vData && vData.version) version = vData.version;
+  } catch (vErr) {
+    console.warn(`[WA-Bot] Version check offline (${vErr.message}), using fallback.`);
+  }
 
-  console.log(`[WA-Bot] Using Baileys version ${version.join('.')} (isLatest: ${isLatest})`);
+  console.log(`[WA-Bot] Using Baileys version ${version.join('.')}`);
 
+  const botSentIds = new Set();
   const sock = makeWASocket({
     version,
     auth: state,
@@ -1206,10 +1477,26 @@ async function startBot() {
     browser: ['PrintKurox Kiosk', 'Chrome', '120.0.0'],
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
+    keepAliveIntervalMs: 20000,
+    defaultQueryTimeoutMs: 60000,
+    connectTimeoutMs: 60000,
     getMessage: async (key) => {
       return messageStore.get(key.id);
     },
   });
+
+  const origSendMessage = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (...args) => {
+    const result = await origSendMessage(...args);
+    if (result?.key?.id) {
+      botSentIds.add(result.key.id);
+      if (botSentIds.size > 2000) {
+        const first = botSentIds.values().next().value;
+        botSentIds.delete(first);
+      }
+    }
+    return result;
+  };
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -1293,8 +1580,21 @@ async function startBot() {
           buttonText = b.selectedDisplayText;
         }
 
-        // Ignore regular outgoing messages from ourselves unless it was a test
-        if (msg.key.fromMe) continue;
+        // Check if this message was sent by the bot itself
+        if (msg.key.id && botSentIds.has(msg.key.id)) continue;
+
+        const myJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+        const myLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null;
+        const isFromMe = msg.key.fromMe === true;
+
+        // Allow message if it's sent to self or testing in the bot's own chat
+        const isMessageToSelf = !isGroup && isFromMe && (
+          senderJid === myJid ||
+          senderJid === myLid ||
+          (myJid && senderJid.includes(myJid.split('@')[0]))
+        );
+
+        if (isFromMe && !isMessageToSelf) continue;
 
         // Acknowledge read receipt asynchronously to keep connection responsive
         sock.readMessages([msg.key]).catch(() => {});
@@ -1302,14 +1602,84 @@ async function startBot() {
         let session = userSessions.get(senderJid) || userSessions.get(normalizedJid);
         if (session) session.senderName = senderName;
 
+        const rawText =
+          msg.message?.conversation ||
+          msg.message?.extendedTextMessage?.text ||
+          buttonText ||
+          '';
+
+        // Student & Confidential Dossier Commands (@student, @find student, student, phone, dossier, buttons, Razorpay)
+        const isStudentExplicit =
+          buttonId?.startsWith('view_student_') ||
+          buttonId?.startsWith('unlock_') ||
+          buttonId?.startsWith('search_ex_') ||
+          buttonId?.startsWith('btn_pay_') ||
+          buttonId === 'btn_flow_student' ||
+          /^[@!#]?(student|phone|dossier|find\s+student|search\s+student)/i.test(rawText.trim()) ||
+          rawText.trim().toLowerCase() === 'student' ||
+          rawText.trim().toLowerCase() === 'directory';
+
+        const isStudentMenuChoice =
+          (!session || session.stage === 'COMPLETED') &&
+          (rawText.trim().toLowerCase() === '2');
+
+        const isUnlockOrPay =
+          rawText.trim().toLowerCase() === 'unlock' ||
+          rawText.trim().toLowerCase() === '3' ||
+          rawText.trim().toLowerCase() === '119';
+
+        const isStudentTrigger = isStudentExplicit || isStudentMenuChoice || isUnlockOrPay;
+
+        if (isStudentTrigger && (!session || session.stage === 'COMPLETED' || isStudentTrigger)) {
+          try {
+            const resolvedUserPhone = await resolveUserPhone(sock, senderJid);
+            const handled = await handleStudentMessage({
+              sock,
+              msg,
+              rawBody: rawText,
+              lowerBody: rawText.toLowerCase().trim(),
+              buttonId,
+              senderJid,
+              sendInteractiveButtons,
+              razorpay,
+              userPhone: resolvedUserPhone,
+            });
+            if (handled) return;
+          } catch (e) {
+            console.error('[Student Module] Error handling student query:', e);
+          }
+        }
+
         // ======================================================================
         // 1. INCOMING FILE (PDF / IMAGE / DOCUMENT)
         // ======================================================================
-        const documentMsg = msg.message.documentMessage;
-        const imageMsg = msg.message.imageMessage;
+        const documentMsg =
+          content?.documentMessage ||
+          content?.documentWithCaptionMessage?.message?.documentMessage ||
+          msg.message?.documentMessage ||
+          msg.message?.documentWithCaptionMessage?.message?.documentMessage;
+        const imageMsg =
+          content?.imageMessage ||
+          content?.viewOnceMessage?.message?.imageMessage ||
+          msg.message?.imageMessage;
 
         if (documentMsg || imageMsg) {
           console.log(`[WA-Bot] Media attachment received from ${senderName} (${senderJid})`);
+
+          // Register download in buffer immediately to avoid race conditions
+          if (!incomingFileBuffers.has(normalizedJid)) {
+            incomingFileBuffers.set(normalizedJid, {
+              files: [],
+              timer: null,
+              activeDownloads: 0,
+            });
+          }
+          const entry = incomingFileBuffers.get(normalizedJid);
+          entry.activeDownloads = (entry.activeDownloads || 0) + 1;
+          if (entry.timer) {
+            clearTimeout(entry.timer);
+            entry.timer = null;
+          }
 
           // Non-blocking reaction & typing indicator for zero-delay user feedback
           sock.sendMessage(senderJid, {
@@ -1317,21 +1687,45 @@ async function startBot() {
           }).catch(() => {});
           sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
 
-          let buffer = await downloadMediaMessage(
-            msg,
-            'buffer',
-            {},
-            {
-              logger: pino({ level: 'silent' }),
-              reuploadRequest: sock.updateMediaMessage,
-            }
-          );
+          // Zero-delay preparing acknowledgment message to provide immediate user feedback
+          const rawMime = (documentMsg?.mimetype || imageMsg?.mimetype || '').toLowerCase();
+          const rawDocName = documentMsg?.fileName || '';
+          const lowerDocName = rawDocName.toLowerCase();
+          const isPdfFile = lowerDocName.endsWith('.pdf') || rawMime.includes('pdf');
+          const isPhotoFile = !isPdfFile && (!!imageMsg || rawMime.startsWith('image/') || /\.(jpe?g|png|webp|heic|bmp|tiff)$/i.test(lowerDocName));
+          const isDocxFile = lowerDocName.endsWith('.docx') || lowerDocName.endsWith('.doc');
+
+          let prepNotice = '⏳ *Your document is preparing...*\nPlease wait a moment.';
+          if (isPdfFile) {
+            prepNotice = rawDocName
+              ? `⏳ *Your PDF is preparing...*\n📄 _${rawDocName}_\nPlease wait a moment.`
+              : `⏳ *Your PDF is preparing...*\nPlease wait a moment.`;
+          } else if (isPhotoFile) {
+            prepNotice = `⏳ *Your photo is preparing...*\nPlease wait a moment.`;
+          } else if (isDocxFile) {
+            prepNotice = rawDocName
+              ? `⏳ *Your Word document is preparing...*\n📄 _${rawDocName}_\nPlease wait a moment.`
+              : `⏳ *Your document is preparing...*\nPlease wait a moment.`;
+          }
+
+          sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch((err) => {
+            console.warn('[WA-Bot] Failed to send preparing notice:', err.message);
+          });
+
+          let buffer = null;
+          try {
+            buffer = await downloadMediaWithRetry(msg, sock, 3);
+          } catch (dlErr) {
+            console.warn('[WA-Bot] Media download error:', dlErr.message);
+          } finally {
+            entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
+          }
 
           if (!buffer || buffer.length === 0) {
             await sock.sendMessage(senderJid, {
               text: `⚠️ Sorry ${senderName}, failed to download your file. Please try resending.`,
             });
-            return;
+            continue;
           }
 
           let fileName =
@@ -1344,12 +1738,43 @@ async function startBot() {
           // Local Word (.docx / .doc) conversion
           if (fileName.toLowerCase().endsWith('.docx') || fileName.toLowerCase().endsWith('.doc')) {
             console.log(`[WA-Bot] Word document detected: ${fileName}. Checking local converter...`);
+            
+            // Notify user that server is converting their Word document
+            await sock.sendMessage(
+              senderJid,
+              {
+                text:
+                  `🔄 *Word Document (.docx) Detected*
+` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━
+` +
+                  `📄 Converting *"${fileName}"* into a print-ready vector PDF on the PrintKurox server...
+
+` +
+                  `⏳ _It will take a few seconds, converting..._`,
+              },
+              { quoted: msg }
+            ).catch(() => {});
+
             const convertedPdf = await convertDocxToPdf(buffer, fileName);
             if (convertedPdf) {
               buffer = convertedPdf;
               fileName = fileName.replace(/\.docx?$/i, '.pdf');
               mimeType = 'application/pdf';
               console.log(`[WA-Bot] Converted Word document locally: ${fileName}`);
+
+              await sock.sendMessage(
+                senderJid,
+                {
+                  text:
+                    `✅ *Document Converted Successfully!*
+` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━
+` +
+                    `📄 *${fileName}* is ready and added to your print queue! ✨`,
+                },
+                { quoted: msg }
+              ).catch(() => {});
             } else {
               await sock.sendMessage(
                 senderJid,
@@ -1365,45 +1790,87 @@ async function startBot() {
                 },
                 { quoted: msg }
               );
-              return;
+              continue;
             }
           }
 
-          // Ingestion Debounce Buffer: Collect all attachments in this batch
-          if (!incomingFileBuffers.has(normalizedJid)) {
-            incomingFileBuffers.set(normalizedJid, {
-              files: [],
-              timer: null,
-            });
-          }
-          const entry = incomingFileBuffers.get(normalizedJid);
+          const isPdfDetected = (buffer.length >= 4 && buffer.slice(0, 4).toString() === '%PDF') ||
+            fileName.toLowerCase().endsWith('.pdf') ||
+            mimeType.includes('pdf');
+          const isImgDetected = !isPdfDetected && (!!imageMsg || mimeType.startsWith('image/'));
+
           entry.files.push({
             buffer,
             fileName,
             mimeType,
-            isImg: !!imageMsg || mimeType.startsWith('image/'),
-            isPdf: fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf'),
+            isImg: isImgDetected,
+            isPdf: isPdfDetected,
           });
 
-          // Adaptive debounce: 600ms to allow multi-file burst packets to settle cleanly
-          const debounceDelay = 600;
+          // Fast debounce: 1000ms for swift response while safely capturing multi-file bursts
+          const debounceDelay = 1000;
 
-          if (entry.timer) clearTimeout(entry.timer);
-          entry.timer = setTimeout(async () => {
-            try {
-              await processBufferedFiles({ sock, senderJid, normalizedJid, senderName });
-            } catch (err) {
-              console.error('[WA-Bot] Error processing buffered files:', err);
-            }
-          }, debounceDelay);
+          const scheduleProcess = () => {
+            if (entry.timer) clearTimeout(entry.timer);
+            entry.timer = setTimeout(async () => {
+              if (entry.activeDownloads > 0) {
+                console.log(`[WA-Bot] ${entry.activeDownloads} download(s) still active for ${senderName}. Rescheduling buffer process...`);
+                scheduleProcess();
+                return;
+              }
+              try {
+                await processBufferedFiles({ sock, senderJid, normalizedJid, senderName });
+              } catch (err) {
+                console.error('[WA-Bot] Error processing buffered files:', err);
+              }
+            }, debounceDelay);
+          };
 
-          return;
+          scheduleProcess();
+          continue;
         }
 
         // ======================================================================
         // 2. BUTTON CLICKS PROCESSING
         // ======================================================================
         if (buttonId) {
+          if (buttonId === 'btn_flow_student') {
+            const resolvedUserPhone = await resolveUserPhone(sock, senderJid);
+            await handleStudentMessage({
+              sock,
+              msg,
+              rawBody: '',
+              lowerBody: '',
+              buttonId: 'btn_flow_student',
+              senderJid,
+              sendInteractiveButtons,
+              razorpay,
+              userPhone: resolvedUserPhone,
+            });
+            return;
+          }
+          if (buttonId === 'btn_flow_printing') {
+            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
+            const onboardingPrompt =
+              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
+              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
+              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)_\n` +
+              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)_\n` +
+              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
+              `📄 *Standard Rates (1–9 pages):*\n` +
+              `• B&W Single: ₹4/page\n` +
+              `• Color Single: ₹7/page\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
+              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
+              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `_Send your file now to start!_`;
+            await sock.sendMessage(senderJid, { text: onboardingPrompt });
+            return;
+          }
           // Session Expiration Guard
           if (session && isSessionExpired(session) && session.stage !== 'COMPLETED') {
             userSessions.delete(senderJid);
@@ -1437,8 +1904,8 @@ async function startBot() {
               body: `You currently have *${session.queuedFiles.length} file(s)* queued.\nSend more files now, or tap below to proceed:`,
               footer: 'PrintKurox AutoPrint',
               buttons: [
-                { id: 'btn_queue_continue', text: `➡️ Continue (${session.queuedFiles.length} ${session.queuedFiles.length === 1 ? 'File' : 'Files'})` },
-                { id: 'btn_queue_clear', text: '🗑️ Clear Queue' },
+                { id: 'btn_queue_continue', text: `✅ Continue (${session.queuedFiles.length} ${session.queuedFiles.length === 1 ? 'File' : 'Files'})` },
+                { id: 'btn_queue_clear', text: '❌ Cancel / Clear Queue' },
               ],
             });
             return;
@@ -1480,6 +1947,12 @@ async function startBot() {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
               return;
+            }
+
+            // AUTO-MERGE GUARD: If student has multiple files in queue and hasn't merged yet, merge now!
+            if (session.queuedFiles && session.queuedFiles.length > 1 && !session.isMergedBatch) {
+              console.log(`[WA-Bot] ⚡ Auto-merging ${session.queuedFiles.length} queued files upon color selection...`);
+              await continueWithQueuedFiles({ sock, senderJid, session, senderName });
             }
 
             session.colorMode = buttonId === 'btn_color' ? 'color' : 'bw';
@@ -1574,52 +2047,33 @@ async function startBot() {
 
           // --- BUTTON: VIEW PREVIEW ---
           if (buttonId === 'btn_view_preview') {
-            if (!session) {
-              await sendSessionExpiredMessage(sock, senderJid);
-              return;
-            }
-            const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
-            const orientLabel = session.orientation === 'landscape' ? 'Landscape (Wide)' : 'Portrait (Vertical)';
-            const colorLabel = session.colorMode === 'color' ? '🎨 Color' : '⚫ Black & White';
-
-            if (session.imageBuffer) {
-              await sock.sendMessage(senderJid, {
-                image: session.imageBuffer,
-                caption:
-                  `📄 *Print Preview:*\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `📐 *Orientation:* ${orientLabel} (Natural)\n` +
-                  `🖨️ *Print Mode:* ${colorLabel}\n` +
-                  `📑 *Pages:* ${session.pageRangeStr || 'All'}\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `_Tap "Pay via UPI" above to print!_`,
-              });
-            } else {
-              const previewUrl = `${PUBLIC_KIOSK_URL}/preview?key=${encodeURIComponent(session.fileKey)}&name=${encodeURIComponent(session.fileName)}&pages=${session.totalPages}&mode=${session.colorMode}`;
-              await sock.sendMessage(senderJid, {
-                text:
-                  `👁️ *Document Layout Preview:*\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `📄 *File:* ${session.fileName}\n` +
-                  `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
-                  `📐 *Orientation:* ${orientLabel} (Natural)\n` +
-                  `🖨️ *Print Mode:* ${colorLabel}\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `🔍 *Tap below to view full 2-column preview:*\n` +
-                  `${previewUrl}\n\n` +
-                  `_Tap "Pay via UPI" above to print!_`,
-              });
-            }
+            await sendDocumentVisualPreview({ sock, senderJid, senderName, session });
             return;
           }
 
-          // --- BUTTON: PROCEED TO PAYMENT (COMPATIBILITY) ---
-          if (buttonId === 'btn_proceed_payment') {
+          // --- BUTTON: PROCEED TO PAYMENT / PAY NOW ---
+          if (buttonId === 'btn_pay_now' || buttonId === 'btn_proceed_payment') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
               return;
             }
-            console.log(`[WA-Bot] ${senderName} tapped proceed to payment, re-dispatching 1-Tap UPI Card`);
+            if (session.paymentLinkUrl) {
+              await sock.sendMessage(senderJid, {
+                text:
+                  `💳 *PrintKurox Instant UPI Payment*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `📄 *File:* ${session.fileName}\n` +
+                  `💰 *Amount Due:* *₹${session.totalPrice || 1}*\n` +
+                  `📍 *Station:* ${session.station?.name || defaultStation.name}\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `👉 *Tap link to pay via GPay / PhonePe / Paytm / UPI:*\n` +
+                  `🔗 ${session.paymentLinkUrl}\n\n` +
+                  `🖨️ _Your document will print automatically once payment is received._\n` +
+                  `_Code: ${session.pickupCode || 'Active'}_`,
+              });
+              return;
+            }
+            console.log(`[WA-Bot] ${senderName} tapped pay now, re-dispatching 1-Tap UPI Card`);
             await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
             return;
           }
@@ -1718,7 +2172,7 @@ async function startBot() {
 
           // --- QUEUE ACTIONS: ADD MORE / CONTINUE / CLEAR / VIEW QUEUE ---
           if (session && (session.stage === 'QUEUE_STAGING' || session.stage === 'AWAITING_MORE_FILES')) {
-            if (clean === 'more' || clean === 'add' || clean === 'add more' || clean === 'upload' || clean === 'upload more' || clean === 'attach') {
+            if (clean === 'more' || clean === 'add' || clean === 'add more' || clean === 'add pdf' || clean === 'add more pdf' || clean === 'upload' || clean === 'upload more' || clean === 'attach') {
               session.stage = 'AWAITING_MORE_FILES';
               session.timestamp = Date.now();
               await sock.sendMessage(senderJid, {
@@ -1735,7 +2189,7 @@ async function startBot() {
               return;
             }
 
-            if (clean === 'clear' || clean === 'empty' || clean === 'delete') {
+            if (clean === 'clear' || clean === 'cancel' || clean === 'cancel queue' || clean === 'clear queue' || clean === 'empty' || clean === 'delete' || clean === 'stop') {
               if (session) {
                 session.queuedFiles = [];
                 userSessions.delete(senderJid);
@@ -1928,51 +2382,33 @@ async function startBot() {
           // --- TYPED FALLBACK: SUMMARY, PREVIEW & PAYMENT ---
           if (session && (session.stage === 'AWAITING_SUMMARY_CONFIRMATION' || session.stage === 'AWAITING_PAYMENT')) {
             if (clean.includes('preview') || clean.includes('view') || clean.includes('show')) {
-              const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
-              const orientLabel = session.orientation === 'landscape' ? 'Landscape (Wide)' : 'Portrait (Vertical)';
-              const colorLabel = session.colorMode === 'color' ? '🎨 Color' : '⚫ Black & White';
-
-              if (session.imageBuffer) {
-                await sock.sendMessage(senderJid, {
-                  image: session.imageBuffer,
-                  caption:
-                    `📄 *Print Preview:*\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `📐 *Orientation:* ${orientLabel} (Natural)\n` +
-                    `🖨️ *Print Mode:* ${colorLabel}\n` +
-                    `📑 *Pages:* ${session.pageRangeStr || 'All'}\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `_Tap "Pay via UPI" above to print!_`,
-                });
-              } else {
-                const previewUrl = `${PUBLIC_KIOSK_URL}/preview?key=${encodeURIComponent(session.fileKey)}&name=${encodeURIComponent(session.fileName)}&pages=${session.totalPages}&mode=${session.colorMode}`;
-                await sock.sendMessage(senderJid, {
-                  text:
-                    `👁️ *Document Layout Preview:*\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `📄 *File:* ${session.fileName}\n` +
-                    `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
-                    `📐 *Orientation:* ${orientLabel} (Natural)\n` +
-                    `🖨️ *Print Mode:* ${colorLabel}\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `🔍 *Tap below to view full 2-column preview:*\n` +
-                    `${previewUrl}\n\n` +
-                    `_Tap "Pay via UPI" above to print!_`,
-                });
-              }
+              await sendDocumentVisualPreview({ sock, senderJid, senderName, session });
               return;
             }
 
-            if (clean === 'proceed' || clean === 'pay' || clean === 'ok' || clean === 'yes' || clean === 'link' || clean === 'upi') {
+            if (
+              clean === 'proceed' ||
+              clean.includes('pay') ||
+              clean.includes('upi') ||
+              clean.includes('link') ||
+              clean.includes('qr') ||
+              clean === 'ok' ||
+              clean === 'yes' ||
+              clean === 'p'
+            ) {
               if (session.paymentLinkUrl) {
                 await sock.sendMessage(senderJid, {
                   text:
-                    `*PrintKurox AutoPrint*\n` +
+                    `💳 *PrintKurox AutoPrint Payment*\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                     `📄 *Document:* ${session.fileName}\n` +
-                    `💰 *Amount Due:* *₹${session.totalPrice || 0}*\n\n` +
-                    `🔗 *Direct 1-Tap UPI Link:*\n${session.paymentLinkUrl}\n\n` +
-                    `_Tap the link above to complete your UPI payment. Your document will print automatically._`,
+                    `💰 *Amount Due:* *₹${session.totalPrice || 0}*\n` +
+                    `📍 *Station:* ${session.station?.name || defaultStation.name}\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `👉 *Tap link to pay via UPI (GPay / PhonePe / Paytm):*\n` +
+                    `🔗 ${session.paymentLinkUrl}\n\n` +
+                    `_Your document will print automatically once payment is received._\n` +
+                    `_Code: ${session.pickupCode || 'Active'}_`,
                 });
                 return;
               }
@@ -2021,7 +2457,58 @@ async function startBot() {
           }
 
           // --- UNIVERSAL GREETING, ONBOARDING & FILE UPLOAD PROMPT ---
-          // Triggers on greetings, website link messages, 'print', or ANY text when no active session
+          // QR Code Scan: "Hi PrintKurox, I want to print a document"
+          const isQrPrintScan =
+            clean.includes('i want to print a document') ||
+            clean.includes('hi printkurox') ||
+            clean.includes('print a document');
+
+          if (isQrPrintScan || ((clean === '1' || clean === 'print' || clean === 'autoprint') && (!session || session.stage === 'COMPLETED'))) {
+            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
+            const onboardingPrompt =
+              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
+              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
+              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)\n` +
+              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)\n` +
+              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
+              `📄 *Standard Rates (1–9 pages):*\n` +
+              `• B&W Single: ₹4/page\n` +
+              `• Color Single: ₹7/page\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
+              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
+              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `_Send your file now to start!_`;
+
+            await sock.sendMessage(senderJid, { text: onboardingPrompt });
+            return;
+          }
+
+          // Pure Greeting: "hi", "hello", "hey" -> Disambiguation Buttons
+          const isPureGreeting = /^(hi|hello|hey|start|menu|options|help|yo|info|hlo|hii|helo)$/i.test(clean);
+
+          if (isPureGreeting) {
+            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '⚡ NERIST Campus Assistant',
+              body: `👋 Hi${displayName}! Please choose a service:`,
+              footer: 'PrintKurox AutoPrint',
+              buttons: [
+                { id: 'btn_flow_printing', text: '🖨️ Printing Service' },
+                { id: 'btn_flow_student', text: '🎓 Student Directory' },
+              ],
+            });
+            return;
+          }
+
+          if (false) {
+            
+
           const isGreetingOrPrintIntent =
             clean.includes('print') ||
             clean.includes('document') ||
@@ -2029,17 +2516,34 @@ async function startBot() {
             clean.includes('photo') ||
             clean.includes('file') ||
             clean.includes('xerox') ||
-            clean === 'hi' ||
-            clean === 'hello' ||
-            clean === 'hey' ||
-            clean === 'help' ||
-            clean === 'start' ||
             clean.includes('price') ||
             clean.includes('rate') ||
             clean.includes('offer') ||
             clean.includes('discount');
 
           if (!session || session.stage === 'COMPLETED' || isGreetingOrPrintIntent) {
+            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
+            const onboardingPrompt =
+              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
+              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
+              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)_\n` +
+              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)_\n` +
+              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
+              `📄 *Standard Rates (1–9 pages):*\n` +
+              `• B&W Single: ₹4/page\n` +
+              `• Color Single: ₹7/page\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
+              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
+              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `_Send your file now to start!_`;
+
+            await sock.sendMessage(senderJid, { text: onboardingPrompt });
+            return;
+          }
             const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
             const onboardingPrompt =
               `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
@@ -2085,4 +2589,12 @@ process.on('unhandledRejection', (reason) => {
   console.error('[WA-Bot UnhandledRejection]:', reason);
 });
 
-startBot();
+async function runWithAutoRestart() {
+  try {
+    await startBot();
+  } catch (err) {
+    console.error('[WA-Bot] Fatal startBot error:', err?.message || err, '. Retrying in 5s...');
+    setTimeout(runWithAutoRestart, 5000);
+  }
+}
+runWithAutoRestart();
