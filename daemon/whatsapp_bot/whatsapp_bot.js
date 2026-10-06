@@ -553,22 +553,19 @@ async function sendStep2PageButtons(sock, senderJid, session) {
  */
 async function sendStep3CopiesButtons(sock, senderJid, session) {
   const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
-  const isBulk = activePagesCount >= 10;
-  const bwRate = isBulk ? 3 : 4;
-  const colorRate = isBulk ? 5 : 7;
-  const modeRate = session.colorMode === 'color' ? colorRate : bwRate;
-  const modeLabel = session.colorMode === 'color'
-    ? `Color (₹${colorRate}/p${isBulk ? ' - Offer' : ''})`
-    : `Black & White (₹${bwRate}/p${isBulk ? ' - Offer' : ''})`;
+  const isDocBulk = activePagesCount >= 10;
+  const modeLabel = session.colorMode === 'color' ? '🎨 Color' : '⚫ Black & White';
   const pagesLabel = session.pageRangeStr || `All (${session.totalPages}p)`;
   const title = `*PrintKurox* · Number of Copies`;
   const body =
     `📄 *File:* ${session.fileName}\n` +
     `📑 *Pages:* ${pagesLabel}\n` +
     `🖨️ *Mode:* ${modeLabel}\n` +
-    (isBulk ? `🎉 *10+ Page Offer Active:* ₹${modeRate}/p applied (single page only)\n` : '') +
+    (isDocBulk
+      ? `🎉 *10+ Page Offer Active:* ₹${session.colorMode === 'color' ? 5 : 3}/p applied!\n`
+      : `💡 *Volume Offer:* 10+ total printed pages (Pages × Copies) unlock *₹3/p* (B&W) or *₹5/p* (Color)!\n`) +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `Select copies below, or reply with any number (e.g. *5*, *10*):`;
+    `Select copies below, or reply with any number (e.g. *2*, *3*, *5*):`;
 
   session.stage = 'AWAITING_COPIES';
 
@@ -597,13 +594,13 @@ async function sendStep3CopiesButtons(sock, senderJid, session) {
 async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName = 'Student', session }) {
   const activePagesCount = session.selectedPages ? session.selectedPages.length : session.totalPages;
   const currentStation = session.station || defaultStation;
-  const isBulk = activePagesCount >= 10;
+  const totalCopies = Math.max(1, parseInt(session.copies || 1, 10));
+  const totalPrintedPages = activePagesCount * totalCopies;
+  const isBulk = totalPrintedPages >= 10;
   const standardRate = session.colorMode === 'color' ? 7 : 4;
   const ratePerPage = session.colorMode === 'color' ? (isBulk ? 5 : 7) : (isBulk ? 3 : 4);
-  const totalCopies = session.copies || 1;
-  const subtotal = activePagesCount * ratePerPage;
-  const totalAmount = Math.max(1, subtotal * totalCopies);
-  const totalSavings = isBulk ? (standardRate - ratePerPage) * activePagesCount * totalCopies : 0;
+  const totalAmount = Math.max(1, totalPrintedPages * ratePerPage);
+  const totalSavings = isBulk ? (standardRate - ratePerPage) * totalPrintedPages : 0;
   session.totalPrice = totalAmount;
 
   // Natural orientation: follows uploaded file's geometry directly
@@ -757,13 +754,13 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
     `📄 *Document:* ${session.fileName}\n` +
     `🖨️ *Print Mode:* ${printTypeLabel} (₹${ratePerPage}/p${isBulk ? ' · Special Offer' : ''})\n` +
     `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
-    `🔢 *Copies:* ${totalCopies} ${totalCopies === 1 ? 'copy' : 'copies'}\n` +
+    `🔢 *Copies:* ${totalCopies} ${totalCopies === 1 ? 'copy' : 'copies'}${totalCopies > 1 ? ` (${totalPrintedPages} total pages printed)` : ''}\n` +
     `📐 *Orientation:* ${orientLabel} (Natural)\n` +
     `📍 *Release Station:* ${currentStation.name} (${currentStation.room})\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `💰 *Total Amount:* *₹${totalAmount}*` +
     (isBulk ? ` _(🎉 Saved ₹${totalSavings}!)_` : '') + `\n` +
-    (isBulk ? `⚡ _Applied ₹${ratePerPage}/p volume offer (10+ pages, single page only)_\n` : '') +
+    (isBulk ? `⚡ _Applied ₹${ratePerPage}/p volume offer (${totalPrintedPages} total pages printed)_\n` : '') +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     (paymentLinkUrl ? `👉 *1-TAP PAYMENT LINK (UPI / GPay / PhonePe):*\n🔗 ${paymentLinkUrl}\n\n` : '') +
     `_Tap link above or button below to pay. Prints automatically once paid!_\n` +
@@ -1091,15 +1088,16 @@ async function sendQueueStagingCard({ sock, senderJid, session, justAddedFileNam
   const totalSizeMb = session.queuedFiles.reduce((acc, f) => acc + parseFloat(f.sizeMb || 0), 0).toFixed(2);
   const currentStation = session.station || defaultStation;
 
-  // Build the list of files (up to 4 items displayed cleanly)
+  // Build the list of files (display all queued items cleanly up to 12)
   let fileListLines = '';
-  const displayFiles = session.queuedFiles.slice(0, 4);
+  const maxDisplay = 12;
+  const displayFiles = session.queuedFiles.slice(0, maxDisplay);
   displayFiles.forEach((f, idx) => {
     const pStr = f.pages === 1 ? '1 page' : `${f.pages} pages`;
-    fileListLines += `${idx + 1}. *${f.fileName.slice(0, 26)}* (${pStr}, ${f.sizeMb} MB)\n`;
+    fileListLines += `${idx + 1}. *${f.fileName.slice(0, 28)}* (${pStr}, ${f.sizeMb} MB)\n`;
   });
-  if (count > 4) {
-    fileListLines += `... and *${count - 4} more* document(s)\n`;
+  if (count > maxDisplay) {
+    fileListLines += `... and *${count - maxDisplay} more* document(s)\n`;
   }
 
   const addedNotice = justAddedFileNames.length > 0
@@ -1308,27 +1306,56 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
  * Ingestion Debounce Processor: Appends buffered files to the user's print queue
  */
 
+// Concurrency semaphore for WhatsApp media downloads to prevent CDN rate limits / timeouts
+let activeMediaDownloads = 0;
+const mediaDownloadQueue = [];
+
+function acquireMediaDownloadSlot() {
+  return new Promise((resolve) => {
+    if (activeMediaDownloads < 2) {
+      activeMediaDownloads++;
+      resolve();
+    } else {
+      mediaDownloadQueue.push(resolve);
+    }
+  });
+}
+
+function releaseMediaDownloadSlot() {
+  activeMediaDownloads = Math.max(0, activeMediaDownloads - 1);
+  if (mediaDownloadQueue.length > 0) {
+    const next = mediaDownloadQueue.shift();
+    activeMediaDownloads++;
+    next();
+  }
+}
+
 async function downloadMediaWithRetry(msg, sock, maxAttempts = 3) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const buf = await downloadMediaMessage(
-        msg,
-        'buffer',
-        {},
-        {
-          logger: pino({ level: 'silent' }),
-          reuploadRequest: sock.updateMediaMessage,
+  await acquireMediaDownloadSlot();
+  try {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const buf = await downloadMediaMessage(
+          msg,
+          'buffer',
+          {},
+          {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: sock.updateMediaMessage,
+          }
+        );
+        if (buf && buf.length > 0) return buf;
+      } catch (err) {
+        console.warn('[WA-Bot] Media download attempt ' + attempt + '/' + maxAttempts + ' failed:', err.message);
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 1200 * attempt));
         }
-      );
-      if (buf && buf.length > 0) return buf;
-    } catch (err) {
-      console.warn('[WA-Bot] Media download attempt ' + attempt + '/' + maxAttempts + ' failed:', err.message);
-      if (attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
     }
+    return null;
+  } finally {
+    releaseMediaDownloadSlot();
   }
-  return null;
 }
 
 async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName }) {
@@ -1708,9 +1735,12 @@ async function startBot() {
               : `⏳ *Your document is preparing...*\nPlease wait a moment.`;
           }
 
-          sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch((err) => {
-            console.warn('[WA-Bot] Failed to send preparing notice:', err.message);
-          });
+          if (!entry.hasNotified) {
+            entry.hasNotified = true;
+            sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch((err) => {
+              console.warn('[WA-Bot] Failed to send preparing notice:', err.message);
+            });
+          }
 
           let buffer = null;
           try {
@@ -1807,8 +1837,8 @@ async function startBot() {
             isPdf: isPdfDetected,
           });
 
-          // Fast debounce: 1000ms for swift response while safely capturing multi-file bursts
-          const debounceDelay = 1000;
+          // Robust batch debounce: 3000ms allows mobile WhatsApp to upload multi-PDF bursts safely
+          const debounceDelay = 3000;
 
           const scheduleProcess = () => {
             if (entry.timer) clearTimeout(entry.timer);
@@ -2456,14 +2486,36 @@ async function startBot() {
             }
           }
 
-          // --- UNIVERSAL GREETING, ONBOARDING & FILE UPLOAD PROMPT ---
-          // QR Code Scan: "Hi PrintKurox, I want to print a document"
-          const isQrPrintScan =
+          // --- UNIVERSAL GREETING & SERVICE SELECTION MENU ---
+          // Matches "Hi PrintKurox, I want to print", "hi", "hello", QR scans, etc.
+          const isPrintGreetingIntent =
             clean.includes('i want to print a document') ||
+            clean.includes('i want to print') ||
             clean.includes('hi printkurox') ||
-            clean.includes('print a document');
+            clean.includes('print a document') ||
+            clean.startsWith('hi print') ||
+            clean.startsWith('hello print');
 
-          if (isQrPrintScan || ((clean === '1' || clean === 'print' || clean === 'autoprint') && (!session || session.stage === 'COMPLETED'))) {
+          const isPureGreeting = /^(hi|hello|hey|start|menu|options|help|yo|info|hlo|hii|helo)$/i.test(clean);
+
+          if (isPrintGreetingIntent || isPureGreeting) {
+            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '⚡ NERIST Campus Assistant',
+              body: `👋 Hi${displayName}! Welcome to PrintKurox.\n\nPlease choose a service below:`,
+              footer: 'PrintKurox AutoPrint',
+              buttons: [
+                { id: 'btn_flow_printing', text: '🖨️ Printing Service' },
+                { id: 'btn_flow_student', text: '🎓 Student Directory' },
+              ],
+            });
+            return;
+          }
+
+          // Direct typed choice: "1", "print", "autoprint" -> Direct Printing Onboarding
+          if ((clean === '1' || clean === 'print' || clean === 'autoprint') && (!session || session.stage === 'COMPLETED')) {
             const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
             const onboardingPrompt =
               `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
@@ -2478,31 +2530,12 @@ async function startBot() {
               `• Color Single: ₹7/page\n\n` +
               `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
               `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
-              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
+              `📚 *Multiple Files?* Send them all to combine into a single print batch.\n\n` +
               `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
               `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
               `_Send your file now to start!_`;
 
             await sock.sendMessage(senderJid, { text: onboardingPrompt });
-            return;
-          }
-
-          // Pure Greeting: "hi", "hello", "hey" -> Disambiguation Buttons
-          const isPureGreeting = /^(hi|hello|hey|start|menu|options|help|yo|info|hlo|hii|helo)$/i.test(clean);
-
-          if (isPureGreeting) {
-            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
-            await sendInteractiveButtons({
-              sock,
-              jid: senderJid,
-              title: '⚡ NERIST Campus Assistant',
-              body: `👋 Hi${displayName}! Please choose a service:`,
-              footer: 'PrintKurox AutoPrint',
-              buttons: [
-                { id: 'btn_flow_printing', text: '🖨️ Printing Service' },
-                { id: 'btn_flow_student', text: '🎓 Student Directory' },
-              ],
-            });
             return;
           }
 
