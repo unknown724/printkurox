@@ -26,6 +26,7 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   downloadMediaMessage,
+  downloadContentFromMessage,
   fetchLatestBaileysVersion,
   jidNormalizedUser,
   getKeyAuthor,
@@ -1326,13 +1327,49 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
  * Ingestion Debounce Processor: Appends buffered files to the user's print queue
  */
 
-// Concurrency semaphore for WhatsApp media downloads to prevent CDN rate limits / timeouts
+/**
+ * Recursively penetrates any WhatsApp container wrappers (documentWithCaptionMessage,
+ * ephemeralMessage, viewOnceMessage, interactiveMessage, etc.) to extract raw media payload.
+ */
+function extractMediaFromMessage(rawMessage) {
+  if (!rawMessage) return null;
+  let target = rawMessage;
+  while (target) {
+    if (target.documentMessage) {
+      return {
+        mediaObj: target.documentMessage,
+        mediaType: 'document',
+        fileName: target.documentMessage.fileName || 'document.pdf',
+        mimeType: target.documentMessage.mimetype || 'application/pdf',
+      };
+    }
+    if (target.imageMessage) {
+      return {
+        mediaObj: target.imageMessage,
+        mediaType: 'image',
+        fileName: target.imageMessage.fileName || `photo_${Date.now().toString().slice(-4)}.jpg`,
+        mimeType: target.imageMessage.mimetype || 'image/jpeg',
+      };
+    }
+    if (target.documentWithCaptionMessage?.message) { target = target.documentWithCaptionMessage.message; continue; }
+    if (target.ephemeralMessage?.message) { target = target.ephemeralMessage.message; continue; }
+    if (target.viewOnceMessage?.message) { target = target.viewOnceMessage.message; continue; }
+    if (target.viewOnceMessageV2?.message) { target = target.viewOnceMessageV2.message; continue; }
+    if (target.interactiveMessage?.header) { target = target.interactiveMessage.header; continue; }
+    if (target.templateMessage?.hydratedTemplate) { target = target.templateMessage.hydratedTemplate; continue; }
+    if (target.message) { target = target.message; continue; }
+    break;
+  }
+  return null;
+}
+
+// Concurrency semaphore for WhatsApp media downloads (allows up to 4 concurrent downloads)
 let activeMediaDownloads = 0;
 const mediaDownloadQueue = [];
 
 function acquireMediaDownloadSlot() {
   return new Promise((resolve) => {
-    if (activeMediaDownloads < 2) {
+    if (activeMediaDownloads < 4) {
       activeMediaDownloads++;
       resolve();
     } else {
@@ -1350,13 +1387,42 @@ function releaseMediaDownloadSlot() {
   }
 }
 
-async function downloadMediaWithRetry(msg, sock, maxAttempts = 3) {
+/**
+ * Downloads media directly using Baileys downloadContentFromMessage protocol stream.
+ * Bypasses container bugs (documentWithCaptionMessage) and uses per-file AbortSignal timeout.
+ */
+async function downloadMediaWithRetry(mediaObj, mediaType, rawMsg, sock, maxAttempts = 3) {
   await acquireMediaDownloadSlot();
   try {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // 1. Primary: Direct protocol stream extraction via downloadContentFromMessage
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        const stream = await downloadContentFromMessage(mediaObj, mediaType, {
+          options: { signal: controller.signal },
+        });
+        const chunks = [];
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
+        clearTimeout(timeoutId);
+        const buf = Buffer.concat(chunks);
+        if (buf && buf.length > 0) return buf;
+      } catch (streamErr) {
+        console.warn(`[WA-Bot] Direct stream attempt ${attempt}/${maxAttempts} (${mediaType}): ${streamErr.message}`);
+      }
+
+      // 2. Secondary fallback: High-level downloadMediaMessage with normalized unwrapped structure
+      try {
+        const normalizedMsg = {
+          key: rawMsg.key,
+          message: {
+            [mediaType === 'document' ? 'documentMessage' : 'imageMessage']: mediaObj,
+          },
+        };
         const buf = await downloadMediaMessage(
-          msg,
+          normalizedMsg,
           'buffer',
           {},
           {
@@ -1365,11 +1431,12 @@ async function downloadMediaWithRetry(msg, sock, maxAttempts = 3) {
           }
         );
         if (buf && buf.length > 0) return buf;
-      } catch (err) {
-        console.warn('[WA-Bot] Media download attempt ' + attempt + '/' + maxAttempts + ' failed:', err.message);
-        if (attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 1200 * attempt));
-        }
+      } catch (highLevelErr) {
+        console.warn(`[WA-Bot] High-level download attempt ${attempt}/${maxAttempts}: ${highLevelErr.message}`);
+      }
+
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
     }
     return null;
@@ -1693,20 +1760,16 @@ async function startBot() {
         }
 
         // ======================================================================
-        // 1. INCOMING FILE (PDF / IMAGE / DOCUMENT)
+        // 1. INCOMING FILE (PDF / IMAGE / DOCUMENT) - UNWRAPPED & RESILIENT
         // ======================================================================
-        const documentMsg =
-          content?.documentMessage ||
-          content?.documentWithCaptionMessage?.message?.documentMessage ||
-          msg.message?.documentMessage ||
-          msg.message?.documentWithCaptionMessage?.message?.documentMessage;
-        const imageMsg =
-          content?.imageMessage ||
-          content?.viewOnceMessage?.message?.imageMessage ||
-          msg.message?.imageMessage;
+        const extracted = extractMediaFromMessage(content) || extractMediaFromMessage(msg.message);
 
-        if (documentMsg || imageMsg) {
-          console.log(`[WA-Bot] Media attachment received from ${senderName} (${senderJid})`);
+        if (extracted) {
+          const { mediaObj, mediaType } = extracted;
+          let fileName = extracted.fileName;
+          let mimeType = extracted.mimeType;
+
+          console.log(`[WA-Bot] Media attachment received from ${senderName} (${senderJid}): "${fileName}" (${mediaType})`);
 
           // Register download in buffer immediately to avoid race conditions
           if (!incomingFileBuffers.has(normalizedJid)) {
@@ -1723,43 +1786,37 @@ async function startBot() {
             entry.timer = null;
           }
 
-          // Non-blocking reaction & typing indicator for zero-delay user feedback
+          // Instant emoji reaction & typing indicator for per-file feedback
           sock.sendMessage(senderJid, {
             react: { text: '⏳', key: msg.key },
           }).catch(() => {});
           sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
 
-          // Zero-delay preparing acknowledgment message to provide immediate user feedback
-          const rawMime = (documentMsg?.mimetype || imageMsg?.mimetype || '').toLowerCase();
-          const rawDocName = documentMsg?.fileName || '';
-          const lowerDocName = rawDocName.toLowerCase();
+          const lowerDocName = fileName.toLowerCase();
+          const rawMime = mimeType.toLowerCase();
           const isPdfFile = lowerDocName.endsWith('.pdf') || rawMime.includes('pdf');
-          const isPhotoFile = !isPdfFile && (!!imageMsg || rawMime.startsWith('image/') || /\.(jpe?g|png|webp|heic|bmp|tiff)$/i.test(lowerDocName));
+          const isPhotoFile = !isPdfFile && (mediaType === 'image' || rawMime.startsWith('image/'));
           const isDocxFile = lowerDocName.endsWith('.docx') || lowerDocName.endsWith('.doc');
 
-          let prepNotice = '⏳ *Your document is preparing...*\nPlease wait a moment.';
+          let prepNotice = '⏳ *Receiving your files...*\nPlease wait a moment.';
           if (isPdfFile) {
-            prepNotice = rawDocName
-              ? `⏳ *Your PDF is preparing...*\n📄 _${rawDocName}_\nPlease wait a moment.`
+            prepNotice = fileName
+              ? `⏳ *Your PDF is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`
               : `⏳ *Your PDF is preparing...*\nPlease wait a moment.`;
           } else if (isPhotoFile) {
             prepNotice = `⏳ *Your photo is preparing...*\nPlease wait a moment.`;
           } else if (isDocxFile) {
-            prepNotice = rawDocName
-              ? `⏳ *Your Word document is preparing...*\n📄 _${rawDocName}_\nPlease wait a moment.`
-              : `⏳ *Your document is preparing...*\nPlease wait a moment.`;
+            prepNotice = `⏳ *Your Word document is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`;
           }
 
           if (!entry.hasNotified) {
             entry.hasNotified = true;
-            sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch((err) => {
-              console.warn('[WA-Bot] Failed to send preparing notice:', err.message);
-            });
+            sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch(() => {});
           }
 
           let buffer = null;
           try {
-            buffer = await downloadMediaWithRetry(msg, sock, 3);
+            buffer = await downloadMediaWithRetry(mediaObj, mediaType, msg, sock, 3);
           } catch (dlErr) {
             console.warn('[WA-Bot] Media download error:', dlErr.message);
           } finally {
@@ -1767,18 +1824,17 @@ async function startBot() {
           }
 
           if (!buffer || buffer.length === 0) {
+            console.error(`[WA-Bot] ❌ Failed to download attachment "${fileName}" from ${senderName}`);
             await sock.sendMessage(senderJid, {
-              text: `⚠️ Sorry ${senderName}, failed to download your file. Please try resending.`,
+              text: `⚠️ Sorry ${senderName}, failed to download "${fileName}". Please try resending.`,
             });
             continue;
           }
 
-          let fileName =
-            documentMsg?.fileName ||
-            (imageMsg ? `photo_${Date.now().toString().slice(-4)}.jpg` : 'document.pdf');
-          let mimeType =
-            documentMsg?.mimetype ||
-            (imageMsg ? 'image/jpeg' : 'application/pdf');
+          // Update message bubble reaction to checkmark on successful download
+          sock.sendMessage(senderJid, {
+            react: { text: '📄', key: msg.key },
+          }).catch(() => {});
 
           // Local Word (.docx / .doc) conversion
           if (fileName.toLowerCase().endsWith('.docx') || fileName.toLowerCase().endsWith('.doc')) {
@@ -1853,7 +1909,7 @@ async function startBot() {
           });
 
           // Robust batch debounce: 3000ms allows mobile WhatsApp to upload multi-PDF bursts safely
-          const debounceDelay = 3000;
+          const debounceDelay = 4500; // 4.5s allows multi-file bursts to settle completely
 
           const scheduleProcess = () => {
             if (entry.timer) clearTimeout(entry.timer);
