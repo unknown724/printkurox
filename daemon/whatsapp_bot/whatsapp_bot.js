@@ -1329,36 +1329,53 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
 
 /**
  * Recursively penetrates any WhatsApp container wrappers (documentWithCaptionMessage,
- * ephemeralMessage, viewOnceMessage, interactiveMessage, etc.) to extract raw media payload.
+ * ephemeralMessage, viewOnceMessage, interactiveMessage, etc.) using BFS queue traversal
+ * to extract raw media payload without dropping nested attachments.
  */
 function extractMediaFromMessage(rawMessage) {
   if (!rawMessage) return null;
-  let target = rawMessage;
-  while (target) {
-    if (target.documentMessage) {
+  const queue = [rawMessage];
+  const visited = new Set();
+
+  while (queue.length > 0) {
+    const curr = queue.shift();
+    if (!curr || typeof curr !== 'object' || visited.has(curr)) continue;
+    visited.add(curr);
+
+    if (curr.documentMessage) {
       return {
-        mediaObj: target.documentMessage,
+        mediaObj: curr.documentMessage,
         mediaType: 'document',
-        fileName: target.documentMessage.fileName || 'document.pdf',
-        mimeType: target.documentMessage.mimetype || 'application/pdf',
+        fileName: curr.documentMessage.fileName || 'document.pdf',
+        mimeType: curr.documentMessage.mimetype || 'application/pdf',
       };
     }
-    if (target.imageMessage) {
+    if (curr.imageMessage) {
       return {
-        mediaObj: target.imageMessage,
+        mediaObj: curr.imageMessage,
         mediaType: 'image',
-        fileName: target.imageMessage.fileName || `photo_${Date.now().toString().slice(-4)}.jpg`,
-        mimeType: target.imageMessage.mimetype || 'image/jpeg',
+        fileName: curr.imageMessage.fileName || `photo_${Date.now().toString().slice(-4)}.jpg`,
+        mimeType: curr.imageMessage.mimetype || 'image/jpeg',
       };
     }
-    if (target.documentWithCaptionMessage?.message) { target = target.documentWithCaptionMessage.message; continue; }
-    if (target.ephemeralMessage?.message) { target = target.ephemeralMessage.message; continue; }
-    if (target.viewOnceMessage?.message) { target = target.viewOnceMessage.message; continue; }
-    if (target.viewOnceMessageV2?.message) { target = target.viewOnceMessageV2.message; continue; }
-    if (target.interactiveMessage?.header) { target = target.interactiveMessage.header; continue; }
-    if (target.templateMessage?.hydratedTemplate) { target = target.templateMessage.hydratedTemplate; continue; }
-    if (target.message) { target = target.message; continue; }
-    break;
+
+    if (curr.message) queue.push(curr.message);
+    if (curr.documentWithCaptionMessage) queue.push(curr.documentWithCaptionMessage);
+    if (curr.ephemeralMessage) queue.push(curr.ephemeralMessage);
+    if (curr.viewOnceMessage) queue.push(curr.viewOnceMessage);
+    if (curr.viewOnceMessageV2) queue.push(curr.viewOnceMessageV2);
+    if (curr.viewOnceMessageV2Extension) queue.push(curr.viewOnceMessageV2Extension);
+    if (curr.interactiveMessage) queue.push(curr.interactiveMessage);
+    if (curr.header) queue.push(curr.header);
+    if (curr.templateMessage) queue.push(curr.templateMessage);
+    if (curr.hydratedTemplate) queue.push(curr.hydratedTemplate);
+    if (curr.deviceSentMessage) queue.push(curr.deviceSentMessage);
+
+    for (const key of Object.keys(curr)) {
+      if (curr[key] && typeof curr[key] === 'object' && !visited.has(curr[key]) && key !== 'contextInfo' && key !== 'clientFilters' && key !== 'key') {
+        queue.push(curr[key]);
+      }
+    }
   }
   return null;
 }
@@ -1399,16 +1416,19 @@ async function downloadMediaWithRetry(mediaObj, mediaType, rawMsg, sock, maxAtte
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 25000);
-        const stream = await downloadContentFromMessage(mediaObj, mediaType, {
-          options: { signal: controller.signal },
-        });
-        const chunks = [];
-        for await (const chunk of stream) {
-          chunks.push(chunk);
+        try {
+          const stream = await downloadContentFromMessage(mediaObj, mediaType, {
+            options: { signal: controller.signal },
+          });
+          const chunks = [];
+          for await (const chunk of stream) {
+            chunks.push(chunk);
+          }
+          const buf = Buffer.concat(chunks);
+          if (buf && buf.length > 0) return buf;
+        } finally {
+          clearTimeout(timeoutId);
         }
-        clearTimeout(timeoutId);
-        const buf = Buffer.concat(chunks);
-        if (buf && buf.length > 0) return buf;
       } catch (streamErr) {
         console.warn(`[WA-Bot] Direct stream attempt ${attempt}/${maxAttempts} (${mediaType}): ${streamErr.message}`);
       }
@@ -1416,7 +1436,7 @@ async function downloadMediaWithRetry(mediaObj, mediaType, rawMsg, sock, maxAtte
       // 2. Secondary fallback: High-level downloadMediaMessage with normalized unwrapped structure
       try {
         const normalizedMsg = {
-          key: rawMsg.key,
+          key: rawMsg?.key,
           message: {
             [mediaType === 'document' ? 'documentMessage' : 'imageMessage']: mediaObj,
           },
@@ -1427,7 +1447,7 @@ async function downloadMediaWithRetry(mediaObj, mediaType, rawMsg, sock, maxAtte
           {},
           {
             logger: pino({ level: 'silent' }),
-            reuploadRequest: sock.updateMediaMessage,
+            reuploadRequest: sock?.updateMediaMessage,
           }
         );
         if (buf && buf.length > 0) return buf;
@@ -1814,6 +1834,24 @@ async function startBot() {
             sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch(() => {});
           }
 
+          // Robust batch debounce: 4500ms allows multi-file bursts to settle completely
+          const debounceDelay = 4500;
+          const scheduleProcess = () => {
+            if (entry.timer) clearTimeout(entry.timer);
+            entry.timer = setTimeout(async () => {
+              if (entry.activeDownloads > 0) {
+                console.log(`[WA-Bot] ${entry.activeDownloads} download(s) still active for ${senderName}. Rescheduling buffer process...`);
+                scheduleProcess();
+                return;
+              }
+              try {
+                await processBufferedFiles({ sock, senderJid, normalizedJid, senderName });
+              } catch (err) {
+                console.error('[WA-Bot] Error processing buffered files:', err);
+              }
+            }, debounceDelay);
+          };
+
           let buffer = null;
           try {
             buffer = await downloadMediaWithRetry(mediaObj, mediaType, msg, sock, 3);
@@ -1827,7 +1865,10 @@ async function startBot() {
             console.error(`[WA-Bot] ❌ Failed to download attachment "${fileName}" from ${senderName}`);
             await sock.sendMessage(senderJid, {
               text: `⚠️ Sorry ${senderName}, failed to download "${fileName}". Please try resending.`,
-            });
+            }).catch(() => {});
+            if (entry.files.length > 0) {
+              scheduleProcess();
+            }
             continue;
           }
 
@@ -1845,13 +1886,9 @@ async function startBot() {
               senderJid,
               {
                 text:
-                  `🔄 *Word Document (.docx) Detected*
-` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━
-` +
-                  `📄 Converting *"${fileName}"* into a print-ready vector PDF on the PrintKurox server...
-
-` +
+                  `🔄 *Word Document (.docx) Detected*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `📄 Converting *"${fileName}"* into a print-ready vector PDF on the PrintKurox server...\n\n` +
                   `⏳ _It will take a few seconds, converting..._`,
               },
               { quoted: msg }
@@ -1868,10 +1905,8 @@ async function startBot() {
                 senderJid,
                 {
                   text:
-                    `✅ *Document Converted Successfully!*
-` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━
-` +
+                    `✅ *Document Converted Successfully!*\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                     `📄 *${fileName}* is ready and added to your print queue! ✨`,
                 },
                 { quoted: msg }
@@ -1890,7 +1925,10 @@ async function startBot() {
                     `_Forward your PDF once saved to print instantly!_`,
                 },
                 { quoted: msg }
-              );
+              ).catch(() => {});
+              if (entry.files.length > 0) {
+                scheduleProcess();
+              }
               continue;
             }
           }
@@ -1898,7 +1936,7 @@ async function startBot() {
           const isPdfDetected = (buffer.length >= 4 && buffer.slice(0, 4).toString() === '%PDF') ||
             fileName.toLowerCase().endsWith('.pdf') ||
             mimeType.includes('pdf');
-          const isImgDetected = !isPdfDetected && (!!imageMsg || mimeType.startsWith('image/'));
+          const isImgDetected = !isPdfDetected && (mediaType === 'image' || mimeType.startsWith('image/'));
 
           entry.files.push({
             buffer,
@@ -1907,25 +1945,6 @@ async function startBot() {
             isImg: isImgDetected,
             isPdf: isPdfDetected,
           });
-
-          // Robust batch debounce: 3000ms allows mobile WhatsApp to upload multi-PDF bursts safely
-          const debounceDelay = 4500; // 4.5s allows multi-file bursts to settle completely
-
-          const scheduleProcess = () => {
-            if (entry.timer) clearTimeout(entry.timer);
-            entry.timer = setTimeout(async () => {
-              if (entry.activeDownloads > 0) {
-                console.log(`[WA-Bot] ${entry.activeDownloads} download(s) still active for ${senderName}. Rescheduling buffer process...`);
-                scheduleProcess();
-                return;
-              }
-              try {
-                await processBufferedFiles({ sock, senderJid, normalizedJid, senderName });
-              } catch (err) {
-                console.error('[WA-Bot] Error processing buffered files:', err);
-              }
-            }, debounceDelay);
-          };
 
           scheduleProcess();
           continue;
