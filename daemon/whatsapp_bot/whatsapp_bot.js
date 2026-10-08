@@ -965,24 +965,34 @@ function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode,
 
         fetch('http://127.0.0.1:7250/poll-now', { signal: AbortSignal.timeout(300) }).catch(() => {});
 
-        const confirmMsg =
-          `*PrintKurox* · Payment Confirmed\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `✅ Payment Verified (₹${session.totalPrice || 0} via UPI)\n\n` +
+        const confirmBody =
+          `✅ *Payment Verified* (₹${session.totalPrice || 0} via UPI)\n\n` +
           `🔑 *PICKUP CODE:*\n` +
           `👉  *【 ${pickupCode} 】*\n\n` +
           `📄 *Document:* ${fileName}\n` +
           `📍 *Location:* ${currentStation.name} (${currentStation.room})\n` +
-          `⚡ *Status:* Queued for immediate print\n` +
+          `⚡ *Status:* Queued for immediate automated print\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
           `*Pickup Steps:*\n` +
           `1. Walk to the kiosk terminal at ${currentStation.room}.\n` +
-          `2. Enter code *${pickupCode}* on the screen.\n` +
+          `2. Enter code *${pickupCode}* on the touch screen.\n` +
           `3. Your pages will print automatically.\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `💡 *Did you know?*\n` +
+          `You can look up classmate phone numbers, roll numbers, and branch records directly on this bot!\n\n` +
           `_Need help? Call operator: +91 ${STATION_CONTACT}_`;
 
-        await sock.sendMessage(senderJid, { text: confirmMsg });
+        await sendInteractiveButtons({
+          sock,
+          jid: senderJid,
+          title: 'PrintKurox · Payment Confirmed',
+          body: confirmBody,
+          footer: 'PrintKurox & NERIST Student Directory',
+          buttons: [
+            { id: 'btn_flow_student', text: '🎓 Search Student Directory' },
+            { id: 'btn_flow_printing', text: '🖨️ Print Another Document' },
+          ],
+        });
         console.log(`[WA-Bot] Payment detected for ${jobId} (${pickupCode}), confirmed to ${senderJid}`);
       }
     } catch (pollErr) {}
@@ -1030,9 +1040,7 @@ async function handleCashOrder({ sock, senderJid, session }) {
 
   fetch('http://127.0.0.1:7250/poll-now', { signal: AbortSignal.timeout(300) }).catch(() => {});
 
-  const cashReceiptMsg =
-    `*PrintKurox* · Cash Order Registered\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+  const cashBody =
     `🔑 *PICKUP CODE:*\n` +
     `👉  *【 ${session.pickupCode} 】*\n\n` +
     `📄 *Document:* ${session.fileName}\n` +
@@ -1045,9 +1053,20 @@ async function handleCashOrder({ sock, senderJid, session }) {
     `2. Pay *₹${session.totalPrice}* cash and quote code *${session.pickupCode}*.\n` +
     `3. Your document will print instantly.\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `_This code remains valid for 30 minutes._`;
+    `💡 *Did you know?*\n` +
+    `You can look up classmate phone numbers, roll numbers, and branch records directly on this bot!`;
 
-  await sock.sendMessage(senderJid, { text: cashReceiptMsg });
+  await sendInteractiveButtons({
+    sock,
+    jid: senderJid,
+    title: 'PrintKurox · Cash Order Registered',
+    body: cashBody,
+    footer: 'PrintKurox & NERIST Student Directory',
+    buttons: [
+      { id: 'btn_flow_student', text: '🎓 Search Student Directory' },
+      { id: 'btn_flow_printing', text: '🖨️ Print Another Document' },
+    ],
+  });
   console.log(`[WA-Bot] Cash order confirmed for ${session.pickupCode} (${senderJid})`);
 }
 
@@ -1117,12 +1136,13 @@ async function sendQueueStagingCard({ sock, senderJid, session, justAddedFileNam
       : `💡 *Tip:* Add ${10 - totalPages} more page(s) to unlock B&W ₹3/p & Color ₹5/p!\n`) +
     `📍 *Station:* ${currentStation.name} (${currentStation.room})\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `*Would you like to add more files or proceed to print?*`;
+    `*Ready to print, or do you have more files to add?*\n` +
+    `_Reply *proceed* to continue, *add* for more files, or *cancel* to quit._`;
 
   const buttons = [
-    { id: 'btn_queue_add_more', text: '➕ Add More PDF / Files' },
-    { id: 'btn_queue_continue', text: `✅ Continue (${count} ${count === 1 ? 'File' : 'Files'})` },
-    { id: 'btn_queue_clear', text: '❌ Cancel / Clear Queue' },
+    { id: 'btn_queue_continue', text: `✅ Proceed to Print (${count} ${count === 1 ? 'File' : 'Files'})` },
+    { id: 'btn_queue_add_more', text: '➕ Add More Files' },
+    { id: 'btn_queue_clear', text: '❌ Cancel Print' },
   ];
 
   await sendInteractiveButtons({
@@ -1468,14 +1488,9 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
 
   console.log(`[WA-Bot] Processed ${justAddedNames.length} file(s) for ${senderName}. Total queued in batch: ${session.queuedFiles.length}`);
 
-  if (session.queuedFiles.length === 1) {
-    // Single file: directly advance to Step 1 (Color Selection) immediately with zero extra clicks/wait!
-    await continueWithQueuedFiles({ sock, senderJid, session, senderName });
-  } else {
-    // Multi-file batch: show queue staging card so student can manage batch
-    session.stage = 'QUEUE_STAGING';
-    await sendQueueStagingCard({ sock, senderJid, session, justAddedFileNames: justAddedNames });
-  }
+  // Always show Queue Staging Card (Proceed vs Add More vs Cancel) for 100% control & multi-doc bursts
+  session.stage = 'QUEUE_STAGING';
+  await sendQueueStagingCard({ sock, senderJid, session, justAddedFileNames: justAddedNames });
 }
 
 // ============================================================================
@@ -1919,23 +1934,15 @@ async function startBot() {
             }
             session.stage = 'AWAITING_MORE_FILES';
             session.timestamp = Date.now();
-            await sock.sendMessage(senderJid, {
-              text:
-                `📎 *Ready for Your Next File!*\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Forward or send another PDF, Word doc, or photo here.\n` +
-                `It will be added to your print queue (*${session.queuedFiles.length}* files currently).\n\n` +
-                `_Tap below whenever you are done!_`,
-            });
             await sendInteractiveButtons({
               sock,
               jid: senderJid,
-              title: '*PrintKurox* · Current Queue',
-              body: `You currently have *${session.queuedFiles.length} file(s)* queued.\nSend more files now, or tap below to proceed:`,
+              title: 'PrintKurox · Waiting for Files',
+              body: `📥 *Send your additional documents or photos now!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nCurrently queued: *${session.queuedFiles.length} file(s)*.\n\nSend more files here, or tap below when you are ready:`,
               footer: 'PrintKurox AutoPrint',
               buttons: [
-                { id: 'btn_queue_continue', text: `✅ Continue (${session.queuedFiles.length} ${session.queuedFiles.length === 1 ? 'File' : 'Files'})` },
-                { id: 'btn_queue_clear', text: '❌ Cancel / Clear Queue' },
+                { id: 'btn_queue_continue', text: `✅ Proceed to Print (${session.queuedFiles.length} ${session.queuedFiles.length === 1 ? 'File' : 'Files'})` },
+                { id: 'btn_queue_clear', text: '❌ Cancel Print' },
               ],
             });
             return;
@@ -2219,7 +2226,7 @@ async function startBot() {
               return;
             }
 
-            if (clean === 'clear' || clean === 'cancel' || clean === 'cancel queue' || clean === 'clear queue' || clean === 'empty' || clean === 'delete' || clean === 'stop') {
+            if (clean === 'clear' || clean === 'cancel' || clean === 'cancel queue' || clean === 'clear queue' || clean === 'empty' || clean === 'delete' || clean === 'stop' || clean === 'quit' || clean === 'exit') {
               if (session) {
                 session.queuedFiles = [];
                 userSessions.delete(senderJid);

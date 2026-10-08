@@ -88,9 +88,42 @@ function saveQuotas(quotas) {
     }, 1000);
 }
 
+// IST Timezone Helpers for Daily Quota Reset
+function getTodayIstDate() {
+    const now = new Date();
+    const istMs = now.getTime() + (5.5 * 60 * 60 * 1000);
+    return new Date(istMs).toISOString().slice(0, 10);
+}
+
+function getDailyQuotaResetInfo() {
+    const now = new Date();
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const nowIst = new Date(now.getTime() + istOffsetMs);
+
+    const nextResetIst = new Date(nowIst);
+    nextResetIst.setUTCDate(nextResetIst.getUTCDate() + 1);
+    nextResetIst.setUTCHours(0, 0, 0, 0);
+
+    const resetTimestamp = nextResetIst.getTime() - istOffsetMs;
+    const diffMs = Math.max(0, resetTimestamp - now.getTime());
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    const countdownStr = hours > 0
+        ? `${hours} hr${hours > 1 ? 's' : ''} ${mins} min${mins !== 1 ? 's' : ''}`
+        : `${mins} min${mins !== 1 ? 's' : ''}`;
+
+    return {
+        hours,
+        mins,
+        resetTimeStr: '12:00 AM midnight tonight',
+        countdownStr
+    };
+}
+
 function getUserQuota(userPhone) {
     const quotas = loadQuotas();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getTodayIstDate();
     const key = (userPhone || '').slice(-10);
 
     if (!quotas[key]) {
@@ -112,7 +145,7 @@ function getUserQuota(userPhone) {
 
 function updateUserQuota(userPhone, updater) {
     const quotas = loadQuotas();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getTodayIstDate();
     const key = (userPhone || '').slice(-10);
     if (!quotas[key]) {
         quotas[key] = {
@@ -615,12 +648,14 @@ async function sendPaywallOptions({ sock, senderJid, targetRoll, targetName, use
             `_Access unlocks automatically upon payment!_`;
     }
 
+    const resetInfo = getDailyQuotaResetInfo();
     const paywallText =
         `🔒 *CONFIDENTIAL DOSSIER LOCKED*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `👤 *Student:* ${targetName || 'NERIST Student'} (${targetRoll})\n\n` +
-        `You have used your 3 free credits for today.\n` +
-        `Unlock full confidential records, contact details, and official photo:\n\n` +
+        `⚠️ *Daily Free Limit Reached (3/3 used today)*\n` +
+        `⏳ Your 3 free credits will renew at *12:00 AM midnight tonight* (in ${resetInfo.countdownStr}).\n\n` +
+        `Unlock immediately without waiting:\n\n` +
         `💳 *1. Single Dossier Unlock — ₹3*\n` +
         `• Full confidential profile for ${targetName}\n` +
         `• Official photo\n` +
