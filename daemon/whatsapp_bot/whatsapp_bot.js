@@ -397,24 +397,15 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
   let targetJid = jid;
   if (jid.endsWith('@lid')) {
     const lidNum = jid.split('@')[0];
-    if (lidMappingCache.has(lidNum)) {
-      targetJid = lidMappingCache.get(lidNum);
-    } else {
+    const resolvedPhone = resolveLidToPhone(lidNum);
+    if (resolvedPhone) {
+      targetJid = `91${resolvedPhone}@s.whatsapp.net`;
+    } else if (sock?.signalRepository?.lidMapping?.getPNForLID) {
       try {
-        const authDir = path.join(__dirname, 'session_auth');
-        const revPath = path.join(authDir, `lid-mapping-${lidNum}_reverse.json`);
-        if (fs.existsSync(revPath)) {
-          const pn = JSON.parse(fs.readFileSync(revPath, 'utf8'));
-          if (pn) {
-            targetJid = `${pn}@s.whatsapp.net`;
-            lidMappingCache.set(lidNum, targetJid);
-          }
-        } else if (sock?.signalRepository?.lidMapping?.getPNForLID) {
-          const pn = await sock.signalRepository.lidMapping.getPNForLID(jid);
-          if (pn) {
-            targetJid = `${pn}@s.whatsapp.net`;
-            lidMappingCache.set(lidNum, targetJid);
-          }
+        const pn = await sock.signalRepository.lidMapping.getPNForLID(jid);
+        if (pn) {
+          const digits = String(pn).split('@')[0].replace(/[^0-9]/g, '').slice(-10);
+          if (/^[6-9]\d{9}$/.test(digits)) targetJid = `91${digits}@s.whatsapp.net`;
         }
       } catch (e) {}
     }
@@ -671,7 +662,7 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
   const cutoffMs = Date.now() - (hours * 60 * 60 * 1000);
   const foundMap = new Map();
 
-  // 1. Check user_activity_log.json
+  // 1. Check user_activity_log.json (direct 1-on-1 private messages logged live)
   const activityLog = loadUserActivityLog();
   for (const [phone, item] of Object.entries(activityLog)) {
     const activeTime = new Date(item.lastActive || 0).getTime();
@@ -690,7 +681,7 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
     }
   }
 
-  // 2. Check session_auth directory for recent direct PN sessions and LIDs
+  // 2. Check session_auth directory, strictly filtering out group-only activity
   try {
     const authDir = path.join(__dirname, 'session_auth');
     if (fs.existsSync(authDir)) {
@@ -701,6 +692,22 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
           const mtime = fs.statSync(filePath).mtimeMs;
           if (mtime >= cutoffMs) {
             const rawId = file.replace(/^session-/, '').split('.')[0];
+            const baseId = rawId.split(/[_:]/)[0];
+
+            // CRITICAL GROUP-FILTER: Check if this session was created/updated purely by a group message!
+            // In Baileys, when a group participant sends a message to @g.us, both sender-key-<group>--<lid>--0.json
+            // and session-<lid>.0.json are updated within milliseconds of each other.
+            // If sender-key file exists and its timestamp matches session mtime (within 3 seconds),
+            // it was triggered by a GROUP message, NOT a 1-on-1 personal message to this bot!
+            const skFiles = files.filter(sk => sk.startsWith('sender-key-') && sk.includes(`--${baseId}--`));
+            if (skFiles.length > 0) {
+              const maxSkTime = Math.max(...skFiles.map(sk => fs.statSync(path.join(authDir, sk)).mtimeMs));
+              if (Math.abs(mtime - maxSkTime) < 3000) {
+                // Group activity only! Exclude from personal message audience.
+                continue;
+              }
+            }
+
             let cleanPhone = null;
 
             if (rawId.startsWith('91') && rawId.length === 12) {
@@ -712,8 +719,7 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
               cleanPhone = resolveLidToPhone(rawId);
               if (!cleanPhone && sock?.signalRepository?.lidMapping?.getPNForLID) {
                 try {
-                  const baseLid = String(rawId).split(/[_:]/)[0];
-                  const pn = await sock.signalRepository.lidMapping.getPNForLID(`${baseLid}@lid`);
+                  const pn = await sock.signalRepository.lidMapping.getPNForLID(`${baseId}@lid`);
                   if (pn) {
                     const digits = pn.split('@')[0].replace(/[^0-9]/g, '').slice(-10);
                     if (/^[6-9]\d{9}$/.test(digits)) cleanPhone = digits;
@@ -777,7 +783,7 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
     (count > 0
       ? `📋 *Campaign Audience Review* · ${campaign.timeframeLabel}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `Found *${count}* active student contact(s) from the past ${campaign.timeframeLabel}:\n\n` +
+        `Found *${count}* active student contact(s) who personally messaged this bot in the past ${campaign.timeframeLabel}:\n\n` +
         `${listStr}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📊 *Total Audience:* *${count}* recipient(s)\n\n` +
@@ -789,15 +795,22 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `_Reply with numbers directly (e.g. \`@send 9863013886, ...\`) or use \`@send 7d\` to expand the search timeframe._`);
 
+  // Target standard phone JID (@s.whatsapp.net) for guaranteed button rendering
+  let buttonTargetJid = adminJid;
+  if (adminJid.endsWith('@lid')) {
+    const p = resolveLidToPhone(adminJid.split('@')[0]);
+    if (p) buttonTargetJid = `91${p}@s.whatsapp.net`;
+  }
+
   // 1. ALWAYS send standard text FIRST to guarantee 0ms instant display without "Waiting for this message" delays
-  await sock.sendMessage(adminJid, { text: cardText });
+  await sock.sendMessage(buttonTargetJid, { text: cardText });
 
   // 2. ALWAYS dispatch interactive (disambiguous) buttons so the admin can click them directly!
   if (count > 0) {
     try {
       await sendInteractiveButtons({
         sock,
-        jid: adminJid,
+        jid: buttonTargetJid,
         title,
         body: `Select an action below for this audience (${count} recipients):`,
         footer: 'PrintKurox Campaign Manager · Admin',
