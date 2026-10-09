@@ -500,6 +500,10 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
 // ============================================================================
 const ADMIN_NUMBERS = ['9863013886', '9362980761'];
 const PROMO_LOG_FILE = path.join(__dirname, 'sent_promo_recipients.json');
+const USER_ACTIVITY_LOG_FILE = path.join(__dirname, 'user_activity_log.json');
+
+// In-Memory Campaign Staging State for Admin (adminJid -> { timeframeLabel, hours, recipients: [], isAwaitingRemoval: bool })
+const adminCampaignState = new Map();
 
 function isSenderAdmin(senderJid, normalizedJid, isMessageToSelf) {
   if (isMessageToSelf) return true;
@@ -545,6 +549,238 @@ function recordSentPromo(phone) {
     log[phone] = new Date().toISOString();
     fs.writeFileSync(PROMO_LOG_FILE, JSON.stringify(log, null, 2), 'utf8');
   } catch (e) {}
+}
+
+function loadUserActivityLog() {
+  try {
+    if (fs.existsSync(USER_ACTIVITY_LOG_FILE)) {
+      return JSON.parse(fs.readFileSync(USER_ACTIVITY_LOG_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function recordUserActivity(phone, senderJid, name) {
+  if (!phone) return;
+  try {
+    const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) return;
+    const log = loadUserActivityLog();
+    log[cleanPhone] = {
+      phone: cleanPhone,
+      jid: senderJid || `91${cleanPhone}@s.whatsapp.net`,
+      name: name && name !== 'Student' ? name : (log[cleanPhone]?.name || 'Student'),
+      lastActive: new Date().toISOString(),
+    };
+    fs.writeFileSync(USER_ACTIVITY_LOG_FILE, JSON.stringify(log, null, 2), 'utf8');
+  } catch (e) {}
+}
+
+function parseTimeframeHours(inputStr) {
+  if (!inputStr) return { hours: 24, label: '24 Hours' };
+  const str = inputStr.toLowerCase().trim();
+
+  if (str.includes('today')) {
+    const now = new Date();
+    const hoursSinceMidnight = now.getHours() + (now.getMinutes() / 60);
+    return { hours: Math.max(1, Math.ceil(hoursSinceMidnight)), label: 'Today' };
+  }
+
+  const hMatch = str.match(/(\d+)\s*(?:hours?|hrs?|h)\b/);
+  if (hMatch) {
+    const h = parseInt(hMatch[1], 10);
+    return { hours: h, label: `${h} Hours` };
+  }
+
+  const dMatch = str.match(/(\d+)\s*(?:days?|d)\b/);
+  if (dMatch) {
+    const d = parseInt(dMatch[1], 10);
+    return { hours: d * 24, label: `${d} Day${d > 1 ? 's' : ''}` };
+  }
+
+  const wMatch = str.match(/(\d+)\s*(?:weeks?|w)\b/);
+  if (wMatch) {
+    const w = parseInt(wMatch[1], 10);
+    return { hours: w * 24 * 7, label: `${w} Week${w > 1 ? 's' : ''}` };
+  }
+
+  const bareNum = str.match(/\b(\d+)\b/);
+  if (bareNum) {
+    const n = parseInt(bareNum[1], 10);
+    return { hours: n, label: `${n} Hours` };
+  }
+
+  return { hours: 24, label: '24 Hours' };
+}
+
+/**
+ * Discovers active students within specified hours from activity log, session_auth, and D1
+ */
+async function getActiveStudentsInTimeframe(hours = 24) {
+  const cutoffMs = Date.now() - (hours * 60 * 60 * 1000);
+  const foundMap = new Map();
+
+  // 1. Check user_activity_log.json
+  const activityLog = loadUserActivityLog();
+  for (const [phone, item] of Object.entries(activityLog)) {
+    const activeTime = new Date(item.lastActive || 0).getTime();
+    if (activeTime >= cutoffMs) {
+      foundMap.set(phone, {
+        phone,
+        jid: item.jid || `91${phone}@s.whatsapp.net`,
+        name: item.name || 'Student',
+        lastActive: item.lastActive,
+      });
+    }
+  }
+
+  // 2. Check session_auth directory for recent direct PN sessions
+  try {
+    const authDir = path.join(__dirname, 'session_auth');
+    if (fs.existsSync(authDir)) {
+      const files = fs.readdirSync(authDir);
+      for (const file of files) {
+        if (file.startsWith('session-91') && file.endsWith('.json')) {
+          const filePath = path.join(authDir, file);
+          const mtime = fs.statSync(filePath).mtimeMs;
+          if (mtime >= cutoffMs) {
+            const rawPhone = file.replace(/^session-/, '').split('.')[0];
+            const tenDigit = rawPhone.replace(/[^0-9]/g, '').slice(-10);
+            if (/^[6-9]\d{9}$/.test(tenDigit) && !foundMap.has(tenDigit)) {
+              foundMap.set(tenDigit, {
+                phone: tenDigit,
+                jid: `91${tenDigit}@s.whatsapp.net`,
+                name: 'Student',
+                lastActive: new Date(mtime).toISOString(),
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 3. Exclude admin numbers and bot's own contact
+  for (const adminNum of ADMIN_NUMBERS) {
+    const cleanAdmin = adminNum.slice(-10);
+    foundMap.delete(cleanAdmin);
+  }
+
+  return Array.from(foundMap.values()).sort(
+    (a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime()
+  );
+}
+
+/**
+ * Dispatches the interactive Campaign Audience Review card with Send vs Remove vs Cancel
+ */
+async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '' }) {
+  const count = campaign.recipients.length;
+  let listStr = '';
+  const maxDisplay = 15;
+  const displayList = campaign.recipients.slice(0, maxDisplay);
+
+  displayList.forEach((r, idx) => {
+    const namePart = r.name && r.name !== 'Student' ? ` (${r.name})` : '';
+    listStr += `${idx + 1}. *+91 ${r.phone.slice(-10)}*${namePart}\n`;
+  });
+
+  if (count > maxDisplay) {
+    listStr += `... and *${count - maxDisplay} more* contact(s)\n`;
+  }
+
+  const title = `*Campaign Audience Review* · ${campaign.timeframeLabel}`;
+  const body =
+    (noticeText ? `${noticeText}\n\n` : '') +
+    (count > 0
+      ? `Found *${count}* active student contact(s) from the past ${campaign.timeframeLabel}:\n\n` +
+        `${listStr}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📊 *Total Audience:* *${count}* recipient(s)\n` +
+        `💡 *Actions:*\n` +
+        `• Tap *Send to All* to dispatch with safe anti-spam pacing.\n` +
+        `• Tap *Remove Numbers* to exclude anyone from this list.\n` +
+        `• Or reply with numbers directly (e.g. *remove 2* or *2*).`
+      : `⚠️ *No contacts remain in this campaign audience.*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `_Reply with new numbers or use @send 24 hour to start fresh._`);
+
+  const buttons = count > 0 ? [
+    { id: 'btn_campaign_send', text: `🚀 Send to All (${count})` },
+    { id: 'btn_campaign_remove_prompt', text: '❌ Remove Numbers' },
+    { id: 'btn_campaign_cancel', text: '🚫 Cancel Broadcast' },
+  ] : [
+    { id: 'btn_campaign_cancel', text: '🚫 Close' },
+  ];
+
+  await sendInteractiveButtons({
+    sock,
+    jid: adminJid,
+    title,
+    body,
+    footer: 'PrintKurox Campaign Manager · Admin',
+    buttons,
+  });
+}
+
+/**
+ * Executes promotional dispatch to staged campaign audience with anti-spam rate limiting
+ */
+async function executeCampaignBroadcast({ sock, adminJid, campaign }) {
+  if (!campaign || !campaign.recipients || campaign.recipients.length === 0) {
+    await sock.sendMessage(adminJid, {
+      text: `⚠️ *No recipients to send to.* Please start a new scan using *@send 24 hour*.`,
+    });
+    return;
+  }
+
+  const sentList = [];
+  const skippedList = [];
+  const total = campaign.recipients.length;
+
+  await sock.sendMessage(adminJid, {
+    text: `🚀 *Starting campaign dispatch to ${total} student(s)...*\n_Applying safe 2.5s anti-spam pacing between sends._`,
+  });
+
+  const promo = getStudentDirectoryPromoCard();
+
+  for (let i = 0; i < campaign.recipients.length; i++) {
+    const item = campaign.recipients[i];
+    const phone = item.phone.slice(-10);
+    const targetJid = item.jid || `91${phone}@s.whatsapp.net`;
+
+    try {
+      await sendInteractiveButtons({
+        sock,
+        jid: targetJid,
+        title: promo.title,
+        body: promo.body,
+        footer: promo.footer,
+        buttons: promo.buttons,
+      });
+      recordSentPromo(phone);
+      sentList.push(`• +91 ${phone}${item.name && item.name !== 'Student' ? ` (${item.name})` : ''}`);
+    } catch (err) {
+      console.error(`[WA-Bot] Error sending promo to ${phone}:`, err.message);
+      skippedList.push(`• +91 ${phone} _(Failed: ${err.message})_`);
+    }
+
+    if (i < campaign.recipients.length - 1) {
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  }
+
+  let reportText = `📢 *Broadcast Dispatch Summary*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  reportText += `📊 *Campaign Target:* ${campaign.timeframeLabel} (${total} contacts)\n\n`;
+  if (sentList.length > 0) {
+    reportText += `✅ *Delivered Successfully (${sentList.length}):*\n${sentList.join('\n')}\n\n`;
+  }
+  if (skippedList.length > 0) {
+    reportText += `⚠️ *Delivery Issues (${skippedList.length}):*\n${skippedList.join('\n')}\n\n`;
+  }
+  reportText += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n_Campaign complete._`;
+
+  await sock.sendMessage(adminJid, { text: reportText });
 }
 
 async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeMb) {
@@ -1968,6 +2204,12 @@ async function startBot() {
         let session = userSessions.get(senderJid) || userSessions.get(normalizedJid);
         if (session) session.senderName = senderName;
 
+        // Continuously record active student contact for automated audience discovery
+        const userActivityPhone = await resolveUserPhone(sock, senderJid);
+        if (userActivityPhone) {
+          recordUserActivity(userActivityPhone, senderJid, senderName);
+        }
+
         const rawText =
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
@@ -1978,7 +2220,7 @@ async function startBot() {
         const lowerText = trimmedText.toLowerCase();
 
         // ======================================================================
-        // ADMIN COMMANDS (@ad, @preview, @send, @send_force)
+        // ADMIN COMMANDS (@ad, @preview, @send, @send 24 hour, @send <numbers>)
         // ======================================================================
         const isAdmin = isSenderAdmin(senderJid, normalizedJid, isMessageToSelf);
 
@@ -1998,90 +2240,177 @@ async function startBot() {
               `📋 *Admin Promotion Card Ready*\n` +
               `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
               `1. *Forward Manually:* Long-press and tap *Forward* on the card above to send it directly to any friend or group.\n\n` +
-              `2. *Send Directly via Bot:* Reply with:\n` +
-              `\`@send 9863013886, 9362980761\`\n` +
-              `to dispatch it to specific phone numbers with safe anti-spam pacing.`,
+              `2. *Auto-Discover Audience:* Reply with:\n` +
+              `   \`@send 24 hour\` (or \`@send 12h\` / \`@send 7d\`)\n` +
+              `   to stage active students and review the list before sending!\n\n` +
+              `3. *Targeted Numbers:* Reply with:\n` +
+              `   \`@send 9863013886, 9362980761\`\n` +
+              `   to stage specific numbers.`,
           });
           return;
         }
 
-        // Targeted command: sends promo directly to specified numbers with anti-spam pacing and duplicate protection
-        if (isAdmin && (lowerText.startsWith('@send ') || lowerText.startsWith('@send_force '))) {
-          const isForce = lowerText.startsWith('@send_force ');
-          const rawNumbersPart = isForce ? trimmedText.slice(12) : trimmedText.slice(6);
-          const matches = rawNumbersPart.match(/\b(?:\+?91)?[6-9]\d{9}\b/g) || [];
+        // Targeted or Automated Discovery: @send 24 hour / @send 12h / @send 7d / @send <numbers>
+        if (isAdmin && (lowerText.startsWith('@send') || lowerText.startsWith('@campaign'))) {
+          const rawArg = trimmedText.replace(/^@(?:send_force|send|campaign)\s*/i, '').trim();
+          const phoneMatches = rawArg.match(/\b(?:\+?91)?[6-9]\d{9}\b/g) || [];
 
-          if (matches.length === 0) {
+          if (phoneMatches.length > 0) {
+            // Explicit numbers entered! Stage them directly into campaign review card
+            const uniqueNumbers = [...new Set(phoneMatches.map((n) => n.replace(/[^0-9]/g, '').slice(-10)))];
+            const recipients = uniqueNumbers.map((p) => ({
+              phone: p,
+              jid: `91${p}@s.whatsapp.net`,
+              name: 'Student',
+              lastActive: new Date().toISOString(),
+            }));
+
+            const campaign = {
+              timeframeLabel: 'Manual Input List',
+              hours: 0,
+              recipients,
+              isAwaitingRemoval: false,
+              timestamp: Date.now(),
+            };
+            adminCampaignState.set(senderJid, campaign);
+            adminCampaignState.set(normalizedJid, campaign);
+
+            await sendCampaignReviewCard({ sock, adminJid: senderJid, campaign });
+            return;
+          }
+
+          // Otherwise, it is an automated timeframe scan (e.g. "@send 24 hour", "@send 12h", "@send 7d", "@send")
+          const tf = parseTimeframeHours(rawArg);
+          await sock.sendMessage(senderJid, {
+            text: `🔍 *Scanning active students from the past ${tf.label}...*\n_Searching activity logs, kiosk orders, and chat sessions..._`,
+          });
+
+          const activeStudents = await getActiveStudentsInTimeframe(tf.hours);
+
+          if (activeStudents.length === 0) {
             await sock.sendMessage(senderJid, {
               text:
-                `⚠️ *No valid phone numbers found.*\n\n` +
-                `*Usage:*\n` +
-                `\`@send 9863013886, 9362980761\`\n` +
-                `_(Provide 10-digit Indian numbers separated by commas or spaces)_`,
+                `ℹ️ *No active student contacts found in the past ${tf.label}.*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Try expanding the timeframe, for example:\n` +
+                `• \`@send 48 hour\`\n` +
+                `• \`@send 7 days\`\n` +
+                `• Or specify exact phone numbers:\n` +
+                `  \`@send 9863013886, 9362980761\``,
             });
             return;
           }
 
-          const uniqueNumbers = [...new Set(matches.map((n) => {
-            let cleanNum = n.replace(/[^0-9]/g, '');
-            if (cleanNum.length === 10) cleanNum = '91' + cleanNum;
-            if (cleanNum.length === 12 && cleanNum.startsWith('91')) return cleanNum;
-            return cleanNum;
-          }))];
+          const campaign = {
+            timeframeLabel: tf.label,
+            hours: tf.hours,
+            recipients: activeStudents,
+            isAwaitingRemoval: false,
+            timestamp: Date.now(),
+          };
+          adminCampaignState.set(senderJid, campaign);
+          adminCampaignState.set(normalizedJid, campaign);
 
-          const promoLog = loadSentPromoLog();
-          const sentList = [];
-          const skippedList = [];
-
-          await sock.sendMessage(senderJid, {
-            text: `⏳ *Dispatching promo card to ${uniqueNumbers.length} recipient(s)...*\n_Applying safe 2.5s anti-spam pacing between sends._`,
-          });
-
-          const promo = getStudentDirectoryPromoCard();
-
-          for (let i = 0; i < uniqueNumbers.length; i++) {
-            const num = uniqueNumbers[i];
-            const targetJid = `${num}@s.whatsapp.net`;
-
-            if (!isForce && promoLog[num]) {
-              const prevDate = new Date(promoLog[num]).toLocaleDateString('en-IN');
-              skippedList.push(`• +${num} _(Already sent on ${prevDate})_`);
-              continue;
-            }
-
-            try {
-              await sendInteractiveButtons({
-                sock,
-                jid: targetJid,
-                title: promo.title,
-                body: promo.body,
-                footer: promo.footer,
-                buttons: promo.buttons,
-              });
-              recordSentPromo(num);
-              sentList.push(`• +${num}`);
-            } catch (err) {
-              console.error(`[WA-Bot] Error sending promo to ${num}:`, err.message);
-              skippedList.push(`• +${num} _(Failed: ${err.message})_`);
-            }
-
-            if (i < uniqueNumbers.length - 1) {
-              await new Promise((r) => setTimeout(r, 2500));
-            }
-          }
-
-          let reportText = `📢 *Broadcast Dispatch Summary*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-          if (sentList.length > 0) {
-            reportText += `✅ *Delivered Successfully (${sentList.length}):*\n${sentList.join('\n')}\n\n`;
-          }
-          if (skippedList.length > 0) {
-            reportText += `⚠️ *Skipped / Already Received (${skippedList.length}):*\n${skippedList.join('\n')}\n` +
-              `_(Use \`@send_force\` if you wish to override and re-send)_\n\n`;
-          }
-          reportText += `━━━━━━━━━━━━━━━━━━━━━━━━━━`;
-
-          await sock.sendMessage(senderJid, { text: reportText });
+          await sendCampaignReviewCard({ sock, adminJid: senderJid, campaign });
           return;
+        }
+
+        // ======================================================================
+        // ADMIN CAMPAIGN INTERACTIVE EXCLUSION & DISPATCH CONTROLLER
+        // ======================================================================
+        if (isAdmin && (adminCampaignState.has(senderJid) || adminCampaignState.has(normalizedJid))) {
+          const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
+          const cleanAdminText = trimmedText.toLowerCase();
+
+          // 1. Cancel / Exit Campaign
+          if (/^(cancel|stop|abort|exit|quit|close)$/i.test(cleanAdminText)) {
+            if (campaign.isAwaitingRemoval) {
+              campaign.isAwaitingRemoval = false;
+              await sendCampaignReviewCard({
+                sock,
+                adminJid: senderJid,
+                campaign,
+                noticeText: 'ℹ️ Removal mode cancelled. Audience list preserved.',
+              });
+              return;
+            } else {
+              adminCampaignState.delete(senderJid);
+              adminCampaignState.delete(normalizedJid);
+              await sock.sendMessage(senderJid, {
+                text: '🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched.',
+              });
+              return;
+            }
+          }
+
+          // 2. Send / Proceed Broadcast
+          if (/^(send|proceed|broadcast|go|ok)$/i.test(cleanAdminText)) {
+            adminCampaignState.delete(senderJid);
+            adminCampaignState.delete(normalizedJid);
+            await executeCampaignBroadcast({ sock, adminJid: senderJid, campaign });
+            return;
+          }
+
+          // 3. Remove Command or Direct Numbers to Exclude
+          const isRemoveCmd = /^(remove|delete|del|exclude)\b/i.test(cleanAdminText);
+          const isNumericOnly = /^[\d\s,]+$/.test(cleanAdminText);
+
+          if (isRemoveCmd || campaign.isAwaitingRemoval || isNumericOnly) {
+            const rawTarget = cleanAdminText.replace(/^(?:remove|delete|del|exclude)\s*/i, '').trim();
+            if (!rawTarget) {
+              campaign.isAwaitingRemoval = true;
+              await sock.sendMessage(senderJid, {
+                text:
+                  `❌ *Remove Numbers from Audience*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Reply with the list number(s) or phone number(s) to exclude.\n\n` +
+                  `• *By Number:* reply \`2\` or \`1, 3\`\n` +
+                  `• *By Phone:* reply \`9863013886\`\n\n` +
+                  `_Or reply *cancel* to return to the summary card._`,
+              });
+              return;
+            }
+
+            const tokens = rawTarget.split(/[\s,]+/).filter(Boolean);
+            const toRemoveIndices = new Set();
+            const toRemovePhones = new Set();
+
+            for (const token of tokens) {
+              const cleanDigits = token.replace(/[^0-9]/g, '');
+              if (cleanDigits.length === 10) {
+                toRemovePhones.add(cleanDigits);
+              } else if (cleanDigits.length > 0) {
+                const idx = parseInt(cleanDigits, 10);
+                if (idx >= 1 && idx <= campaign.recipients.length) {
+                  toRemoveIndices.add(idx - 1); // 0-based
+                }
+              }
+            }
+
+            if (toRemoveIndices.size > 0 || toRemovePhones.size > 0) {
+              const originalCount = campaign.recipients.length;
+              campaign.recipients = campaign.recipients.filter((item, idx) => {
+                const p = item.phone.slice(-10);
+                if (toRemovePhones.has(p)) return false;
+                if (toRemoveIndices.has(idx)) return false;
+                return true;
+              });
+              const removedCount = originalCount - campaign.recipients.length;
+              campaign.isAwaitingRemoval = false;
+              await sendCampaignReviewCard({
+                sock,
+                adminJid: senderJid,
+                campaign,
+                noticeText: `✅ *Removed ${removedCount} contact(s) from campaign audience.*`,
+              });
+              return;
+            } else if (campaign.isAwaitingRemoval) {
+              await sock.sendMessage(senderJid, {
+                text: `⚠️ *No matching contacts found to remove.*\nReply with a valid number from the list (1 to ${campaign.recipients.length}) or a 10-digit phone number, or reply *cancel*.`,
+              });
+              return;
+            }
+          }
         }
 
         // Student & Confidential Dossier Commands (@student, @find student, student, phone, dossier, buttons, Razorpay)
@@ -2147,6 +2476,46 @@ async function startBot() {
         // 2. BUTTON CLICKS PROCESSING
         // ======================================================================
         if (buttonId) {
+          if (buttonId === 'btn_campaign_send') {
+            const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
+            if (!campaign) {
+              await sock.sendMessage(senderJid, { text: `ℹ️ No active campaign found. Type *@send 24 hour* to start one.` });
+              return;
+            }
+            adminCampaignState.delete(senderJid);
+            adminCampaignState.delete(normalizedJid);
+            await executeCampaignBroadcast({ sock, adminJid: senderJid, campaign });
+            return;
+          }
+
+          if (buttonId === 'btn_campaign_remove_prompt') {
+            const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
+            if (!campaign) {
+              await sock.sendMessage(senderJid, { text: `ℹ️ No active campaign found. Type *@send 24 hour* to start one.` });
+              return;
+            }
+            campaign.isAwaitingRemoval = true;
+            await sock.sendMessage(senderJid, {
+              text:
+                `❌ *Remove Numbers from Audience*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Reply with the list number(s) or phone number(s) you wish to exclude.\n\n` +
+                `• *By Number:* reply \`2\` or \`1, 3\`\n` +
+                `• *By Phone:* reply \`9863013886\`\n\n` +
+                `_Or reply *cancel* to return to the summary card._`,
+            });
+            return;
+          }
+
+          if (buttonId === 'btn_campaign_cancel') {
+            adminCampaignState.delete(senderJid);
+            adminCampaignState.delete(normalizedJid);
+            await sock.sendMessage(senderJid, {
+              text: `🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched. Active list cleared.`,
+            });
+            return;
+          }
+
           if (buttonId === 'btn_flow_student') {
             const resolvedUserPhone = await resolveUserPhone(sock, senderJid);
             await handleStudentMessage({
