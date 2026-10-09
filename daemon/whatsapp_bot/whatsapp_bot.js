@@ -495,6 +495,58 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
   }
 }
 
+// ============================================================================
+// ADMIN PROMOTION & DIRECTORY BROADCAST HELPER
+// ============================================================================
+const ADMIN_NUMBERS = ['9863013886', '9362980761'];
+const PROMO_LOG_FILE = path.join(__dirname, 'sent_promo_recipients.json');
+
+function isSenderAdmin(senderJid, normalizedJid, isMessageToSelf) {
+  if (isMessageToSelf) return true;
+  if (!senderJid && !normalizedJid) return false;
+  return ADMIN_NUMBERS.some(num => (senderJid && senderJid.includes(num)) || (normalizedJid && normalizedJid.includes(num)));
+}
+
+function getStudentDirectoryPromoCard() {
+  const title = '🎓 *NERIST CAMPUS DIRECTORY* · 2026 Edition';
+  const body =
+    `*Connect with any NERIST student in seconds!*\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `👋 Hey NERISTian!\n\n` +
+    `Need to reach a batchmate, find a senior's roll number, or connect with a classmate across departments?\n\n` +
+    `Stop asking around in 10 different WhatsApp groups! The *Official NERIST Student Directory* is now integrated directly into this bot:\n\n` +
+    `⚡ *What you can search instantly:*\n` +
+    `• 🔍 *Name & Roll Number:* Look up any student across all batches\n` +
+    `• 📞 *Direct Contact Info:* Verified phone numbers & branch records\n` +
+    `• 🏛️ *Batch & Stream Info:* Degree, Diploma, Base Module & Forestry\n` +
+    `• 🔒 *Fast & Confidential:* 100% instant within this WhatsApp chat\n\n` +
+    `💡 *Tap below to try a search right now:*`;
+
+  const buttons = [
+    { id: 'btn_flow_student', text: '🎓 Search Student Directory' },
+    { id: 'btn_flow_printing', text: '🖨️ Print Documents' },
+  ];
+
+  return { title, body, buttons, footer: 'PrintKurox Student Services · NERIST Campus' };
+}
+
+function loadSentPromoLog() {
+  try {
+    if (fs.existsSync(PROMO_LOG_FILE)) {
+      return JSON.parse(fs.readFileSync(PROMO_LOG_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function recordSentPromo(phone) {
+  try {
+    const log = loadSentPromoLog();
+    log[phone] = new Date().toISOString();
+    fs.writeFileSync(PROMO_LOG_FILE, JSON.stringify(log, null, 2), 'utf8');
+  } catch (e) {}
+}
+
 async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeMb) {
   const isBulk = totalPages >= 10;
   const title = `*PrintKurox* · Color Selection`;
@@ -1580,6 +1632,191 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
   await sendQueueStagingCard({ sock, senderJid, session, justAddedFileNames: justAddedNames });
 }
 
+/**
+ * Processes an incoming media attachment asynchronously without blocking the Baileys event loop.
+ * Enables simultaneous burst ingestion (e.g. 3 PDFs + 2 images sent together) by immediately
+ * tracking active downloads, applying instant reactions, and releasing the event loop.
+ */
+function handleIncomingMediaAttachment({
+  msg,
+  sock,
+  senderJid,
+  normalizedJid,
+  senderName,
+  extracted,
+}) {
+  const { mediaObj, mediaType } = extracted;
+  let fileName = extracted.fileName;
+  let mimeType = extracted.mimeType;
+
+  console.log(`[WA-Bot] 📥 Media attachment received from ${senderName} (${senderJid}): "${fileName}" (${mediaType})`);
+
+  if (!incomingFileBuffers.has(normalizedJid)) {
+    incomingFileBuffers.set(normalizedJid, {
+      files: [],
+      timer: null,
+      activeDownloads: 0,
+      hasNotified: false,
+    });
+  }
+  const entry = incomingFileBuffers.get(normalizedJid);
+  entry.activeDownloads = (entry.activeDownloads || 0) + 1;
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+    entry.timer = null;
+  }
+
+  // Instant emoji reaction on the file's message bubble
+  sock.sendMessage(senderJid, {
+    react: { text: '⏳', key: msg.key },
+  }).catch(() => {});
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+
+  const lowerDocName = fileName.toLowerCase();
+  const rawMime = mimeType.toLowerCase();
+  const isPdfFile = lowerDocName.endsWith('.pdf') || rawMime.includes('pdf');
+  const isPhotoFile = !isPdfFile && (mediaType === 'image' || rawMime.startsWith('image/'));
+  const isDocxFile = lowerDocName.endsWith('.docx') || lowerDocName.endsWith('.doc');
+
+  let prepNotice = '⏳ *Receiving your files...*\nPlease wait a moment.';
+  if (isPdfFile) {
+    prepNotice = fileName
+      ? `⏳ *Your PDF is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`
+      : `⏳ *Your PDF is preparing...*\nPlease wait a moment.`;
+  } else if (isPhotoFile) {
+    prepNotice = `⏳ *Your photo is preparing...*\nPlease wait a moment.`;
+  } else if (isDocxFile) {
+    prepNotice = `⏳ *Your Word document is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`;
+  }
+
+  if (!entry.hasNotified) {
+    entry.hasNotified = true;
+    sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch(() => {});
+  }
+
+  const debounceDelay = 4500;
+  const scheduleProcess = () => {
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = setTimeout(async () => {
+      if (entry.activeDownloads > 0) {
+        console.log(`[WA-Bot] ${entry.activeDownloads} download(s) still active for ${senderName}. Rescheduling buffer process...`);
+        scheduleProcess();
+        return;
+      }
+      try {
+        await processBufferedFiles({ sock, senderJid, normalizedJid, senderName });
+      } catch (err) {
+        console.error('[WA-Bot] Error processing buffered files:', err);
+      }
+    }, debounceDelay);
+  };
+
+  // Asynchronous background download worker
+  (async () => {
+    let buffer = null;
+    try {
+      buffer = await downloadMediaWithRetry(mediaObj, mediaType, msg, sock, 3);
+    } catch (dlErr) {
+      console.warn('[WA-Bot] Media download error:', dlErr.message);
+    } finally {
+      entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
+    }
+
+    if (!buffer || buffer.length === 0) {
+      console.error(`[WA-Bot] ❌ Failed to download attachment "${fileName}" from ${senderName}`);
+      sock.sendMessage(senderJid, {
+        react: { text: '❌', key: msg.key },
+      }).catch(() => {});
+      await sock.sendMessage(senderJid, {
+        text: `⚠️ Sorry ${senderName}, failed to download "${fileName}". Please try resending.`,
+      }).catch(() => {});
+      if (entry.files.length > 0) {
+        scheduleProcess();
+      }
+      return;
+    }
+
+    // Local Word (.docx / .doc) conversion
+    if (fileName.toLowerCase().endsWith('.docx') || fileName.toLowerCase().endsWith('.doc')) {
+      console.log(`[WA-Bot] Word document detected: ${fileName}. Checking local converter...`);
+      await sock.sendMessage(
+        senderJid,
+        {
+          text:
+            `🔄 *Word Document (.docx) Detected*\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `📄 Converting *"${fileName}"* into a print-ready vector PDF on the PrintKurox server...\n\n` +
+            `⏳ _It will take a few seconds, converting..._`,
+        },
+        { quoted: msg }
+      ).catch(() => {});
+
+      const convertedPdf = await convertDocxToPdf(buffer, fileName);
+      if (convertedPdf) {
+        buffer = convertedPdf;
+        fileName = fileName.replace(/\.docx?$/i, '.pdf');
+        mimeType = 'application/pdf';
+        console.log(`[WA-Bot] Converted Word document locally: ${fileName}`);
+        await sock.sendMessage(
+          senderJid,
+          {
+            text:
+              `✅ *Document Converted Successfully!*\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `📄 *${fileName}* is ready and added to your print queue! ✨`,
+          },
+          { quoted: msg }
+        ).catch(() => {});
+      } else {
+        await sock.sendMessage(
+          senderJid,
+          {
+            text:
+              `⚠️ *Word Document (.docx) Detected*\n\n` +
+              `To ensure your fonts, tables, margins, and layout do not shift or distort, please save or export your file as a *PDF* and send it here!\n\n` +
+              `📌 *How to save as PDF:*\n` +
+              `• In MS Word: _File ➔ Save As ➔ PDF (*.pdf)_\n` +
+              `• In Google Docs: _File ➔ Download ➔ PDF Document_\n` +
+              `• On phone: Share ➔ Print ➔ Save as PDF.\n\n` +
+              `_Forward your PDF once saved to print instantly!_`,
+          },
+          { quoted: msg }
+        ).catch(() => {});
+        if (entry.files.length > 0) {
+          scheduleProcess();
+        }
+        return;
+      }
+    }
+
+    const isPdfDetected = (buffer.length >= 4 && buffer.slice(0, 4).toString() === '%PDF') ||
+      fileName.toLowerCase().endsWith('.pdf') ||
+      mimeType.includes('pdf');
+    const isImgDetected = !isPdfDetected && (mediaType === 'image' || mimeType.startsWith('image/'));
+
+    // Update message bubble reaction to document/photo on successful download
+    sock.sendMessage(senderJid, {
+      react: { text: isPdfDetected ? '📄' : '🖼️', key: msg.key },
+    }).catch(() => {});
+
+    entry.files.push({
+      buffer,
+      fileName,
+      mimeType,
+      isImg: isImgDetected,
+      isPdf: isPdfDetected,
+    });
+
+    scheduleProcess();
+  })().catch((err) => {
+    console.error(`[WA-Bot] Unhandled error downloading ${fileName}:`, err);
+    entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
+    if (entry.files.length > 0) {
+      scheduleProcess();
+    }
+  });
+}
+
 // ============================================================================
 // MAIN BAILEYS WHATSAPP BOT DAEMON
 // ============================================================================
@@ -1737,6 +1974,116 @@ async function startBot() {
           buttonText ||
           '';
 
+        const trimmedText = rawText.trim();
+        const lowerText = trimmedText.toLowerCase();
+
+        // ======================================================================
+        // ADMIN COMMANDS (@ad, @preview, @send, @send_force)
+        // ======================================================================
+        const isAdmin = isSenderAdmin(senderJid, normalizedJid, isMessageToSelf);
+
+        // Preview command: sends promo to self/admin for manual verification or manual forwarding
+        if (isAdmin && (lowerText === '@ad' || lowerText === '@preview' || lowerText === '@promo' || lowerText === '@ad_preview')) {
+          const promo = getStudentDirectoryPromoCard();
+          await sendInteractiveButtons({
+            sock,
+            jid: senderJid,
+            title: promo.title,
+            body: promo.body,
+            footer: promo.footer,
+            buttons: promo.buttons,
+          });
+          await sock.sendMessage(senderJid, {
+            text:
+              `📋 *Admin Promotion Card Ready*\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `1. *Forward Manually:* Long-press and tap *Forward* on the card above to send it directly to any friend or group.\n\n` +
+              `2. *Send Directly via Bot:* Reply with:\n` +
+              `\`@send 9863013886, 9362980761\`\n` +
+              `to dispatch it to specific phone numbers with safe anti-spam pacing.`,
+          });
+          return;
+        }
+
+        // Targeted command: sends promo directly to specified numbers with anti-spam pacing and duplicate protection
+        if (isAdmin && (lowerText.startsWith('@send ') || lowerText.startsWith('@send_force '))) {
+          const isForce = lowerText.startsWith('@send_force ');
+          const rawNumbersPart = isForce ? trimmedText.slice(12) : trimmedText.slice(6);
+          const matches = rawNumbersPart.match(/\b(?:\+?91)?[6-9]\d{9}\b/g) || [];
+
+          if (matches.length === 0) {
+            await sock.sendMessage(senderJid, {
+              text:
+                `⚠️ *No valid phone numbers found.*\n\n` +
+                `*Usage:*\n` +
+                `\`@send 9863013886, 9362980761\`\n` +
+                `_(Provide 10-digit Indian numbers separated by commas or spaces)_`,
+            });
+            return;
+          }
+
+          const uniqueNumbers = [...new Set(matches.map((n) => {
+            let cleanNum = n.replace(/[^0-9]/g, '');
+            if (cleanNum.length === 10) cleanNum = '91' + cleanNum;
+            if (cleanNum.length === 12 && cleanNum.startsWith('91')) return cleanNum;
+            return cleanNum;
+          }))];
+
+          const promoLog = loadSentPromoLog();
+          const sentList = [];
+          const skippedList = [];
+
+          await sock.sendMessage(senderJid, {
+            text: `⏳ *Dispatching promo card to ${uniqueNumbers.length} recipient(s)...*\n_Applying safe 2.5s anti-spam pacing between sends._`,
+          });
+
+          const promo = getStudentDirectoryPromoCard();
+
+          for (let i = 0; i < uniqueNumbers.length; i++) {
+            const num = uniqueNumbers[i];
+            const targetJid = `${num}@s.whatsapp.net`;
+
+            if (!isForce && promoLog[num]) {
+              const prevDate = new Date(promoLog[num]).toLocaleDateString('en-IN');
+              skippedList.push(`• +${num} _(Already sent on ${prevDate})_`);
+              continue;
+            }
+
+            try {
+              await sendInteractiveButtons({
+                sock,
+                jid: targetJid,
+                title: promo.title,
+                body: promo.body,
+                footer: promo.footer,
+                buttons: promo.buttons,
+              });
+              recordSentPromo(num);
+              sentList.push(`• +${num}`);
+            } catch (err) {
+              console.error(`[WA-Bot] Error sending promo to ${num}:`, err.message);
+              skippedList.push(`• +${num} _(Failed: ${err.message})_`);
+            }
+
+            if (i < uniqueNumbers.length - 1) {
+              await new Promise((r) => setTimeout(r, 2500));
+            }
+          }
+
+          let reportText = `📢 *Broadcast Dispatch Summary*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+          if (sentList.length > 0) {
+            reportText += `✅ *Delivered Successfully (${sentList.length}):*\n${sentList.join('\n')}\n\n`;
+          }
+          if (skippedList.length > 0) {
+            reportText += `⚠️ *Skipped / Already Received (${skippedList.length}):*\n${skippedList.join('\n')}\n` +
+              `_(Use \`@send_force\` if you wish to override and re-send)_\n\n`;
+          }
+          reportText += `━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+          await sock.sendMessage(senderJid, { text: reportText });
+          return;
+        }
+
         // Student & Confidential Dossier Commands (@student, @find student, student, phone, dossier, buttons, Razorpay)
         const isStudentExplicit =
           buttonId?.startsWith('view_student_') ||
@@ -1780,173 +2127,19 @@ async function startBot() {
         }
 
         // ======================================================================
-        // 1. INCOMING FILE (PDF / IMAGE / DOCUMENT) - UNWRAPPED & RESILIENT
+        // 1. INCOMING FILE (PDF / IMAGE / DOCUMENT) - UNWRAPPED & NON-BLOCKING
         // ======================================================================
         const extracted = extractMediaFromMessage(content) || extractMediaFromMessage(msg.message);
 
         if (extracted) {
-          const { mediaObj, mediaType } = extracted;
-          let fileName = extracted.fileName;
-          let mimeType = extracted.mimeType;
-
-          console.log(`[WA-Bot] Media attachment received from ${senderName} (${senderJid}): "${fileName}" (${mediaType})`);
-
-          // Register download in buffer immediately to avoid race conditions
-          if (!incomingFileBuffers.has(normalizedJid)) {
-            incomingFileBuffers.set(normalizedJid, {
-              files: [],
-              timer: null,
-              activeDownloads: 0,
-            });
-          }
-          const entry = incomingFileBuffers.get(normalizedJid);
-          entry.activeDownloads = (entry.activeDownloads || 0) + 1;
-          if (entry.timer) {
-            clearTimeout(entry.timer);
-            entry.timer = null;
-          }
-
-          // Instant emoji reaction & typing indicator for per-file feedback
-          sock.sendMessage(senderJid, {
-            react: { text: '⏳', key: msg.key },
-          }).catch(() => {});
-          sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
-
-          const lowerDocName = fileName.toLowerCase();
-          const rawMime = mimeType.toLowerCase();
-          const isPdfFile = lowerDocName.endsWith('.pdf') || rawMime.includes('pdf');
-          const isPhotoFile = !isPdfFile && (mediaType === 'image' || rawMime.startsWith('image/'));
-          const isDocxFile = lowerDocName.endsWith('.docx') || lowerDocName.endsWith('.doc');
-
-          let prepNotice = '⏳ *Receiving your files...*\nPlease wait a moment.';
-          if (isPdfFile) {
-            prepNotice = fileName
-              ? `⏳ *Your PDF is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`
-              : `⏳ *Your PDF is preparing...*\nPlease wait a moment.`;
-          } else if (isPhotoFile) {
-            prepNotice = `⏳ *Your photo is preparing...*\nPlease wait a moment.`;
-          } else if (isDocxFile) {
-            prepNotice = `⏳ *Your Word document is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`;
-          }
-
-          if (!entry.hasNotified) {
-            entry.hasNotified = true;
-            sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch(() => {});
-          }
-
-          // Robust batch debounce: 4500ms allows multi-file bursts to settle completely
-          const debounceDelay = 4500;
-          const scheduleProcess = () => {
-            if (entry.timer) clearTimeout(entry.timer);
-            entry.timer = setTimeout(async () => {
-              if (entry.activeDownloads > 0) {
-                console.log(`[WA-Bot] ${entry.activeDownloads} download(s) still active for ${senderName}. Rescheduling buffer process...`);
-                scheduleProcess();
-                return;
-              }
-              try {
-                await processBufferedFiles({ sock, senderJid, normalizedJid, senderName });
-              } catch (err) {
-                console.error('[WA-Bot] Error processing buffered files:', err);
-              }
-            }, debounceDelay);
-          };
-
-          let buffer = null;
-          try {
-            buffer = await downloadMediaWithRetry(mediaObj, mediaType, msg, sock, 3);
-          } catch (dlErr) {
-            console.warn('[WA-Bot] Media download error:', dlErr.message);
-          } finally {
-            entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
-          }
-
-          if (!buffer || buffer.length === 0) {
-            console.error(`[WA-Bot] ❌ Failed to download attachment "${fileName}" from ${senderName}`);
-            await sock.sendMessage(senderJid, {
-              text: `⚠️ Sorry ${senderName}, failed to download "${fileName}". Please try resending.`,
-            }).catch(() => {});
-            if (entry.files.length > 0) {
-              scheduleProcess();
-            }
-            continue;
-          }
-
-          // Update message bubble reaction to checkmark on successful download
-          sock.sendMessage(senderJid, {
-            react: { text: '📄', key: msg.key },
-          }).catch(() => {});
-
-          // Local Word (.docx / .doc) conversion
-          if (fileName.toLowerCase().endsWith('.docx') || fileName.toLowerCase().endsWith('.doc')) {
-            console.log(`[WA-Bot] Word document detected: ${fileName}. Checking local converter...`);
-            
-            // Notify user that server is converting their Word document
-            await sock.sendMessage(
-              senderJid,
-              {
-                text:
-                  `🔄 *Word Document (.docx) Detected*\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `📄 Converting *"${fileName}"* into a print-ready vector PDF on the PrintKurox server...\n\n` +
-                  `⏳ _It will take a few seconds, converting..._`,
-              },
-              { quoted: msg }
-            ).catch(() => {});
-
-            const convertedPdf = await convertDocxToPdf(buffer, fileName);
-            if (convertedPdf) {
-              buffer = convertedPdf;
-              fileName = fileName.replace(/\.docx?$/i, '.pdf');
-              mimeType = 'application/pdf';
-              console.log(`[WA-Bot] Converted Word document locally: ${fileName}`);
-
-              await sock.sendMessage(
-                senderJid,
-                {
-                  text:
-                    `✅ *Document Converted Successfully!*\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `📄 *${fileName}* is ready and added to your print queue! ✨`,
-                },
-                { quoted: msg }
-              ).catch(() => {});
-            } else {
-              await sock.sendMessage(
-                senderJid,
-                {
-                  text:
-                    `⚠️ *Word Document (.docx) Detected*\n\n` +
-                    `To ensure your fonts, tables, margins, and layout do not shift or distort, please save or export your file as a *PDF* and send it here!\n\n` +
-                    `📌 *How to save as PDF:*\n` +
-                    `• In MS Word: _File ➔ Save As ➔ PDF (*.pdf)_\n` +
-                    `• In Google Docs: _File ➔ Download ➔ PDF Document_\n` +
-                    `• On phone: Share ➔ Print ➔ Save as PDF.\n\n` +
-                    `_Forward your PDF once saved to print instantly!_`,
-                },
-                { quoted: msg }
-              ).catch(() => {});
-              if (entry.files.length > 0) {
-                scheduleProcess();
-              }
-              continue;
-            }
-          }
-
-          const isPdfDetected = (buffer.length >= 4 && buffer.slice(0, 4).toString() === '%PDF') ||
-            fileName.toLowerCase().endsWith('.pdf') ||
-            mimeType.includes('pdf');
-          const isImgDetected = !isPdfDetected && (mediaType === 'image' || mimeType.startsWith('image/'));
-
-          entry.files.push({
-            buffer,
-            fileName,
-            mimeType,
-            isImg: isImgDetected,
-            isPdf: isPdfDetected,
+          handleIncomingMediaAttachment({
+            msg,
+            sock,
+            senderJid,
+            normalizedJid,
+            senderName,
+            extracted,
           });
-
-          scheduleProcess();
           continue;
         }
 
