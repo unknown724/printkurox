@@ -300,18 +300,20 @@ const LID_MAPPING_DIRS = [
 
 function resolveLidToPhone(lid) {
   if (!lid) return null;
-  const cleanLid = String(lid).replace(/[^0-9]/g, '');
-  if (lidMappingCache.has(cleanLid)) {
-    return lidMappingCache.get(cleanLid).split('@')[0].replace(/[^0-9]/g, '').slice(-10);
+  // Strip device suffixes like _1, :1, etc. before stripping non-digits
+  const baseLid = String(lid).split(/[_:]/)[0].replace(/[^0-9]/g, '');
+  if (!baseLid) return null;
+  if (lidMappingCache.has(baseLid)) {
+    return lidMappingCache.get(baseLid).split('@')[0].replace(/[^0-9]/g, '').slice(-10);
   }
   for (const dir of LID_MAPPING_DIRS) {
-    const revFile = path.join(dir, `lid-mapping-${cleanLid}_reverse.json`);
+    const revFile = path.join(dir, `lid-mapping-${baseLid}_reverse.json`);
     if (fs.existsSync(revFile)) {
       try {
         const raw = JSON.parse(fs.readFileSync(revFile, 'utf8'));
         const clean = String(raw).replace(/[^0-9]/g, '').slice(-10);
         if (/^[6-9]\d{9}$/.test(clean)) {
-          lidMappingCache.set(cleanLid, `91${clean}@s.whatsapp.net`);
+          lidMappingCache.set(baseLid, `91${clean}@s.whatsapp.net`);
           return clean;
         }
       } catch (e) {}
@@ -674,13 +676,17 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
   for (const [phone, item] of Object.entries(activityLog)) {
     const activeTime = new Date(item.lastActive || 0).getTime();
     if (activeTime >= cutoffMs) {
-      const studentName = (item.name && item.name !== 'Student') ? item.name : getStudentNameByPhone(phone);
-      foundMap.set(phone, {
-        phone,
-        jid: item.jid || `91${phone}@s.whatsapp.net`,
-        name: studentName,
-        lastActive: item.lastActive,
-      });
+      const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+      if (/^[6-9]\d{9}$/.test(cleanPhone)) {
+        const studentName = (item.name && item.name !== 'Student' && item.name !== 'WhatsApp User') ? item.name : getStudentNameByPhone(cleanPhone);
+        const validName = (studentName && studentName !== 'Student' && studentName !== 'WhatsApp User') ? studentName : null;
+        foundMap.set(cleanPhone, {
+          phone: cleanPhone,
+          jid: item.jid || `91${cleanPhone}@s.whatsapp.net`,
+          name: validName,
+          lastActive: item.lastActive,
+        });
+      }
     }
   }
 
@@ -706,7 +712,8 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
               cleanPhone = resolveLidToPhone(rawId);
               if (!cleanPhone && sock?.signalRepository?.lidMapping?.getPNForLID) {
                 try {
-                  const pn = await sock.signalRepository.lidMapping.getPNForLID(`${rawId}@lid`);
+                  const baseLid = String(rawId).split(/[_:]/)[0];
+                  const pn = await sock.signalRepository.lidMapping.getPNForLID(`${baseLid}@lid`);
                   if (pn) {
                     const digits = pn.split('@')[0].replace(/[^0-9]/g, '').slice(-10);
                     if (/^[6-9]\d{9}$/.test(digits)) cleanPhone = digits;
@@ -715,16 +722,19 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
               }
             }
 
-            const mapKey = cleanPhone || rawId;
-            if (!foundMap.has(mapKey)) {
-              const studentName = cleanPhone ? getStudentNameByPhone(cleanPhone) : 'Student';
-              foundMap.set(mapKey, {
-                phone: cleanPhone || rawId,
-                isLidOnly: !cleanPhone,
-                jid: cleanPhone ? `91${cleanPhone}@s.whatsapp.net` : `${rawId}@lid`,
-                name: studentName,
-                lastActive: new Date(mtime).toISOString(),
-              });
+            // CRITICAL: ONLY add verified 10-digit Indian phone numbers
+            // User instruction: Never show raw IDs or "User (ID: ...)"
+            if (cleanPhone && /^[6-9]\d{9}$/.test(cleanPhone)) {
+              if (!foundMap.has(cleanPhone)) {
+                const sName = getStudentNameByPhone(cleanPhone);
+                const validName = (sName && sName !== 'Student' && sName !== 'WhatsApp User') ? sName : null;
+                foundMap.set(cleanPhone, {
+                  phone: cleanPhone,
+                  jid: `91${cleanPhone}@s.whatsapp.net`,
+                  name: validName,
+                  lastActive: new Date(mtime).toISOString(),
+                });
+              }
             }
           }
         }
@@ -747,23 +757,19 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
 }
 
 /**
- * Dispatches the Campaign Audience Review card with guaranteed 0ms text display and interactive buttons
+ * Dispatches the Campaign Audience Review card with guaranteed 0ms text display and disambiguous buttons
  */
 async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '' }) {
   const count = campaign.recipients.length;
   let listStr = '';
-  const maxDisplay = 15;
-  const displayList = campaign.recipients.slice(0, maxDisplay);
 
-  displayList.forEach((r, idx) => {
-    const namePart = r.name && r.name !== 'Student' && r.name !== 'WhatsApp User' ? ` (${r.name})` : '';
-    const phonePart = r.isLidOnly ? `*User* (ID: ...${r.phone.slice(-6)})` : `*+91 ${r.phone.slice(-10)}*`;
-    listStr += `${idx + 1}. ${phonePart}${namePart}\n`;
+  // Requirement: Show ALL numbers directly without truncation (no maxDisplay limit)
+  campaign.recipients.forEach((r, idx) => {
+    const phone = r.phone.slice(-10);
+    const hasValidName = r.name && r.name !== 'Student' && r.name !== 'WhatsApp User';
+    const line = hasValidName ? `${idx + 1}. *+91 ${phone}* (${r.name})` : `${idx + 1}. *+91 ${phone}*`;
+    listStr += `${line}\n`;
   });
-
-  if (count > maxDisplay) {
-    listStr += `... and *${count - maxDisplay} more* contact(s)\n`;
-  }
 
   const title = `*Campaign Audience Review* · ${campaign.timeframeLabel}`;
   const cardText =
@@ -775,11 +781,10 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
         `${listStr}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📊 *Total Audience:* *${count}* recipient(s)\n\n` +
-        `👉 *Quick Actions (Reply directly):*\n` +
-        `• Reply *send* (or *proceed*) ➔ 🚀 Send promo to all ${count} students\n` +
-        `• Reply *remove 2* ➔ ❌ Exclude contact #2\n` +
-        `• Reply *remove 1, 3* ➔ ❌ Exclude multiple\n` +
-        `• Reply *cancel* ➔ 🚫 Cancel broadcast`
+        `👉 *Tap the disambigous action buttons below or reply directly:*\n` +
+        `• Tap *🚀 Send to All (${count})* ➔ Dispatches promotional card\n` +
+        `• Tap *❌ Remove Numbers* ➔ Exclude specific numbers\n` +
+        `• Tap *🚫 Cancel Broadcast* ➔ Clears staged campaign`
       : `⚠️ *No contacts found or remaining in this audience.*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `_Reply with numbers directly (e.g. \`@send 9863013886, ...\`) or use \`@send 7d\` to expand the search timeframe._`);
@@ -787,15 +792,14 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
   // 1. ALWAYS send standard text FIRST to guarantee 0ms instant display without "Waiting for this message" delays
   await sock.sendMessage(adminJid, { text: cardText });
 
-  // 2. Also send interactive buttons if not in self-chat (interactive buttons in self-chat often trigger WhatsApp decryption glitches)
-  const isSelf = adminJid.includes('9362980761') || (sock.user?.id && adminJid.includes(sock.user.id.split('@')[0]));
-  if (!isSelf && count > 0) {
+  // 2. ALWAYS dispatch interactive (disambiguous) buttons so the admin can click them directly!
+  if (count > 0) {
     try {
       await sendInteractiveButtons({
         sock,
         jid: adminJid,
         title,
-        body: `Tap an action button below or reply with text:`,
+        body: `Select an action below for this audience (${count} recipients):`,
         footer: 'PrintKurox Campaign Manager · Admin',
         buttons: [
           { id: 'btn_campaign_send', text: `🚀 Send to All (${count})` },
@@ -2332,6 +2336,109 @@ async function startBot() {
           return;
         }
 
+        // ======================================================================
+        // ADMIN CAMPAIGN INTERACTIVE EXCLUSION & DISPATCH CONTROLLER
+        // (Active staged campaign actions: send, cancel, remove, numeric input)
+        // ======================================================================
+        const activeCampaign = isAdmin ? (adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid)) : null;
+
+        if (activeCampaign) {
+          const cleanAdminText = trimmedText.toLowerCase();
+
+          // 1. Cancel / Exit Campaign
+          if (/^(cancel|stop|abort|exit|quit|close)$/i.test(cleanAdminText)) {
+            if (activeCampaign.isAwaitingRemoval) {
+              activeCampaign.isAwaitingRemoval = false;
+              await sendCampaignReviewCard({
+                sock,
+                adminJid: senderJid,
+                campaign: activeCampaign,
+                noticeText: 'ℹ️ Removal mode cancelled. Audience list preserved.',
+              });
+              return;
+            } else {
+              adminCampaignState.delete(senderJid);
+              adminCampaignState.delete(normalizedJid);
+              await sock.sendMessage(senderJid, {
+                text: '🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched.',
+              });
+              return;
+            }
+          }
+
+          // 2. Send / Proceed Broadcast
+          if (/^(send|proceed|broadcast|go|ok)$/i.test(cleanAdminText)) {
+            adminCampaignState.delete(senderJid);
+            adminCampaignState.delete(normalizedJid);
+            await executeCampaignBroadcast({ sock, adminJid: senderJid, campaign: activeCampaign });
+            return;
+          }
+
+          // 3. Remove Command or Direct Numbers to Exclude
+          const isRemoveCmd = /^(remove|delete|del|exclude)\b/i.test(cleanAdminText);
+          const isNumericOnly = /^[\d\s,]+$/.test(cleanAdminText);
+
+          if (isRemoveCmd || activeCampaign.isAwaitingRemoval || isNumericOnly) {
+            const rawTarget = cleanAdminText.replace(/^(?:remove|delete|del|exclude)\s*/i, '').trim();
+            if (!rawTarget) {
+              activeCampaign.isAwaitingRemoval = true;
+              await sock.sendMessage(senderJid, {
+                text:
+                  `❌ *Remove Numbers from Audience*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Reply with the list item number(s) or phone number(s) to exclude.\n\n` +
+                  `• *By Number:* reply \`2\` or \`1, 3\`\n` +
+                  `• *By Phone:* reply \`+91 9233052856\`\n\n` +
+                  `_Or reply *cancel* to return to the audience review card._`,
+              });
+              return;
+            }
+
+            const tokens = rawTarget.split(/[\s,]+/).filter(Boolean);
+            const toRemoveIndices = new Set();
+            const toRemovePhones = new Set();
+
+            for (const token of tokens) {
+              let cleanDigits = token.replace(/[^0-9]/g, '');
+              if (cleanDigits.length === 12 && cleanDigits.startsWith('91')) {
+                cleanDigits = cleanDigits.slice(-10);
+              }
+              if (cleanDigits.length === 10) {
+                toRemovePhones.add(cleanDigits);
+              } else if (cleanDigits.length > 0) {
+                const idx = parseInt(cleanDigits, 10);
+                if (idx >= 1 && idx <= activeCampaign.recipients.length) {
+                  toRemoveIndices.add(idx - 1); // 0-based
+                }
+              }
+            }
+
+            if (toRemoveIndices.size > 0 || toRemovePhones.size > 0) {
+              const originalCount = activeCampaign.recipients.length;
+              activeCampaign.recipients = activeCampaign.recipients.filter((item, idx) => {
+                const p = item.phone.slice(-10);
+                if (toRemovePhones.has(p)) return false;
+                if (toRemoveIndices.has(idx)) return false;
+                return true;
+              });
+              const removedCount = originalCount - activeCampaign.recipients.length;
+              activeCampaign.isAwaitingRemoval = false;
+              await sendCampaignReviewCard({
+                sock,
+                adminJid: senderJid,
+                campaign: activeCampaign,
+                noticeText: `✅ *Removed ${removedCount} contact(s) from campaign audience.*`,
+              });
+              return;
+            } else if (activeCampaign.isAwaitingRemoval) {
+              await sock.sendMessage(senderJid, {
+                text: `⚠️ *No matching contacts found to remove.*\nReply with a valid number from the list (1 to ${activeCampaign.recipients.length}) or a 10-digit phone number, or reply *cancel*.`,
+              });
+              return;
+            }
+          }
+        }
+
         // Targeted or Automated Discovery: "@send 24 hour", "send 24 hour", "24 hour", "24h", "today", "@send <numbers>"
         const isCampaignDiscoveryIntent =
           isAdmin && (
@@ -2340,7 +2447,6 @@ async function startBot() {
             lowerText.startsWith('@campaign') ||
             lowerText.startsWith('campaign ') ||
             lowerText === '@send' ||
-            lowerText === 'send' ||
             /^(?:@?send\s+)?(?:\d+\s*(?:hours?|hrs?|h|days?|d|weeks?|w)|today)$/i.test(trimmedText)
           );
 
@@ -2407,104 +2513,6 @@ async function startBot() {
 
           await sendCampaignReviewCard({ sock, adminJid: senderJid, campaign });
           return;
-        }
-
-        // ======================================================================
-        // ADMIN CAMPAIGN INTERACTIVE EXCLUSION & DISPATCH CONTROLLER
-        // ======================================================================
-        if (isAdmin && (adminCampaignState.has(senderJid) || adminCampaignState.has(normalizedJid))) {
-          const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
-          const cleanAdminText = trimmedText.toLowerCase();
-
-          // 1. Cancel / Exit Campaign
-          if (/^(cancel|stop|abort|exit|quit|close)$/i.test(cleanAdminText)) {
-            if (campaign.isAwaitingRemoval) {
-              campaign.isAwaitingRemoval = false;
-              await sendCampaignReviewCard({
-                sock,
-                adminJid: senderJid,
-                campaign,
-                noticeText: 'ℹ️ Removal mode cancelled. Audience list preserved.',
-              });
-              return;
-            } else {
-              adminCampaignState.delete(senderJid);
-              adminCampaignState.delete(normalizedJid);
-              await sock.sendMessage(senderJid, {
-                text: '🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched.',
-              });
-              return;
-            }
-          }
-
-          // 2. Send / Proceed Broadcast
-          if (/^(send|proceed|broadcast|go|ok)$/i.test(cleanAdminText)) {
-            adminCampaignState.delete(senderJid);
-            adminCampaignState.delete(normalizedJid);
-            await executeCampaignBroadcast({ sock, adminJid: senderJid, campaign });
-            return;
-          }
-
-          // 3. Remove Command or Direct Numbers to Exclude
-          const isRemoveCmd = /^(remove|delete|del|exclude)\b/i.test(cleanAdminText);
-          const isNumericOnly = /^[\d\s,]+$/.test(cleanAdminText);
-
-          if (isRemoveCmd || campaign.isAwaitingRemoval || isNumericOnly) {
-            const rawTarget = cleanAdminText.replace(/^(?:remove|delete|del|exclude)\s*/i, '').trim();
-            if (!rawTarget) {
-              campaign.isAwaitingRemoval = true;
-              await sock.sendMessage(senderJid, {
-                text:
-                  `❌ *Remove Numbers from Audience*\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `Reply with the list number(s) or phone number(s) to exclude.\n\n` +
-                  `• *By Number:* reply \`2\` or \`1, 3\`\n` +
-                  `• *By Phone:* reply \`9863013886\`\n\n` +
-                  `_Or reply *cancel* to return to the summary card._`,
-              });
-              return;
-            }
-
-            const tokens = rawTarget.split(/[\s,]+/).filter(Boolean);
-            const toRemoveIndices = new Set();
-            const toRemovePhones = new Set();
-
-            for (const token of tokens) {
-              const cleanDigits = token.replace(/[^0-9]/g, '');
-              if (cleanDigits.length === 10) {
-                toRemovePhones.add(cleanDigits);
-              } else if (cleanDigits.length > 0) {
-                const idx = parseInt(cleanDigits, 10);
-                if (idx >= 1 && idx <= campaign.recipients.length) {
-                  toRemoveIndices.add(idx - 1); // 0-based
-                }
-              }
-            }
-
-            if (toRemoveIndices.size > 0 || toRemovePhones.size > 0) {
-              const originalCount = campaign.recipients.length;
-              campaign.recipients = campaign.recipients.filter((item, idx) => {
-                const p = item.phone.slice(-10);
-                if (toRemovePhones.has(p)) return false;
-                if (toRemoveIndices.has(idx)) return false;
-                return true;
-              });
-              const removedCount = originalCount - campaign.recipients.length;
-              campaign.isAwaitingRemoval = false;
-              await sendCampaignReviewCard({
-                sock,
-                adminJid: senderJid,
-                campaign,
-                noticeText: `✅ *Removed ${removedCount} contact(s) from campaign audience.*`,
-              });
-              return;
-            } else if (campaign.isAwaitingRemoval) {
-              await sock.sendMessage(senderJid, {
-                text: `⚠️ *No matching contacts found to remove.*\nReply with a valid number from the list (1 to ${campaign.recipients.length}) or a 10-digit phone number, or reply *cancel*.`,
-              });
-              return;
-            }
-          }
         }
 
         // Student & Confidential Dossier Commands (@student, @find student, student, phone, dossier, buttons, Razorpay)
@@ -2593,10 +2601,10 @@ async function startBot() {
               text:
                 `❌ *Remove Numbers from Audience*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Reply with the list number(s) or phone number(s) you wish to exclude.\n\n` +
+                `Reply with the list item number(s) or phone number(s) to exclude.\n\n` +
                 `• *By Number:* reply \`2\` or \`1, 3\`\n` +
-                `• *By Phone:* reply \`9863013886\`\n\n` +
-                `_Or reply *cancel* to return to the summary card._`,
+                `• *By Phone:* reply \`+91 9233052856\`\n\n` +
+                `_Or reply *cancel* to return to the audience review card._`,
             });
             return;
           }
@@ -2607,6 +2615,15 @@ async function startBot() {
             await sock.sendMessage(senderJid, {
               text: `🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched. Active list cleared.`,
             });
+            return;
+          }
+
+          if (buttonId === 'btn_campaign_cancel_remove') {
+            const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
+            if (campaign) {
+              campaign.isAwaitingRemoval = false;
+              await sendCampaignReviewCard({ sock, adminJid: senderJid, campaign });
+            }
             return;
           }
 
