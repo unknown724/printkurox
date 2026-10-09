@@ -554,7 +554,7 @@ function getStudentNameByPhone(cleanPhone) {
 }
 
 function getStudentDirectoryPromoCard() {
-  const title = '🎓 *NERIST CAMPUS DIRECTORY* · 2026 Edition';
+  const title = '🌟 *NERIST CAMPUS DIRECTORY* · 2026 Edition';
   const body =
     `*Connect with any NERIST student in seconds!*\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -562,14 +562,14 @@ function getStudentDirectoryPromoCard() {
     `Need to reach a batchmate, find a senior's roll number, or connect with a classmate across departments?\n\n` +
     `Stop asking around in 10 different WhatsApp groups! The *Official NERIST Student Directory* is now integrated directly into this bot:\n\n` +
     `⚡ *What you can search instantly:*\n` +
-    `• 🔍 *Name & Roll Number:* Look up any student across all batches\n` +
-    `• 📞 *Direct Contact Info:* Verified phone numbers & branch records\n` +
-    `• 🏛️ *Batch & Stream Info:* Degree, Diploma, Base Module & Forestry\n` +
-    `• 🔒 *Fast & Confidential:* 100% instant within this WhatsApp chat\n\n` +
-    `💡 *Tap below to try a search right now:*`;
+    `  🔍 *Name & Roll Number:* Look up any student across all batches\n` +
+    `  📞 *Direct Contact Info:* Verified phone numbers & branch records\n` +
+    `  🎓 *Batch & Stream Info:* Degree, Diploma, Base Module & Forestry\n` +
+    `  🔒 *Fast & Confidential:* 100% instant within this WhatsApp chat\n\n` +
+    `👉 *Tap below to try a search right now:*`;
 
   const buttons = [
-    { id: 'btn_flow_student', text: '🎓 Search Student Directory' },
+    { id: 'btn_flow_student', text: '🔍 Search Student Directory' },
     { id: 'btn_flow_printing', text: '🖨️ Print Documents' },
   ];
 
@@ -681,6 +681,34 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
     }
   }
 
+  // 1b. Check user_quotas.json for active students who used services recently
+  try {
+    const quotasPath = path.join(__dirname, 'user_quotas.json');
+    if (fs.existsSync(quotasPath)) {
+      const quotas = JSON.parse(fs.readFileSync(quotasPath, 'utf8'));
+      for (const [key, q] of Object.entries(quotas)) {
+        const clean = key.replace(/[^0-9]/g, '').slice(-10);
+        if (/^[6-9]\d{9}$/.test(clean)) {
+          if (q.lastDate) {
+            const dateMs = new Date(q.lastDate).getTime();
+            if (dateMs >= cutoffMs - (24 * 60 * 60 * 1000) || q.lastDate === new Date().toISOString().slice(0, 10)) {
+              if (!foundMap.has(clean)) {
+                const sName = getStudentNameByPhone(clean);
+                const validName = (sName && sName !== 'Student' && sName !== 'WhatsApp User') ? sName : null;
+                foundMap.set(clean, {
+                  phone: clean,
+                  jid: `91${clean}@s.whatsapp.net`,
+                  name: validName,
+                  lastActive: q.lastDate + 'T12:00:00.000Z',
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
   // 2. Check session_auth directory, strictly filtering out group-only activity
   try {
     const authDir = path.join(__dirname, 'session_auth');
@@ -763,7 +791,7 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
 }
 
 /**
- * Dispatches the Campaign Audience Review card with guaranteed 0ms text display and disambiguous buttons
+ * Dispatches the Campaign Audience Review card with guaranteed 0ms text display and disambiguous action buttons
  */
 async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '' }) {
   const count = campaign.recipients.length;
@@ -777,7 +805,33 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
     listStr += `${line}\n`;
   });
 
-  const title = `*Campaign Audience Review* · ${campaign.timeframeLabel}`;
+  const botPhone = '9362980761';
+  const myJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : `91${botPhone}@s.whatsapp.net`;
+  const isSelf =
+    adminJid === 'self' ||
+    adminJid.includes('9362980761') ||
+    adminJid.includes('261469505642610') ||
+    (sock.user?.id && adminJid.includes(sock.user.id.split('@')[0])) ||
+    (sock.user?.lid && adminJid.includes(sock.user.lid.split('@')[0]));
+
+  const targetSendJid = isSelf ? myJid : adminJid;
+
+  const quickActionsText = isSelf
+    ? `👉 *Quick Actions (Tap a 1-tap link or reply directly):*\n` +
+      `• 🚀 *Send to All (${count}):*\n  https://wa.me/91${botPhone}?text=send\n\n` +
+      `• ❌ *Remove Numbers:*\n  https://wa.me/91${botPhone}?text=remove\n\n` +
+      `• 🚫 *Cancel Broadcast:*\n  https://wa.me/91${botPhone}?text=cancel\n\n` +
+      `💬 *Or simply reply with text:*\n` +
+      `• Reply *send* ➔ 🚀 Dispatch promo to all ${count} students\n` +
+      `• Reply *remove 2* ➔ ❌ Exclude contact #2\n` +
+      `• Reply *remove 1, 3* ➔ ❌ Exclude multiple\n` +
+      `• Reply *cancel* ➔ 🚫 Cancel broadcast`
+    : `👉 *Quick Actions (Reply directly or tap buttons below):*\n` +
+      `• Reply *send* (or *proceed*) ➔ 🚀 Send promo to all ${count} students\n` +
+      `• Reply *remove 2* ➔ ❌ Exclude contact #2\n` +
+      `• Reply *remove 1, 3* ➔ ❌ Exclude multiple\n` +
+      `• Reply *cancel* ➔ 🚫 Cancel broadcast`;
+
   const cardText =
     (noticeText ? `${noticeText}\n\n` : '') +
     (count > 0
@@ -787,31 +841,22 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
         `${listStr}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `📊 *Total Audience:* *${count}* recipient(s)\n\n` +
-        `👉 *Tap the disambigous action buttons below or reply directly:*\n` +
-        `• Tap *🚀 Send to All (${count})* ➔ Dispatches promotional card\n` +
-        `• Tap *❌ Remove Numbers* ➔ Exclude specific numbers\n` +
-        `• Tap *🚫 Cancel Broadcast* ➔ Clears staged campaign`
+        `${quickActionsText}`
       : `⚠️ *No contacts found or remaining in this audience.*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `_Reply with numbers directly (e.g. \`@send 9863013886, ...\`) or use \`@send 7d\` to expand the search timeframe._`);
 
-  // Target standard phone JID (@s.whatsapp.net) for guaranteed button rendering
-  let buttonTargetJid = adminJid;
-  if (adminJid.endsWith('@lid')) {
-    const p = resolveLidToPhone(adminJid.split('@')[0]);
-    if (p) buttonTargetJid = `91${p}@s.whatsapp.net`;
-  }
+  // ALWAYS send standard text message directly to targetSendJid (guarantees 0ms instant display without "Waiting for this message" delays)
+  await sock.sendMessage(targetSendJid, { text: cardText });
 
-  // 1. ALWAYS send standard text FIRST to guarantee 0ms instant display without "Waiting for this message" delays
-  await sock.sendMessage(buttonTargetJid, { text: cardText });
-
-  // 2. ALWAYS dispatch interactive (disambiguous) buttons so the admin can click them directly!
-  if (count > 0) {
+  // Dispatch native interactive buttons ONLY when not in self-chat
+  // (In WhatsApp self-chat, relayMessage biz stanzas trigger "Waiting for this message" decryption failure)
+  if (!isSelf && count > 0) {
     try {
       await sendInteractiveButtons({
         sock,
-        jid: buttonTargetJid,
-        title,
+        jid: targetSendJid,
+        title: `*Campaign Audience Review* · ${campaign.timeframeLabel}`,
         body: `Select an action below for this audience (${count} recipients):`,
         footer: 'PrintKurox Campaign Manager · Admin',
         buttons: [
@@ -826,9 +871,6 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
   }
 }
 
-/**
- * Executes promotional dispatch to staged campaign audience with anti-spam rate limiting
- */
 async function executeCampaignBroadcast({ sock, adminJid, campaign }) {
   if (!campaign || !campaign.recipients || campaign.recipients.length === 0) {
     await sock.sendMessage(adminJid, {
@@ -883,7 +925,9 @@ async function executeCampaignBroadcast({ sock, adminJid, campaign }) {
   }
   reportText += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n_Campaign complete._`;
 
-  await sock.sendMessage(adminJid, { text: reportText });
+  const myJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : '919362980761@s.whatsapp.net';
+  const targetReplyJid = (adminJid === 'self' || adminJid.includes('9362980761') || adminJid.includes('261469505642610')) ? myJid : adminJid;
+  await sock.sendMessage(targetReplyJid, { text: reportText });
 }
 
 async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeMb) {
@@ -2331,11 +2375,28 @@ async function startBot() {
         // ADMIN COMMANDS (@ad, @preview, @send, @send 24 hour, send 24 hour, 24 hour, @send <numbers>)
         // ======================================================================
         const isAdmin = isSenderAdmin(senderJid, normalizedJid, isMessageToSelf, userActivityPhone);
+        const adminReplyJid = isMessageToSelf
+          ? (myJid || `91${myPhone}@s.whatsapp.net`)
+          : senderJid;
+
+        const saveCampaignState = (campaign) => {
+          adminCampaignState.set(senderJid, campaign);
+          adminCampaignState.set(normalizedJid, campaign);
+          adminCampaignState.set(adminReplyJid, campaign);
+          if (isMessageToSelf) adminCampaignState.set('self', campaign);
+        };
+
+        const clearCampaignState = () => {
+          adminCampaignState.delete(senderJid);
+          adminCampaignState.delete(normalizedJid);
+          adminCampaignState.delete(adminReplyJid);
+          adminCampaignState.delete('self');
+        };
 
         // Preview command: sends promo to self/admin for manual verification or manual forwarding
         if (isAdmin && (lowerText === '@ad' || lowerText === '@preview' || lowerText === '@promo' || lowerText === '@ad_preview')) {
           const promo = getStudentDirectoryPromoCard();
-          await sock.sendMessage(senderJid, {
+          await sock.sendMessage(adminReplyJid, {
             text:
               `${promo.title}\n` +
               `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -2353,7 +2414,12 @@ async function startBot() {
         // ADMIN CAMPAIGN INTERACTIVE EXCLUSION & DISPATCH CONTROLLER
         // (Active staged campaign actions: send, cancel, remove, numeric input)
         // ======================================================================
-        const activeCampaign = isAdmin ? (adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid)) : null;
+        const activeCampaign = isAdmin
+          ? (adminCampaignState.get(senderJid) ||
+             adminCampaignState.get(normalizedJid) ||
+             adminCampaignState.get(adminReplyJid) ||
+             (isMessageToSelf ? adminCampaignState.get('self') : null))
+          : null;
 
         if (activeCampaign) {
           const cleanAdminText = trimmedText.toLowerCase();
@@ -2364,15 +2430,14 @@ async function startBot() {
               activeCampaign.isAwaitingRemoval = false;
               await sendCampaignReviewCard({
                 sock,
-                adminJid: senderJid,
+                adminJid: adminReplyJid,
                 campaign: activeCampaign,
-                noticeText: 'ℹ️ Removal mode cancelled. Audience list preserved.',
+                noticeText: '⚠️ Removal mode cancelled. Audience list preserved.',
               });
               return;
             } else {
-              adminCampaignState.delete(senderJid);
-              adminCampaignState.delete(normalizedJid);
-              await sock.sendMessage(senderJid, {
+              clearCampaignState();
+              await sock.sendMessage(adminReplyJid, {
                 text: '🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched.',
               });
               return;
@@ -2381,9 +2446,8 @@ async function startBot() {
 
           // 2. Send / Proceed Broadcast
           if (/^(send|proceed|broadcast|go|ok)$/i.test(cleanAdminText)) {
-            adminCampaignState.delete(senderJid);
-            adminCampaignState.delete(normalizedJid);
-            await executeCampaignBroadcast({ sock, adminJid: senderJid, campaign: activeCampaign });
+            clearCampaignState();
+            await executeCampaignBroadcast({ sock, adminJid: adminReplyJid, campaign: activeCampaign });
             return;
           }
 
@@ -2395,7 +2459,7 @@ async function startBot() {
             const rawTarget = cleanAdminText.replace(/^(?:remove|delete|del|exclude)\s*/i, '').trim();
             if (!rawTarget) {
               activeCampaign.isAwaitingRemoval = true;
-              await sock.sendMessage(senderJid, {
+              await sock.sendMessage(adminReplyJid, {
                 text:
                   `❌ *Remove Numbers from Audience*\n` +
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -2438,13 +2502,13 @@ async function startBot() {
               activeCampaign.isAwaitingRemoval = false;
               await sendCampaignReviewCard({
                 sock,
-                adminJid: senderJid,
+                adminJid: adminReplyJid,
                 campaign: activeCampaign,
                 noticeText: `✅ *Removed ${removedCount} contact(s) from campaign audience.*`,
               });
               return;
             } else if (activeCampaign.isAwaitingRemoval) {
-              await sock.sendMessage(senderJid, {
+              await sock.sendMessage(adminReplyJid, {
                 text: `⚠️ *No matching contacts found to remove.*\nReply with a valid number from the list (1 to ${activeCampaign.recipients.length}) or a 10-digit phone number, or reply *cancel*.`,
               });
               return;
@@ -2460,6 +2524,7 @@ async function startBot() {
             lowerText.startsWith('@campaign') ||
             lowerText.startsWith('campaign ') ||
             lowerText === '@send' ||
+            lowerText === 'send' ||
             /^(?:@?send\s+)?(?:\d+\s*(?:hours?|hrs?|h|days?|d|weeks?|w)|today)$/i.test(trimmedText)
           );
 
@@ -2485,25 +2550,24 @@ async function startBot() {
               isAwaitingRemoval: false,
               timestamp: Date.now(),
             };
-            adminCampaignState.set(senderJid, campaign);
-            adminCampaignState.set(normalizedJid, campaign);
+            saveCampaignState(campaign);
 
-            await sendCampaignReviewCard({ sock, adminJid: senderJid, campaign });
+            await sendCampaignReviewCard({ sock, adminJid: adminReplyJid, campaign });
             return;
           }
 
-          // Otherwise, it is an automated timeframe scan (e.g. "@send 24 hour", "24 hour", "12h", "7d", "today")
+          // Otherwise, it is an automated timeframe scan (e.g. "@send 24 hour", "send 24 hour", "24 hour", "12h", "7d", "today")
           const tf = parseTimeframeHours(rawArg);
-          await sock.sendMessage(senderJid, {
+          await sock.sendMessage(adminReplyJid, {
             text: `🔍 *Scanning active students from the past ${tf.label}...*\n_Searching activity logs, kiosk orders, and chat sessions..._`,
           });
 
           const activeStudents = await getActiveStudentsInTimeframe(tf.hours, sock);
 
           if (activeStudents.length === 0) {
-            await sock.sendMessage(senderJid, {
+            await sock.sendMessage(adminReplyJid, {
               text:
-                `ℹ️ *No active student contacts found in the past ${tf.label}.*\n` +
+                `⚠️ *No active student contacts found in the past ${tf.label}.*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `None of the students who messaged recently were within the last ${tf.label}.\n\n` +
                 `💡 *What you can do:*\n` +
@@ -2521,10 +2585,9 @@ async function startBot() {
             isAwaitingRemoval: false,
             timestamp: Date.now(),
           };
-          adminCampaignState.set(senderJid, campaign);
-          adminCampaignState.set(normalizedJid, campaign);
+          saveCampaignState(campaign);
 
-          await sendCampaignReviewCard({ sock, adminJid: senderJid, campaign });
+          await sendCampaignReviewCard({ sock, adminJid: adminReplyJid, campaign });
           return;
         }
 
