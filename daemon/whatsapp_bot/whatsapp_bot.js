@@ -292,6 +292,34 @@ function formatPageRange(pages) {
   return ranges.join(', ');
 }
 
+const LID_MAPPING_DIRS = [
+  path.join(__dirname, 'session_auth'),
+  'c:\\Users\\Devananda Wahengbam\\Desktop\\whatsappbot\\session_auth',
+  'c:\\Users\\Devananda Wahengbam\\Desktop\\whatsappbot\\session_auth_business',
+];
+
+function resolveLidToPhone(lid) {
+  if (!lid) return null;
+  const cleanLid = String(lid).replace(/[^0-9]/g, '');
+  if (lidMappingCache.has(cleanLid)) {
+    return lidMappingCache.get(cleanLid).split('@')[0].replace(/[^0-9]/g, '').slice(-10);
+  }
+  for (const dir of LID_MAPPING_DIRS) {
+    const revFile = path.join(dir, `lid-mapping-${cleanLid}_reverse.json`);
+    if (fs.existsSync(revFile)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(revFile, 'utf8'));
+        const clean = String(raw).replace(/[^0-9]/g, '').slice(-10);
+        if (/^[6-9]\d{9}$/.test(clean)) {
+          lidMappingCache.set(cleanLid, `91${clean}@s.whatsapp.net`);
+          return clean;
+        }
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
 /**
  * Resolve phone number for a sender JID or fallback to kiosk station contact
  */
@@ -302,23 +330,17 @@ async function resolveUserPhone(sock, senderJid) {
     raw = senderJid.split('@')[0].replace(/[^0-9]/g, '');
   } else if (senderJid.endsWith('@lid')) {
     const lidNum = senderJid.split('@')[0];
-    if (lidMappingCache.has(lidNum)) {
-      raw = lidMappingCache.get(lidNum).split('@')[0].replace(/[^0-9]/g, '');
-    } else {
+    const resolved = resolveLidToPhone(lidNum);
+    if (resolved) {
+      raw = resolved;
+    } else if (sock?.signalRepository?.lidMapping?.getPNForLID) {
       try {
-        const authDir = path.join(__dirname, 'session_auth');
-        const revPath = path.join(authDir, `lid-mapping-${lidNum}_reverse.json`);
-        if (fs.existsSync(revPath)) {
-          const pn = JSON.parse(fs.readFileSync(revPath, 'utf8'));
-          if (pn) raw = String(pn).replace(/[^0-9]/g, '');
+        const pn = await sock.signalRepository.lidMapping.getPNForLID(senderJid);
+        if (pn) {
+          raw = String(pn).split('@')[0].replace(/[^0-9]/g, '');
+          lidMappingCache.set(lidNum, `${raw}@s.whatsapp.net`);
         }
       } catch (e) {}
-      if (!raw && sock?.signalRepository?.lidMapping?.getPNForLID) {
-        try {
-          const pn = await sock.signalRepository.lidMapping.getPNForLID(senderJid);
-          if (pn) raw = pn.split('@')[0].replace(/[^0-9]/g, '');
-        } catch (e) {}
-      }
     }
   }
   if (raw && raw.length >= 10) {
@@ -679,21 +701,28 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
               cleanPhone = rawId.slice(-10);
             } else if (rawId.endsWith('@s.whatsapp.net')) {
               cleanPhone = rawId.split('@')[0].replace(/[^0-9]/g, '').slice(-10);
-            } else if (sock?.signalRepository?.lidMapping?.getPNForLID) {
-              try {
-                const pn = await sock.signalRepository.lidMapping.getPNForLID(`${rawId}@lid`);
-                if (pn) {
-                  const digits = pn.split('@')[0].replace(/[^0-9]/g, '').slice(-10);
-                  if (/^[6-9]\d{9}$/.test(digits)) cleanPhone = digits;
-                }
-              } catch (e) {}
+            } else {
+              // Multi-directory reverse LID mapping lookup
+              cleanPhone = resolveLidToPhone(rawId);
+              if (!cleanPhone && sock?.signalRepository?.lidMapping?.getPNForLID) {
+                try {
+                  const pn = await sock.signalRepository.lidMapping.getPNForLID(`${rawId}@lid`);
+                  if (pn) {
+                    const digits = pn.split('@')[0].replace(/[^0-9]/g, '').slice(-10);
+                    if (/^[6-9]\d{9}$/.test(digits)) cleanPhone = digits;
+                  }
+                } catch (e) {}
+              }
             }
 
-            if (cleanPhone && /^[6-9]\d{9}$/.test(cleanPhone) && !foundMap.has(cleanPhone)) {
-              foundMap.set(cleanPhone, {
-                phone: cleanPhone,
-                jid: `91${cleanPhone}@s.whatsapp.net`,
-                name: getStudentNameByPhone(cleanPhone),
+            const mapKey = cleanPhone || rawId;
+            if (!foundMap.has(mapKey)) {
+              const studentName = cleanPhone ? getStudentNameByPhone(cleanPhone) : 'Student';
+              foundMap.set(mapKey, {
+                phone: cleanPhone || rawId,
+                isLidOnly: !cleanPhone,
+                jid: cleanPhone ? `91${cleanPhone}@s.whatsapp.net` : `${rawId}@lid`,
+                name: studentName,
                 lastActive: new Date(mtime).toISOString(),
               });
             }
@@ -703,11 +732,14 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
     }
   } catch (e) {}
 
-  // 3. Exclude admin numbers and bot's own contact
+  // 3. Exclude admin numbers, bot itself, and bot's own LID
   for (const adminNum of ADMIN_NUMBERS) {
     const cleanAdmin = adminNum.slice(-10);
     foundMap.delete(cleanAdmin);
   }
+  foundMap.delete('261469505642610');
+  foundMap.delete('9362980761');
+  foundMap.delete('9863013886');
 
   return Array.from(foundMap.values()).sort(
     (a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime()
@@ -724,8 +756,9 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
   const displayList = campaign.recipients.slice(0, maxDisplay);
 
   displayList.forEach((r, idx) => {
-    const namePart = r.name && r.name !== 'Student' ? ` (${r.name})` : '';
-    listStr += `${idx + 1}. *+91 ${r.phone.slice(-10)}*${namePart}\n`;
+    const namePart = r.name && r.name !== 'Student' && r.name !== 'WhatsApp User' ? ` (${r.name})` : '';
+    const phonePart = r.isLidOnly ? `*User* (ID: ...${r.phone.slice(-6)})` : `*+91 ${r.phone.slice(-10)}*`;
+    listStr += `${idx + 1}. ${phonePart}${namePart}\n`;
   });
 
   if (count > maxDisplay) {
