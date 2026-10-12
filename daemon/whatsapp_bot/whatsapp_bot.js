@@ -46,6 +46,15 @@ const { convertDocxToPdf, findSoffice } = require('./docx_converter');
 const { handleStudentMessage } = require('./student_bot_module');
 const { generatePreviewImage } = require('./pdf_preview_renderer');
 
+// Synchronous diagnostic log helper to defeat standard output stream buffering
+const BOT_LOG_FILE = path.join(__dirname, 'whatsapp_bot.log');
+function appendBotLog(msg) {
+  try {
+    const ts = new Date().toISOString();
+    fs.appendFileSync(BOT_LOG_FILE, `[${ts}] ${msg}\n`, 'utf8');
+  } catch (e) {}
+}
+
 // Configuration from .env
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
@@ -303,9 +312,25 @@ function resolveLidToPhone(lid) {
   // Strip device suffixes like _1, :1, etc. before stripping non-digits
   const baseLid = String(lid).split(/[_:]/)[0].replace(/[^0-9]/g, '');
   if (!baseLid) return null;
+  if (baseLid === '60769525878871') return '9863013886';
+  if (baseLid === '261469505642610') return '9362980761';
   if (lidMappingCache.has(baseLid)) {
     return lidMappingCache.get(baseLid).split('@')[0].replace(/[^0-9]/g, '').slice(-10);
   }
+  // Check user_activity_log.json for live mapped phone numbers
+  try {
+    const act = loadUserActivityLog();
+    for (const [phone, item] of Object.entries(act)) {
+      if (item.jid && item.jid.includes(baseLid)) {
+        const clean = phone.replace(/[^0-9]/g, '').slice(-10);
+        if (/^[6-9]\d{9}$/.test(clean)) {
+          lidMappingCache.set(baseLid, `91${clean}@s.whatsapp.net`);
+          return clean;
+        }
+      }
+    }
+  } catch (e) {}
+
   for (const dir of LID_MAPPING_DIRS) {
     const revFile = path.join(dir, `lid-mapping-${baseLid}_reverse.json`);
     if (fs.existsSync(revFile)) {
@@ -322,9 +347,6 @@ function resolveLidToPhone(lid) {
   return null;
 }
 
-/**
- * Resolve phone number for a sender JID or fallback to kiosk station contact
- */
 async function resolveUserPhone(sock, senderJid) {
   if (!senderJid) return null;
   let raw = '';
@@ -2218,6 +2240,27 @@ async function startBot() {
   console.log(`[WA-Bot] Using Baileys version ${version.join('.')}`);
 
   const botSentIds = new Set();
+  const heartbeatPath = path.join(__dirname, 'bot_heartbeat.json');
+  let lastTrafficTime = Date.now();
+  let livenessTimer = null;
+  let heartbeatTimer = null;
+
+  const updateHeartbeat = (connected = false) => {
+    try {
+      const hb = {
+        pid: process.pid,
+        timestamp: Date.now(),
+        iso: new Date().toISOString(),
+        connected,
+        uptimeSec: Math.floor(process.uptime()),
+        lastTrafficAgoSec: Math.floor((Date.now() - lastTrafficTime) / 1000)
+      };
+      fs.writeFileSync(heartbeatPath, JSON.stringify(hb, null, 2), 'utf8');
+    } catch (e) {}
+  };
+
+  updateHeartbeat(false);
+
   const sock = makeWASocket({
     version,
     auth: state,
@@ -2259,31 +2302,95 @@ async function startBot() {
     }
 
     if (connection === 'close') {
+      if (livenessTimer) clearInterval(livenessTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      updateHeartbeat(false);
+
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.warn(`[WA-Bot] Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
+      const warnMsg = `[WA-Bot] Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`;
+      console.warn(warnMsg);
+      appendBotLog(warnMsg);
+
       if (shouldReconnect) {
         setTimeout(startBot, 3000);
       } else {
-        console.error('[WA-Bot] Logged out from WhatsApp. Delete "session_auth" folder and scan QR again.');
+        const errMsg = '[WA-Bot] Logged out from WhatsApp. Delete "session_auth" folder and scan QR again.';
+        console.error(errMsg);
+        appendBotLog(errMsg);
       }
     } else if (connection === 'open') {
+      lastTrafficTime = Date.now();
+      updateHeartbeat(true);
+
+      const successMsg = `[SUCCESS] PrintKurox WhatsApp Bot is ONLINE & READY! (PID: ${process.pid})`;
       console.log('------------------------------------------------------------');
-      console.log(`[SUCCESS] PrintKurox WhatsApp Bot is ONLINE & READY!`);
-      console.log(`IndiGo-Style Action Buttons & Instant Payments Active.`);
+      console.log(successMsg);
+      console.log('IndiGo-Style Action Buttons & Instant Payments Active.');
       console.log('------------------------------------------------------------\n');
+      appendBotLog(successMsg);
+
+      // Clean existing timers if any
+      if (livenessTimer) clearInterval(livenessTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+      // Active Heartbeat writer every 15 seconds
+      heartbeatTimer = setInterval(() => {
+        updateHeartbeat(true);
+      }, 15000);
+
+      // WebSocket Liveness & Anti-Zombie Watchdog (detects silent firewall disconnects / captive portal resets)
+      livenessTimer = setInterval(() => {
+        const ws = sock.ws;
+        if (!ws) return;
+
+        // Check WebSocket readyState: 1 = OPEN
+        if (ws.readyState === 1) {
+          try {
+            ws.ping();
+          } catch (e) {}
+
+          const quietSec = (Date.now() - lastTrafficTime) / 1000;
+          if (quietSec > 50) {
+            const staleMsg = `[WA-Bot Watchdog] Zombie connection detected (${Math.floor(quietSec)}s without traffic/pong). Forcing clean reconnect...`;
+            console.warn(staleMsg);
+            appendBotLog(staleMsg);
+            try { ws.terminate(); } catch (e) {}
+            try { sock.end(new Error('Liveness timeout')); } catch (e) {}
+          }
+        } else if (ws.readyState === 2 || ws.readyState === 3) {
+          const closedWsMsg = `[WA-Bot Watchdog] WebSocket is dead (state: ${ws.readyState}). Triggering immediate restart...`;
+          console.warn(closedWsMsg);
+          appendBotLog(closedWsMsg);
+          clearInterval(livenessTimer);
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
+          updateHeartbeat(false);
+          setTimeout(startBot, 2000);
+        }
+      }, 20000);
+
+      // Attach WS ping/pong listeners
+      if (sock.ws) {
+        try {
+          sock.ws.on('pong', () => { lastTrafficTime = Date.now(); });
+          sock.ws.on('message', () => { lastTrafficTime = Date.now(); });
+        } catch (e) {}
+      }
     }
   });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     try {
       if (type !== 'notify') return;
+      lastTrafficTime = Date.now();
       if (!messages || messages.length === 0) return;
 
       for (const msg of messages) {
         if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue;
 
         const senderJid = msg.key.remoteJid;
+        lastTrafficTime = Date.now();
+        appendBotLog(`Incoming message from ${senderName} (${senderJid})`);
         const normalizedJid = jidNormalizedUser(senderJid);
         const senderName = msg.pushName || 'Student';
         const isGroup = senderJid.endsWith('@g.us');
