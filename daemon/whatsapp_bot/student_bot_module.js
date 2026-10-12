@@ -900,7 +900,7 @@ async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, s
         dossierQuery = studentCleanIdMap.get(cleanToken) || cleanToken.replace(/_/g, '/');
     } else if (lowerBody.startsWith('@dossier') || lowerBody.startsWith('!dossier') || lowerBody.startsWith('dossier ')) {
         dossierQuery = rawBody.replace(/^[@!#]?dossiers*/i, '').trim();
-    } else if (lowerBody === 'unlock' || lowerBody === 'unlock dossier') {
+    } else if (lowerBody === 'unlock' || lowerBody === 'unlock dossier' || (lowerBody === '1' && userLastStudent.has(senderJid))) {
         dossierQuery = userLastStudent.get(senderJid) || '';
     }
 

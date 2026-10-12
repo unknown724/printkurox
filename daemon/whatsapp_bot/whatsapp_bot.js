@@ -415,119 +415,51 @@ const lidMappingCache = new Map();
 async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintKurox AutoPrint', buttons = [] }) {
   if (!jid || !body) return null;
 
-  // Resolve @lid to @s.whatsapp.net if possible (instant in-memory cache)
-  let targetJid = jid;
-  if (jid.endsWith('@lid')) {
-    const lidNum = jid.split('@')[0];
-    const resolvedPhone = resolveLidToPhone(lidNum);
-    if (resolvedPhone) {
-      targetJid = `91${resolvedPhone}@s.whatsapp.net`;
-    } else if (sock?.signalRepository?.lidMapping?.getPNForLID) {
-      try {
-        const pn = await sock.signalRepository.lidMapping.getPNForLID(jid);
-        if (pn) {
-          const digits = String(pn).split('@')[0].replace(/[^0-9]/g, '').slice(-10);
-          if (/^[6-9]\d{9}$/.test(digits)) targetJid = `91${digits}@s.whatsapp.net`;
-        }
-      } catch (e) {}
-    }
+  // Dispatch to the active conversation JID directly
+  const targetSendJid = jid;
+
+  // Build high-clarity, beautifully styled WhatsApp text card
+  const cleanTitle = title ? title.replace(/^\*+|\*+$/g, '').trim() : '';
+  const header = cleanTitle ? `*${cleanTitle}*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` : '';
+
+  let optionsText = '';
+  if (buttons && buttons.length > 0) {
+    optionsText = buttons.map((b, idx) => {
+      if (b.url) {
+        return `• 🔗 *${b.text}:*\n  ${b.url}`;
+      }
+      return `• Reply *${idx + 1}* ➔ ${b.text}`;
+    }).join('\n\n');
   }
 
-  const nativeButtons = buttons.map((btn) => {
-    if (btn.url) {
-      return {
-        name: 'cta_url',
-        buttonParamsJson: JSON.stringify({
-          display_text: btn.text,
-          url: btn.url,
-          merchant_url: btn.url,
-        }),
-      };
-    }
-    return {
-      name: 'quick_reply',
-      buttonParamsJson: JSON.stringify({
-        display_text: btn.text,
-        id: btn.id,
-      }),
-    };
-  });
+  const footerText = footer ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n_${footer}_` : '';
+  const fullText = `${header}${body}${optionsText ? '\n\n' + optionsText : ''}${footerText}`.trim();
 
   try {
-    const waMsg = generateWAMessageFromContent(
-      targetJid,
-      {
-        viewOnceMessage: {
-          message: {
-            messageContextInfo: {
-              deviceListMetadata: {},
-              deviceListMetadataVersion: 2,
-            },
-            interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-              header: proto.Message.InteractiveMessage.Header.fromObject({
-                title: title || '',
-                hasMediaAttachment: false,
-              }),
-              body: proto.Message.InteractiveMessage.Body.fromObject({
-                text: body,
-              }),
-              footer: proto.Message.InteractiveMessage.Footer.fromObject({
-                text: footer,
-              }),
-              nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
-                buttons: nativeButtons,
-              }),
-            }),
-          },
-        },
-      },
-      { userJid: sock.user?.id }
-    );
-
-    const additionalNodes = [
-      {
-        tag: 'biz',
-        attrs: {},
-        content: [
-          {
-            tag: 'interactive',
-            attrs: {
-              type: 'native_flow',
-              v: '1',
-            },
-            content: [
-              {
-                tag: 'native_flow',
-                attrs: {
-                  name: 'mixed',
-                  v: '9',
-                },
-              },
-            ],
-          },
-        ],
-      },
-
-    ];
-
-    await sock.relayMessage(targetJid, waMsg.message, {
-      messageId: waMsg.key.id,
-      additionalNodes,
-    });
-    if (waMsg?.key?.id && waMsg?.message) {
-      messageStore.set(waMsg.key.id, waMsg.message);
+    const sentMsg = await sock.sendMessage(targetSendJid, { text: fullText });
+    if (sentMsg?.key?.id && sentMsg?.message) {
+      messageStore.set(sentMsg.key.id, sentMsg.message);
     }
-    return waMsg;
-  } catch (btnErr) {
-    console.warn('[WA-Bot] sendInteractiveButtons relay error:', btnErr.message);
-    // Send fallback text only if relayMessage failed
-    try {
-      const buttonPrompts = buttons
-        .map((b, idx) => b.url ? `🔗 *${b.text}:* ${b.url}` : `🔘 *${b.text}*`)
-        .join('\n');
-      const fallback = `${title ? '*' + title + '*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n' : ''}${body}${buttonPrompts ? '\n\n' + buttonPrompts : ''}${footer ? '\n\n_' + footer + '_' : ''}`;
-      await sock.sendMessage(targetJid, { text: fallback.trim() });
-    } catch (e) {}
+    return sentMsg;
+  } catch (sendErr) {
+    console.error(`[WA-Bot] sendInteractiveButtons delivery error to ${targetSendJid}:`, sendErr.message);
+    // If sending to LID failed, attempt fallback to phone-based JID
+    if (jid.endsWith('@lid')) {
+      try {
+        const lidNum = jid.split('@')[0];
+        const resolvedPhone = resolveLidToPhone(lidNum);
+        if (resolvedPhone) {
+          const fallbackJid = `91${resolvedPhone}@s.whatsapp.net`;
+          const sentFallback = await sock.sendMessage(fallbackJid, { text: fullText });
+          if (sentFallback?.key?.id && sentFallback?.message) {
+            messageStore.set(sentFallback.key.id, sentFallback.message);
+          }
+          return sentFallback;
+        }
+      } catch (fbErr) {
+        console.error('[WA-Bot] PN fallback delivery also failed:', fbErr.message);
+      }
+    }
     return null;
   }
 }
@@ -870,27 +802,6 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
 
   // ALWAYS send standard text message directly to targetSendJid (guarantees 0ms instant display without "Waiting for this message" delays)
   await sock.sendMessage(targetSendJid, { text: cardText });
-
-  // Dispatch native interactive buttons ONLY when not in self-chat
-  // (In WhatsApp self-chat, relayMessage biz stanzas trigger "Waiting for this message" decryption failure)
-  if (!isSelf && count > 0) {
-    try {
-      await sendInteractiveButtons({
-        sock,
-        jid: targetSendJid,
-        title: `*Campaign Audience Review* · ${campaign.timeframeLabel}`,
-        body: `Select an action below for this audience (${count} recipients):`,
-        footer: 'PrintKurox Campaign Manager · Admin',
-        buttons: [
-          { id: 'btn_campaign_send', text: `🚀 Send to All (${count})` },
-          { id: 'btn_campaign_remove_prompt', text: '❌ Remove Numbers' },
-          { id: 'btn_campaign_cancel', text: '🚫 Cancel Broadcast' },
-        ],
-      });
-    } catch (e) {
-      console.warn('[WA-Bot] sendInteractiveButtons notice:', e.message);
-    }
-  }
 }
 
 async function executeCampaignBroadcast({ sock, adminJid, campaign }) {
