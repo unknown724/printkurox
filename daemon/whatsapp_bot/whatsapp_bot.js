@@ -2389,10 +2389,10 @@ async function startBot() {
         if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue;
 
         const senderJid = msg.key.remoteJid;
-        lastTrafficTime = Date.now();
-        appendBotLog(`Incoming message from ${senderName} (${senderJid})`);
         const normalizedJid = jidNormalizedUser(senderJid);
         const senderName = msg.pushName || 'Student';
+        lastTrafficTime = Date.now();
+        appendBotLog(`Incoming message from ${senderName} (${senderJid})`);
         const isGroup = senderJid.endsWith('@g.us');
 
         if (isGroup && !msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(sock.user?.id)) {
@@ -3549,6 +3549,7 @@ async function startBot() {
       }
     } catch (msgErr) {
       console.error('[WA-Bot] Error processing message:', msgErr);
+      appendBotLog(`[ERROR] Processing message: ${msgErr?.stack || msgErr}`);
     }
   });
 }
