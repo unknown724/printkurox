@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { 
   Lock, 
@@ -231,6 +231,50 @@ export default function StationAdminPage() {
 
   // Queue refresh state
   const [refreshingQueue, setRefreshingQueue] = useState(false);
+
+  const fetchDashboard = useCallback(
+    async (credentials: { pin?: string; token?: string; isMasterAdmin?: boolean; silent?: boolean }) => {
+      if (!credentials.silent) setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch('/api/station/dashboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stationId, ...credentials }),
+        });
+        const result = await res.json();
+
+        if (!res.ok || !result.success) {
+          if (credentials.silent) {
+            // If silent master check fails, just let them see the PIN form
+            return;
+          }
+          throw new Error(result.error || 'Authentication failed');
+        }
+
+        setData(result);
+        if (result.pricing) {
+          setBwPrice(result.pricing.bwSingle || 4);
+          setColorPrice(result.pricing.colorSingle || 7);
+        }
+        if (result.upiId) {
+          setUpiInput(result.upiId);
+        }
+        if (credentials.pin) {
+          sessionStorage.setItem(`station_pass_${stationId}`, credentials.pin);
+        }
+        if (credentials.token) {
+          localStorage.setItem(`station_token_${stationId}`, credentials.token);
+        }
+      } catch (err: any) {
+        setError(err.message);
+        sessionStorage.removeItem(`station_pass_${stationId}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [stationId]
+  );
 
   const handleRefreshQueue = async () => {
     setRefreshingQueue(true);
@@ -565,48 +609,7 @@ export default function StationAdminPage() {
       // Check if logged-in master admin cookie allows direct seamless entry
       fetchDashboard({ isMasterAdmin: true, silent: true });
     }
-  }, [stationId]);
-
-  const fetchDashboard = async (credentials: { pin?: string; token?: string; isMasterAdmin?: boolean; silent?: boolean }) => {
-    if (!credentials.silent) setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/station/dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stationId, ...credentials }),
-      });
-      const result = await res.json();
-      
-      if (!res.ok || !result.success) {
-        if (credentials.silent) {
-          // If silent master check fails, just let them see the PIN form
-          return;
-        }
-        throw new Error(result.error || 'Authentication failed');
-      }
-
-      setData(result);
-      if (result.pricing) {
-        setBwPrice(result.pricing.bwSingle || 4);
-        setColorPrice(result.pricing.colorSingle || 7);
-      }
-      if (result.upiId) {
-        setUpiInput(result.upiId);
-      }
-      if (credentials.pin) {
-        sessionStorage.setItem(`station_pass_${stationId}`, credentials.pin);
-      }
-      if (credentials.token) {
-        localStorage.setItem(`station_token_${stationId}`, credentials.token);
-      }
-    } catch (err: any) {
-      setError(err.message);
-      sessionStorage.removeItem(`station_pass_${stationId}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [stationId, fetchDashboard]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -826,7 +829,7 @@ export default function StationAdminPage() {
             <div className="absolute top-0 right-0 p-4 opacity-5">
               <IndianRupee className="w-24 h-24" />
             </div>
-            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-1">Today's Earnings (Razorpay)</p>
+            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-1">Today&apos;s Earnings (Razorpay)</p>
             <h2 className="text-3xl font-bold text-white">₹{data.metrics.todayEarned}</h2>
             <p className="text-[10px] text-zinc-500 mt-2">{data.metrics.todayPages} pages printed today via Razorpay</p>
           </div>
@@ -898,7 +901,7 @@ export default function StationAdminPage() {
                 </span>
               </h3>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Generate an A4 poster with your station's live QR code (<span className="text-blue-300 font-semibold">Scan to Print - {data.stationName}</span>) to stick outside your hostel room door.
+                Generate an A4 poster with your station&apos;s live QR code (<span className="text-blue-300 font-semibold">Scan to Print - {data.stationName}</span>) to stick outside your hostel room door.
               </p>
             </div>
           </div>

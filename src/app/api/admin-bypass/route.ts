@@ -225,12 +225,12 @@ export async function POST(req: NextRequest) {
         (p.rotation && p.rotation !== 0) ||
         (p.customScale && p.customScale !== 100) ||
         p.included === false ||
-        p.orientation === 'landscape'
+        p.orientation === 'landscape' ||
+        p.orientation === 'portrait'
       )
     );
 
-    // Only perform heavy server-side PDF manipulation when physically required (e.g. converting images, N-up grid layouts, custom borders, text overlays).
-    // Standard PDFs are printed natively by SumatraPDF in printer_daemon.py with orientation, copies, page range, monochrome, and fit.
+    // Perform server-side PDF manipulation when layout, orientation, rotation, scale, or overlays are adjusted
     const needsTransform = Boolean(
       isNotPdf ||
       (customScale && Number(customScale) !== 100) ||
@@ -238,6 +238,7 @@ export async function POST(req: NextRequest) {
       drawBorder ||
       hasTextOverlay ||
       orientation === 'landscape' ||
+      orientation === 'portrait' ||
       hasPageOverrides
     );
 

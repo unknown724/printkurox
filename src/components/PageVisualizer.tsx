@@ -1310,7 +1310,7 @@ export function PageVisualizer({
                           }}
                           style={{
                             filter: getLiveFilter(activeSheetItems[0].colorMode, enhanceMode),
-                            transform: `scale(${Math.max(10, Math.min(400, activeSheetItems[0].customScale ?? customScale ?? 100)) / 100})`,
+                            transform: `scale(${Math.max(10, Math.min(400, (activeSheetItems[0].customScale ?? customScale ?? 100) * 1.05)) / 100})`,
                             transformOrigin: 'center center',
                           }}
                           className="max-w-full max-h-full object-contain p-1 transition-all duration-150"
@@ -1798,20 +1798,21 @@ export function PageVisualizer({
                     const isRotated90 = effectiveRotation % 180 === 90;
                     const isSelected = selectedPageNum === cfg.pageNumber;
 
-                    // Visual scaling factor: distinct visual difference between fit (margin), actual (100%), fill (full), and custom
+                    // Visual scaling factor: calibrated so 105% is the new 100% normal baseline!
                     const getScaleFactor = () => {
+                      const baseBoost = 1.05;
                       // 1. If this specific page has a custom scale set, ALWAYS prioritize it!
                       if (cfg.customScale !== undefined && cfg.customScale !== 100) {
-                        return cfg.customScale / 100;
+                        return (cfg.customScale / 100) * baseBoost;
                       }
                       // 2. Document-level custom scale
                       if (scaling === 'custom' || fitMode === 'custom' || (customScale && customScale !== 100)) {
-                        return (customScale || 100) / 100;
+                        return ((customScale || 100) / 100) * baseBoost;
                       }
-                      if (cfg.customScale === 100) return 1.00;
-                      if (scaling === 'actual' || fitMode === 'actual') return 1.00; // 100% unscaled actual size
-                      if (scaling === 'fill' || fitMode === 'fill') return 1.05; // Slightly enlarged to fill slot edges
-                      return 0.92;
+                      if (cfg.customScale === 100) return baseBoost;
+                      if (scaling === 'actual' || fitMode === 'actual') return baseBoost; // 100% unscaled actual size now calibrated to 1.05
+                      if (scaling === 'fill' || fitMode === 'fill') return 1.10; // Slightly enlarged to fill slot edges
+                      return baseBoost; // Default 100% is now 1.05 (matches perfect 105% scale)
                     };
                     const scaleValue = getScaleFactor();
 

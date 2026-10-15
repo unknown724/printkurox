@@ -151,13 +151,13 @@ export function CostSummary({
 
   const getEffectiveOrientation = () => {
     if (orientation === 'landscape') return 'landscape';
+    if (orientation === 'portrait') return 'portrait';
     if (pageConfigs && pageConfigs.length > 0) {
       const hasLandscape = pageConfigs.some(
         (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
       );
       if (hasLandscape) return 'landscape';
     }
-    if (orientation === 'portrait') return 'portrait';
     return 'portrait';
   };
 

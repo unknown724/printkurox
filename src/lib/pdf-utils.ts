@@ -355,12 +355,15 @@ export async function mergeFilesToPdf(
   // LAYOUT COMPOSER
   // ───────────────────────────────────────────────────────────────────────────
 
+  // Calibrated baseline: 105% is the new default 100% normal print scale
+  const BASE_PRINT_SCALE_BOOST = 1.05;
+
   const customScaleMultiplier =
     (customScale && Number(customScale) !== 100)
-      ? (Number(customScale) / 100)
+      ? (Number(customScale) / 100) * BASE_PRINT_SCALE_BOOST
       : (fitMode === 'custom' && customScale)
-      ? (Number(customScale) / 100)
-      : 1;
+      ? (Number(customScale) / 100) * BASE_PRINT_SCALE_BOOST
+      : BASE_PRINT_SCALE_BOOST;
 
   // Helper to draw an item (image or embedded PDF page) into a specific bounding box on a page
   const drawItemInBox = (
@@ -392,7 +395,9 @@ export async function mergeFilesToPdf(
       h = temp;
     }
 
-    const effectiveScale = pageScaleMultiplier !== undefined ? pageScaleMultiplier : customScaleMultiplier;
+    const effectiveScale = pageScaleMultiplier !== undefined
+      ? pageScaleMultiplier * BASE_PRINT_SCALE_BOOST
+      : customScaleMultiplier;
 
     // CRITICAL: PDF document pages contain text, tables, margins, and headers/footers.
     // They must NEVER be cropped with Math.max ('fill'). 'fill' is strictly for borderless photos/images.

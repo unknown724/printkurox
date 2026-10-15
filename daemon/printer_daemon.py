@@ -1013,11 +1013,9 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     #    - If PDF is Portrait (taller than wide):
     #      SumatraPDF prints it upright 1:1.
     if target_orientation == "landscape":
-        if not pdf_is_landscape:
-            settings_list.append("landscape")
+        settings_list.append("landscape")
     else:
-        if pdf_is_landscape:
-            settings_list.append("disable-auto-rotation")
+        settings_list.append("portrait")
 
     if duplex:
         settings_list.append("duplex")

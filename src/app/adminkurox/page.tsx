@@ -3384,7 +3384,7 @@ export default function AdminKuroxPage() {
               </div>
 
               <p className="text-[10px] text-zinc-400 leading-relaxed">
-                Confirming will tag all completed jobs as settled and permanently reset this station's pending payout balance to ₹0.
+                Confirming will tag all completed jobs as settled and permanently reset this station&apos;s pending payout balance to ₹0.
               </p>
 
               <div className="pt-2 flex justify-end gap-2">
