@@ -175,7 +175,7 @@ export default function AdminKuroxPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<AdminDevice[]>([]);
-  const [maxDevices, setMaxDevices] = useState<number>(4);
+  const [maxDevices, setMaxDevices] = useState<number>(6);
   const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -2289,13 +2289,13 @@ export default function AdminKuroxPage() {
               {devices.length < maxDevices && (
                 <span className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20 font-medium">
                   <PlusCircle className="w-3 h-3" />
-                  {maxDevices - devices.length} slot available
+                  {maxDevices - devices.length} {maxDevices - devices.length === 1 ? 'slot' : 'slots'} available
                 </span>
               )}
             </div>
 
             {/* Devices List */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {devices.map((d) => {
                 const isCurrent = d.device_id === currentDeviceId;
                 const isPhone = /iPhone|Android|iPad/i.test(d.user_agent);
