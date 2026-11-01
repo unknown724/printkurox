@@ -53,6 +53,7 @@ export interface PricingInput {
   customCols?: number;
   customRows?: number;
   customRates?: CustomTierRates;
+  promoCode?: string;
 }
 
 export interface PricingResult {
@@ -67,12 +68,14 @@ export interface PricingResult {
   totalPrice: number; // Final payable amount in INR
   originalPrice: number; // Normal offline market counter price
   savings: number; // Total INR saved vs offline
-  tierName: 'Standard' | 'Assignment Saver' | 'Mega Bulk Saver';
+  tierName: string;
   nextTierSheetsNeeded: number;
   nextTierName: string | null;
   breakdown: string;
   bwPagesCount: number;
   colorPagesCount: number;
+  promoCode?: string;
+  promoApplied?: boolean;
 }
 
 export const OFFLINE_MARKET_RATES = {
@@ -97,23 +100,56 @@ export const TIER_RATES = {
 
 export const RATES = TIER_RATES.standard;
 
-function getActiveTier(sheetCount: number, customRates?: CustomTierRates) {
-  const activeTiers = customRates || TIER_RATES;
+/**
+ * Valid monthly promo code and special promotional tariff
+ * Standard (< 10 pgs): B&W ₹3.00, Color ₹5.00
+ * Bulk (10+ pgs): B&W ₹2.50, Color ₹4.00
+ */
+export const CURRENT_VALID_PROMO_CODE = 'PARE2026';
+
+export function isValidPromoCode(code?: string | null): boolean {
+  if (!code) return false;
+  return code.trim().toUpperCase() === CURRENT_VALID_PROMO_CODE;
+}
+
+export const PROMO_TIER_RATES: CustomTierRates = {
+  standard: {
+    bw: { single: 3.0, duplex: 5.0 },
+    color: { single: 5.0, duplex: 8.0 },
+  },
+  assignment: {
+    bw: { single: 2.5, duplex: 4.5 },
+    color: { single: 4.0, duplex: 7.0 },
+  },
+  mega: {
+    bw: { single: 2.5, duplex: 4.5 },
+    color: { single: 4.0, duplex: 7.0 },
+  },
+};
+
+function getActiveTier(sheetCount: number, customRates?: CustomTierRates, promoCode?: string) {
+  const isPromo = isValidPromoCode(promoCode);
+  const activeTiers = isPromo ? PROMO_TIER_RATES : (customRates || TIER_RATES);
+
   if (sheetCount >= 10) {
     return {
       tierKey: 'assignment' as const,
-      tierName: 'Assignment Saver' as const,
+      tierName: isPromo ? 'Special Bulk Saver' : 'Assignment Saver',
       rates: activeTiers.assignment,
       nextTierSheetsNeeded: 0,
       nextTierName: null,
+      isPromo,
     };
   }
   return {
     tierKey: 'standard' as const,
-    tierName: 'Standard' as const,
+    tierName: isPromo ? 'Special Promo' : 'Standard',
     rates: activeTiers.standard,
     nextTierSheetsNeeded: 10 - sheetCount,
-    nextTierName: `Bulk Offer (₹${activeTiers.assignment.bw.single.toFixed(2)}/pg)`,
+    nextTierName: isPromo
+      ? `Bulk Offer (₹${activeTiers.assignment.bw.single.toFixed(2)}/pg)`
+      : `Bulk Offer (₹${activeTiers.assignment.bw.single.toFixed(2)}/pg)`,
+    isPromo,
   };
 }
 
@@ -195,7 +231,7 @@ export function calculatePricing(input: PricingInput): PricingResult {
 
     const totalSheetsPerCopy = duplexSheets + singleSheets;
     const totalPhysicalSheets = totalSheetsPerCopy * safeCopies;
-    const tier = getActiveTier(totalPhysicalSheets, input.customRates);
+    const tier = getActiveTier(totalPhysicalSheets, input.customRates, input.promoCode);
 
     // Group pages onto physical sides and accurately detect whether each side contains color
     const sideColorModes: ('color' | 'bw')[] = [];
@@ -266,16 +302,18 @@ export function calculatePricing(input: PricingInput): PricingResult {
       parts.push(`[${layoutMode === 'id-card' ? '2-in-1 ID Card' : `${pagesPerSide}-on-1`} Layout]`);
     }
 
-    const finalTotalPrice = Math.round(unitPrice * safeCopies);
-    const finalStandardPrice = Math.round(standardUnitPrice * safeCopies);
-    const savings = tier.tierKey !== 'standard' ? Math.max(0, finalStandardPrice - finalTotalPrice) : 0;
+    const finalTotalPrice = Math.round(unitPrice * safeCopies * 100) / 100;
+    const finalStandardPrice = Math.round(standardUnitPrice * safeCopies * 100) / 100;
+    const savings = (tier.isPromo || tier.tierKey !== 'standard') ? Math.max(0, finalStandardPrice - finalTotalPrice) : 0;
     const finalOriginalPrice = savings > 0 ? finalStandardPrice : finalTotalPrice;
 
     let breakdownStr = parts.join(' + ');
     if (safeCopies > 1) {
       breakdownStr = `(${breakdownStr}) × ${safeCopies} copies`;
     }
-    if (tier.tierKey !== 'standard') {
+    if (tier.isPromo) {
+      breakdownStr += ' [Promo Applied]';
+    } else if (tier.tierKey !== 'standard') {
       breakdownStr += ` [${tier.tierName} Applied]`;
     }
 
@@ -297,6 +335,8 @@ export function calculatePricing(input: PricingInput): PricingResult {
       breakdown: breakdownStr,
       bwPagesCount,
       colorPagesCount,
+      promoCode: tier.isPromo ? CURRENT_VALID_PROMO_CODE : undefined,
+      promoApplied: tier.isPromo,
     };
   }
 
@@ -316,7 +356,7 @@ export function calculatePricing(input: PricingInput): PricingResult {
 
   const totalSheetsPerCopy = duplexSheets + singleSheets;
   const totalPhysicalSheets = totalSheetsPerCopy * safeCopies;
-  const tier = getActiveTier(totalPhysicalSheets, input.customRates);
+  const tier = getActiveTier(totalPhysicalSheets, input.customRates, input.promoCode);
 
   const activeRates = tier.rates[effectiveMode];
   const standardRates = (input.customRates || TIER_RATES).standard[effectiveMode];
@@ -343,9 +383,13 @@ export function calculatePricing(input: PricingInput): PricingResult {
     breakdown = `${safePages} Single-Sided (₹${activeRates.single} ea)`;
   }
 
-  const rawTotalPrice = Math.round(unitPrice * safeCopies);
-  const rawStandardPrice = Math.round(standardUnitPrice * safeCopies);
-  const savings = tier.tierKey !== 'standard' ? Math.max(0, rawStandardPrice - rawTotalPrice) : 0;
+  if (tier.isPromo) {
+    breakdown += ' [Promo Applied]';
+  }
+
+  const rawTotalPrice = Math.round(unitPrice * safeCopies * 100) / 100;
+  const rawStandardPrice = Math.round(standardUnitPrice * safeCopies * 100) / 100;
+  const savings = (tier.isPromo || tier.tierKey !== 'standard') ? Math.max(0, rawStandardPrice - rawTotalPrice) : 0;
   const rawOriginalPrice = savings > 0 ? rawStandardPrice : rawTotalPrice;
 
   return {
@@ -366,5 +410,7 @@ export function calculatePricing(input: PricingInput): PricingResult {
     breakdown,
     bwPagesCount: effectiveMode === 'bw' ? safePages : 0,
     colorPagesCount: effectiveMode === 'color' ? safePages : 0,
+    promoCode: tier.isPromo ? CURRENT_VALID_PROMO_CODE : undefined,
+    promoApplied: tier.isPromo,
   };
 }

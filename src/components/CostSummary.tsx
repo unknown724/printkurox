@@ -19,8 +19,10 @@ import {
   Building2,
   MapPin,
   ChevronRight,
+  Tag,
+  Sparkles,
 } from 'lucide-react';
-import { PricingResult, PageConfig } from '@/lib/pricing';
+import { PricingResult, PageConfig, isValidPromoCode, CURRENT_VALID_PROMO_CODE } from '@/lib/pricing';
 import { usePrinterStatus } from '@/lib/usePrinterStatus';
 import { useRouter } from 'next/navigation';
 import { BorderBeam } from '@/components/ui/BorderBeam';
@@ -52,6 +54,8 @@ interface CostSummaryProps {
   fitMode?: 'fit' | 'fill' | 'actual' | 'custom';
   drawBorder?: boolean;
   onOpenStationModal?: () => void;
+  promoCode?: string;
+  onPromoCodeChange?: (code: string) => void;
 }
 
 export function CostSummary({
@@ -72,6 +76,8 @@ export function CostSummary({
   fitMode = 'fit',
   drawBorder = false,
   onOpenStationModal,
+  promoCode,
+  onPromoCodeChange,
 }: CostSummaryProps) {
   const router = useRouter();
   const station = getStationConfig(stationId);
@@ -106,6 +112,44 @@ export function CostSummary({
 
   // Student phone number for silent auto-prefill in Razorpay (from localStorage if saved)
   const [phoneNumber, setPhoneNumber] = useState('');
+
+  // Promo code state
+  const [inputPromo, setInputPromo] = useState('');
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [promoSuccess, setPromoSuccess] = useState<string | null>(null);
+
+  const isPromoActive = Boolean(pricing?.promoApplied || isValidPromoCode(promoCode));
+  const activePromoCode = promoCode || (pricing?.promoApplied ? CURRENT_VALID_PROMO_CODE : '');
+
+  const formatPrice = (val: number) => {
+    if (typeof val !== 'number' || isNaN(val)) return '0';
+    return val % 1 === 0 ? String(val) : val.toFixed(2).replace(/\.00$/, '');
+  };
+
+  const handleApplyPromo = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const clean = inputPromo.trim().toUpperCase();
+    if (!clean) {
+      setPromoError('Please enter a promo code');
+      return;
+    }
+    if (isValidPromoCode(clean)) {
+      onPromoCodeChange?.(clean);
+      setPromoSuccess(`🎉 Promo applied! Special discount activated.`);
+      setPromoError(null);
+      setInputPromo('');
+    } else {
+      setPromoError('Invalid promo code');
+      setPromoSuccess(null);
+    }
+  };
+
+  const handleRemovePromo = () => {
+    onPromoCodeChange?.('');
+    setInputPromo('');
+    setPromoError(null);
+    setPromoSuccess(null);
+  };
 
   useEffect(() => {
     try {
@@ -187,6 +231,7 @@ export function CostSummary({
           fitMode,
           drawBorder,
           autoRotate,
+          promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
       const data = await res.json();
@@ -226,6 +271,7 @@ export function CostSummary({
           fitMode,
           drawBorder,
           autoRotate,
+          promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
       const data = await res.json();
@@ -269,6 +315,7 @@ export function CostSummary({
           fitMode,
           drawBorder,
           autoRotate,
+          promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
 
@@ -278,7 +325,8 @@ export function CostSummary({
       const cleanPhone = station.whatsappNumber.replace(/[^0-9]/g, '');
       const modeText = pricing.colorMode === 'bw' ? 'B&W' : 'Color';
       const sideText = pricing.isDuplex ? 'Double-sided' : 'Single-sided';
-      const waMessage = `Hi ${station.operatorName || 'Romen'} (${station.name})! 🖨️\nI submitted a print order at your counter.\n\n📄 File: ${fileName}\n🔖 Pickup Code: ${data.pickupCode}\n📊 Pages: ${pricing.totalPages} (${modeText}, ${sideText})\n📑 Copies: ${pricing.copies}\n💰 Total Amount: ₹${pricing.totalPrice}\n\nPlease approve & print my document. Thank you!`;
+      const promoText = pricing.promoApplied ? ` (Promo ${pricing.promoCode || CURRENT_VALID_PROMO_CODE} applied)` : '';
+      const waMessage = `Hi ${station.operatorName || 'Romen'} (${station.name})! 🖨️\nI submitted a print order at your counter.\n\n📄 File: ${fileName}\n🔖 Pickup Code: ${data.pickupCode}\n📊 Pages: ${pricing.totalPages} (${modeText}, ${sideText})\n📑 Copies: ${pricing.copies}\n💰 Total Amount: ₹${formatPrice(pricing.totalPrice)}${promoText}\n\nPlease approve & print my document. Thank you!`;
       const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waMessage)}`;
 
       setCounterOrder({
@@ -321,6 +369,7 @@ export function CostSummary({
           drawBorder,
           autoRotate,
           phone: phoneNumber.length === 10 ? phoneNumber : undefined,
+          promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
 
@@ -555,9 +604,95 @@ export function CostSummary({
             <div className="flex items-center justify-between py-1.5">
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Copies</span>
               <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 font-mono">
-                {pricing.copies} Sets × ₹{pricing.unitPrice}
+                {pricing.copies} Sets × ₹{formatPrice(pricing.unitPrice)}
               </span>
             </div>
+          )}
+
+          {/* Promo code line item if applied */}
+          {isPromoActive && (
+            <div className="flex items-center justify-between py-1.5 animate-fade-in-up">
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                <Tag className="w-3 h-3" />
+                <span>Promo ({activePromoCode || CURRENT_VALID_PROMO_CODE})</span>
+              </span>
+              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                {pricing.savings > 0 ? `-₹${formatPrice(pricing.savings)} OFF` : 'Special Rate Applied'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Promo Code Input & Management Section */}
+        <div className="px-3.5 py-2.5 border-t border-zinc-100 dark:border-white/[0.06] bg-zinc-50/70 dark:bg-white/[0.02]">
+          {isPromoActive ? (
+            <div className="p-2.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 dark:bg-emerald-950/25 flex items-center justify-between gap-2.5 shadow-2xs animate-fade-in-up">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-mono font-black text-xs text-emerald-700 dark:text-emerald-300 tracking-wider">
+                      {activePromoCode || CURRENT_VALID_PROMO_CODE}
+                    </span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 uppercase">
+                      Applied
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-600 dark:text-zinc-300 font-medium truncate mt-0.5">
+                    ₹3/pg B&amp;W (₹2.5 for 10+) · ₹5/pg Color (₹4 for 10+)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleRemovePromo}
+                className="p-1.5 rounded-lg hover:bg-emerald-500/20 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors shrink-0 cursor-pointer"
+                title="Remove promo code"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleApplyPromo} className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex-1">
+                  <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-zinc-400">
+                    <Tag className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="text"
+                    value={inputPromo}
+                    onChange={(e) => {
+                      setInputPromo(e.target.value.toUpperCase());
+                      setPromoError(null);
+                    }}
+                    placeholder="ENTER PROMO CODE"
+                    className="w-full pl-8 pr-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900/90 text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 dark:text-white placeholder:text-zinc-400 placeholder:normal-case placeholder:font-normal focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all shadow-2xs"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!inputPromo.trim()}
+                  className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 font-black text-xs shrink-0 shadow-xs active:scale-95 transition-all cursor-pointer"
+                >
+                  Apply
+                </button>
+              </div>
+              {promoError && (
+                <p className="text-[11px] text-rose-500 font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  <span>{promoError}</span>
+                </p>
+              )}
+              {promoSuccess && (
+                <p className="text-[11px] text-emerald-500 font-medium flex items-center gap-1">
+                  <Check className="w-3 h-3 shrink-0" />
+                  <span>{promoSuccess}</span>
+                </p>
+              )}
+            </form>
           )}
         </div>
 
@@ -570,12 +705,17 @@ export function CostSummary({
               </span>
               {pricing.savings > 0 && (
                 <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 rounded-md border border-emerald-500/30">
-                  Save ₹{pricing.savings}
+                  Save ₹{formatPrice(pricing.savings)}
                 </span>
               )}
             </div>
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-              {pricing.savings > 0 ? (
+              {isPromoActive ? (
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" />
+                  Promo {activePromoCode || CURRENT_VALID_PROMO_CODE} applied
+                </span>
+              ) : pricing.savings > 0 ? (
                 <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Bulk discount applied</span>
               ) : (
                 'Includes paper, ink & taxes'
@@ -586,12 +726,12 @@ export function CostSummary({
           <div className="flex items-baseline gap-1">
             {pricing.savings > 0 && (
               <span className="text-xs font-medium line-through text-zinc-400 tabular-nums font-mono mr-1">
-                ₹{pricing.originalPrice}
+                ₹{formatPrice(pricing.originalPrice)}
               </span>
             )}
             <span className="text-base font-bold text-amber-500 dark:text-amber-400">₹</span>
             <span className="text-3xl sm:text-4xl font-black text-amber-500 dark:text-amber-300 drop-shadow-[0_0_16px_rgba(245,158,11,0.45)] tracking-tight tabular-nums font-mono">
-              {pricing.totalPrice}
+              {formatPrice(pricing.totalPrice)}
             </span>
           </div>
         </div>
@@ -647,7 +787,7 @@ export function CostSummary({
             <>
               <MessageCircle className="w-5 h-5 fill-white shrink-0" />
               <span className="tracking-wide font-black">
-                Submit &amp; Contact {station.operatorName || 'Romen'} (₹{pricing.totalPrice})
+                Submit &amp; Contact {station.operatorName || 'Romen'} (₹{formatPrice(pricing.totalPrice)})
               </span>
               <ArrowRight className="w-4 h-4 text-white opacity-85 group-hover:translate-x-1 transition-transform" />
             </>
@@ -672,7 +812,7 @@ export function CostSummary({
             <>
               <Printer className="w-5 h-5 text-zinc-950 stroke-[2.2]" />
               <span className="tracking-wide font-black">
-                {printerOnline ? `Pay ₹${pricing.totalPrice} & Print` : `Pay ₹${pricing.totalPrice} · Queue for Auto-Print`}
+                {printerOnline ? `Pay ₹${formatPrice(pricing.totalPrice)} & Print` : `Pay ₹${formatPrice(pricing.totalPrice)} · Queue for Auto-Print`}
               </span>
               <ArrowRight className="w-4 h-4 text-zinc-950 stroke-[2.5] opacity-85 group-hover:translate-x-1 transition-transform" />
             </>

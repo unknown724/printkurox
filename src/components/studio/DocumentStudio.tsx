@@ -7,7 +7,7 @@ import { PrintSettings, PrintSettingsState } from '@/components/PrintSettings';
 import { CostSummary } from '@/components/CostSummary';
 import { PageVisualizer } from '@/components/PageVisualizer';
 import { AdvancedSettings, AdvancedPrintOptions } from '@/components/AdvancedSettings';
-import { PricingResult, PageConfig, TIER_RATES, CustomTierRates } from '@/lib/pricing';
+import { PricingResult, PageConfig, TIER_RATES, CustomTierRates, PROMO_TIER_RATES } from '@/lib/pricing';
 import {
   HelpCircle,
   ArrowRight,
@@ -49,6 +49,8 @@ interface DocumentStudioProps {
   stationId?: string;
   onStationSelect?: (stationId: string) => void;
   stationTierRates?: CustomTierRates;
+  promoCode?: string;
+  onPromoCodeChange?: (code: string) => void;
 }
 
 export function DocumentStudio({
@@ -73,6 +75,8 @@ export function DocumentStudio({
   stationId,
   onStationSelect,
   stationTierRates,
+  promoCode,
+  onPromoCodeChange,
 }: DocumentStudioProps) {
   const [currentStep, setCurrentStep] = useState<StudioStep>(1);
   const [showRatesModal, setShowRatesModal] = useState(false);
@@ -82,7 +86,7 @@ export function DocumentStudio({
   const { hostelChangeEnabled } = useHostelChangeSetting();
   const currentStation = getStationConfig(stationId || 'block_b');
 
-  const activeTiers = stationTierRates || TIER_RATES;
+  const activeTiers = pricing?.promoApplied ? PROMO_TIER_RATES : (stationTierRates || TIER_RATES);
   const currentBwSingle = activeTiers.standard.bw.single;
   const currentColorSingle = activeTiers.standard.color.single;
 
@@ -537,6 +541,8 @@ export function DocumentStudio({
                 drawBorder={layoutSettings.drawBorder}
                 autoRotate={layoutSettings.autoRotate}
                 onOpenStationModal={hostelChangeEnabled ? () => setShowStationModal(true) : undefined}
+                promoCode={promoCode}
+                onPromoCodeChange={onPromoCodeChange}
               />
             </div>
           </div>

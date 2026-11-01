@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
       fitMode,
       drawBorder,
       autoRotate,
+      promoCode,
     } = body;
 
     const station = getStationConfig(rawStationId);
@@ -122,6 +123,7 @@ export async function POST(req: NextRequest) {
         customCols,
         customRows,
         customRates: tierRates,
+        promoCode: typeof promoCode === 'string' ? promoCode.trim().toUpperCase() : undefined,
       });
 
       amountInPaise = Math.round(pricing.totalPrice * 100);
@@ -136,6 +138,7 @@ export async function POST(req: NextRequest) {
         copies: String(copies),
         pages: String(activePagesCount),
         is_duplex: String(isDuplex),
+        ...(promoCode ? { promo_code: String(promoCode).trim().toUpperCase() } : {}),
         ...(textOverlay?.enabled && textOverlay.text ? { text_overlay: textOverlay.text } : {}),
       };
     }

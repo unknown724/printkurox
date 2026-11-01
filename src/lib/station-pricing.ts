@@ -43,10 +43,10 @@ export interface StationPricingTierRates {
 export const PRICING_GUARDRAILS = {
   bwSingle: { min: 2.0, max: 10.0 },       // ₹2.00 guarantees paper + toner cost
   colorSingle: { min: 4.0, max: 20.0 },    // ₹4.00 guarantees paper + 3-color ink
-  bwBulk: { min: 3.0, max: 8.0 },          // Bulk B&W discount rate (10+ sheets, floor ₹3.00)
-  colorBulk: { min: 5.0, max: 15.0 },      // Bulk Color discount rate (10+ sheets, floor ₹5.00)
-  bwMega: { min: 3.0, max: 8.0 },          // Floor ₹3.00, no discount below ₹3
-  colorMega: { min: 5.0, max: 15.0 },      // Floor ₹5.00, no discount below ₹5
+  bwBulk: { min: 2.0, max: 8.0 },          // Bulk B&W discount rate (10+ sheets, floor ₹2.00)
+  colorBulk: { min: 4.0, max: 15.0 },      // Bulk Color discount rate (10+ sheets, floor ₹4.00)
+  bwMega: { min: 2.0, max: 8.0 },          // Floor ₹2.00
+  colorMega: { min: 4.0, max: 15.0 },      // Floor ₹4.00
   bwDuplex: { min: 3.0, max: 18.0 },
   colorDuplex: { min: 6.0, max: 35.0 },
   commissionPercent: { min: 0, max: 50 },  // 0% - 50% platform fee

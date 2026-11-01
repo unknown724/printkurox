@@ -115,6 +115,14 @@ function HomePageContent() {
     pageRangeType: 'all',
     customPageRange: 'All',
   });
+  const [promoCode, setPromoCode] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('printkurox_promo_code') || '';
+      } catch {}
+    }
+    return '';
+  });
   const [advancedOptions, setAdvancedOptions] = useState<AdvancedPrintOptions>({
     scaling: 'fit',
     customScale: 100,
@@ -243,7 +251,21 @@ function HomePageContent() {
     customCols: layoutSettings.customCols,
     customRows: layoutSettings.customRows,
     customRates: stationTierRates,
+    promoCode: promoCode,
   });
+
+  const handlePromoCodeChange = (newCode: string) => {
+    setPromoCode(newCode);
+    if (typeof window !== 'undefined') {
+      try {
+        if (newCode) {
+          localStorage.setItem('printkurox_promo_code', newCode);
+        } else {
+          localStorage.removeItem('printkurox_promo_code');
+        }
+      } catch {}
+    }
+  };
 
   const bwCount = pageConfigs.filter((p) => p.included && p.colorMode === 'bw').length;
   const colorCount = pageConfigs.filter((p) => p.included && p.colorMode === 'color').length;
@@ -344,6 +366,8 @@ function HomePageContent() {
           onRangeChange={handleRangeChange}
           stationId={station.id}
           stationTierRates={stationTierRates}
+          promoCode={promoCode}
+          onPromoCodeChange={handlePromoCodeChange}
           onStationSelect={(newStationId) => {
             if (typeof window !== 'undefined') {
               localStorage.setItem('printkurox_preferred_station', newStationId);

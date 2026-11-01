@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
       fitMode,
       drawBorder,
       autoRotate,
+      promoCode,
     } = body;
 
     const station = getStationConfig(rawStationId);
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest) {
       customCols,
       customRows,
       customRates: tierRates,
+      promoCode: typeof promoCode === 'string' ? promoCode.trim().toUpperCase() : undefined,
     });
 
     // Generate unique pickup code (21,600 collision-resistant namespace)

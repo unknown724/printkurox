@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       fitMode,
       drawBorder,
       autoRotate,
+      promoCode,
     } = body;
 
     const station = getStationConfig(rawStationId);
@@ -169,6 +170,7 @@ export async function POST(req: NextRequest) {
       layoutMode,
       customCols,
       customRows,
+      promoCode: typeof promoCode === 'string' ? promoCode.trim().toUpperCase() : undefined,
     });
 
     const inputPin = pin || stationPinCookie;
