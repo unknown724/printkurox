@@ -124,8 +124,8 @@ if not STATION_TOKEN:
 PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  # Leave blank for default Windows printer
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
-POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
-HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '6'))
+POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 12))))
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '30'))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '90')) # Retains local print archive for 90 days on laptop
@@ -1762,7 +1762,9 @@ def main():
             time.sleep(1)
 
         # Sleep or wake up immediately if a print job trigger is received via local HTTP
-        _wake_event.wait(timeout=POLL_INTERVAL_SECONDS)
+        # Use fast 2s poll if jobs were just processed; otherwise back off to idle interval (12s)
+        next_timeout = 2 if ('jobs' in locals() and jobs) else POLL_INTERVAL_SECONDS
+        _wake_event.wait(timeout=next_timeout)
         _wake_event.clear()
 
 if __name__ == '__main__':

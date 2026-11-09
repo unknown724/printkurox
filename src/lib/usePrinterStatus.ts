@@ -9,7 +9,7 @@ interface PrinterStatus {
   loading: boolean;
 }
 
-export function usePrinterStatus(pollIntervalMs = 6_000, stationId?: string): PrinterStatus {
+export function usePrinterStatus(pollIntervalMs = 30_000, stationId?: string): PrinterStatus {
   const [status, setStatus] = useState<PrinterStatus>({
     online: true, // Optimistic default until we know
     lastSeen: null,
@@ -46,8 +46,11 @@ export function usePrinterStatus(pollIntervalMs = 6_000, stationId?: string): Pr
       check();
     });
 
-    // Poll on interval
-    const timer = setInterval(check, pollIntervalMs);
+    // Poll on interval only if page is visible to conserve network/edge quota
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      check();
+    }, pollIntervalMs);
 
     // Instant refresh on tab focus / visibility
     const handleVisibilityChange = () => {
