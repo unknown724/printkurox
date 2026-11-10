@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       drawBorder,
       autoRotate,
       promoCode,
+      phone,
     } = body;
 
     const station = getStationConfig(rawStationId);
@@ -48,6 +49,9 @@ export async function POST(req: NextRequest) {
     const currency = directCurrency || 'INR';
     let receipt = directReceipt;
     let orderNotes = directNotes || {};
+    if (phone) {
+      orderNotes = { ...orderNotes, student_phone: String(phone) };
+    }
 
     let jobId: string | undefined;
     let pickupCode: string | undefined;

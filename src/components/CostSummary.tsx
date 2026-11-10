@@ -151,6 +151,18 @@ export function CostSummary({
     setPromoSuccess(null);
   };
 
+  const handlePhoneChange = (val: string) => {
+    const digitsOnly = val.replace(/\D/g, '').slice(0, 10);
+    setPhoneNumber(digitsOnly);
+    try {
+      if (digitsOnly.length === 10) {
+        localStorage.setItem('nerist_print_user_phone', digitsOnly);
+      } else if (digitsOnly.length === 0) {
+        localStorage.removeItem('nerist_print_user_phone');
+      }
+    } catch {}
+  };
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem('nerist_print_user_phone');
@@ -231,6 +243,7 @@ export function CostSummary({
           fitMode,
           drawBorder,
           autoRotate,
+          phone: phoneNumber.length === 10 ? phoneNumber : undefined,
           promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
@@ -271,6 +284,7 @@ export function CostSummary({
           fitMode,
           drawBorder,
           autoRotate,
+          phone: phoneNumber.length === 10 ? phoneNumber : undefined,
           promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
@@ -315,6 +329,7 @@ export function CostSummary({
           fitMode,
           drawBorder,
           autoRotate,
+          phone: phoneNumber.length === 10 ? phoneNumber : undefined,
           promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
@@ -402,6 +417,16 @@ export function CostSummary({
           throw new Error('Payment gateway loading. Check your internet and retry.');
         }
 
+        // Resolve effective contact for Razorpay:
+        // 1. If student entered/saved 10 digits, use it.
+        // 2. Otherwise, quietly fall back to station/kiosk phone number.
+        // This ensures prefill.contact is NEVER empty, so Razorpay
+        // completely skips asking for a phone number and opens straight into UPI / QR code!
+        const stationContactDigits = (station?.contact || station?.whatsappNumber || '9362980761').replace(/\D/g, '');
+        const effectiveContact = (phoneNumber && phoneNumber.length === 10)
+          ? phoneNumber
+          : (stationContactDigits.length === 10 ? stationContactDigits : '9362980761');
+
         const options = {
           key: keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
           amount,
@@ -457,7 +482,10 @@ export function CostSummary({
           },
           prefill: {
             name: 'Student',
-            ...(phoneNumber.length === 10 ? { contact: phoneNumber } : {}),
+            contact: effectiveContact,
+          },
+          readonly: {
+            name: true,
           },
           theme: { color: '#6366f1', backdrop_color: 'rgba(7, 11, 20, 0.90)' },
           modal: {
@@ -734,6 +762,36 @@ export function CostSummary({
               {formatPrice(pricing.totalPrice)}
             </span>
           </div>
+        </div>
+      </div>
+
+      {/* Optional WhatsApp / Mobile Number Input (for pickup alerts & 1-tap checkout) */}
+      <div className="p-3 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-zinc-50/80 dark:bg-zinc-900/40 backdrop-blur-sm space-y-1.5 transition-all">
+        <div className="flex items-center justify-between">
+          <label className="text-[11px] font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+            <Phone className="w-3.5 h-3.5 text-emerald-500" />
+            <span>WhatsApp / Mobile</span>
+            <span className="text-[10px] font-normal text-zinc-500 lowercase">(optional · for pickup alerts)</span>
+          </label>
+          {phoneNumber.length === 10 && (
+            <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-500/20">
+              <Check className="w-2.5 h-2.5" /> Auto-saved
+            </span>
+          )}
+        </div>
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-400 font-mono text-xs font-semibold">
+            +91
+          </div>
+          <input
+            type="tel"
+            inputMode="numeric"
+            value={phoneNumber}
+            onChange={(e) => handlePhoneChange(e.target.value)}
+            placeholder="Enter 10-digit number for instant pickup alert"
+            maxLength={10}
+            className="w-full pl-11 pr-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900/90 text-xs font-mono font-medium text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-all shadow-2xs"
+          />
         </div>
       </div>
 
