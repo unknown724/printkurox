@@ -146,6 +146,9 @@ interface MetricSummary {
   commercial_value?: number;
   paid_jobs?: number;
   free_jobs?: number;
+  paid_pages?: number;
+  free_pages?: number;
+  free_bypass_value?: number;
 }
 
 interface PeriodBreakdown {
@@ -159,6 +162,9 @@ interface PeriodBreakdown {
   commercial_value?: number;
   paid_jobs?: number;
   free_jobs?: number;
+  paid_pages?: number;
+  free_pages?: number;
+  free_bypass_value?: number;
 }
 
 interface AdminStatsResponse {
@@ -826,11 +832,15 @@ export default function AdminKuroxPage() {
       'Total Orders',
       'Paid Orders',
       'Free Bypass Orders',
+      'Total Pages',
+      'Paid Pages',
+      'Free Bypass Pages',
       'B&W Pages',
       'Color Pages',
       'Total Sheets',
       'Collected Revenue (INR)',
-      'Commercial Print Value (INR)',
+      'Free Bypass Value (INR)',
+      'Total Commercial Value (INR)',
       'Est. Net Profit (INR)',
     ];
     const rows = records.map((r) => [
@@ -838,10 +848,14 @@ export default function AdminKuroxPage() {
       r.jobs,
       r.paid_jobs ?? '',
       r.free_jobs ?? '',
+      r.total_pages,
+      r.paid_pages ?? '',
+      r.free_pages ?? '',
       r.bw_pages,
       r.color_pages,
       r.sheets,
       r.revenue,
+      r.free_bypass_value ?? 0,
       r.commercial_value ?? (r.bw_pages * 4 + r.color_pages * 7),
       Math.max(0, Math.round((r.revenue - (r.bw_pages * 0.15 + r.color_pages * 0.35 + r.sheets * 0.65)) * 100) / 100),
     ]);
@@ -2183,7 +2197,7 @@ export default function AdminKuroxPage() {
             </div>
 
             {/* KPI Cards Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
               {/* Card 1: Total Pages Printed */}
               <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs">
                 <div className="flex items-center justify-between">
@@ -2228,7 +2242,7 @@ export default function AdminKuroxPage() {
               {/* Card 3: Gross Revenue */}
               <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Gross Revenue</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Collected Revenue</span>
                   <div className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500">
                     <IndianRupee className="w-3.5 h-3.5" />
                   </div>
@@ -2238,7 +2252,7 @@ export default function AdminKuroxPage() {
                     ₹{(activeMetrics?.gross_revenue || 0).toLocaleString()}
                   </span>
                   <p className="text-[10px] text-zinc-500 mt-1">
-                    {activeMetrics?.paid_jobs || 0} paid · {activeMetrics?.free_jobs || 0} free ({activeMetrics?.total_jobs || 0} orders)
+                    {activeMetrics?.paid_jobs || 0} paid customer orders
                   </p>
                   {activeMetrics?.commercial_value && activeMetrics.commercial_value > (activeMetrics.gross_revenue || 0) && (
                     <p className="text-[10px] text-zinc-400 font-mono mt-0.5" title="Total commercial print value at standard rates">
@@ -2248,8 +2262,31 @@ export default function AdminKuroxPage() {
                 </div>
               </div>
 
-              {/* Card 4: Estimated Net Profit */}
+              {/* Card 4: Bypass Free Prints */}
               <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Bypass Free Prints</span>
+                  <div className="w-7 h-7 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-500">
+                    <KeyRound className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-2xl font-bold text-purple-600 dark:text-purple-400 font-mono">
+                    {activeMetrics?.free_jobs || 0}
+                  </span>
+                  <div className="flex flex-col gap-0.5 mt-1 text-[10px]">
+                    <span className="text-zinc-600 dark:text-zinc-400">
+                      {activeMetrics?.free_pages || 0} Pages Printed
+                    </span>
+                    <span className="text-purple-600 dark:text-purple-400 font-mono font-semibold">
+                      ₹{(activeMetrics?.free_bypass_value || 0).toLocaleString()} Free Value
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 5: Estimated Net Profit */}
+              <div className="rounded-2xl p-4 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] flex flex-col justify-between space-y-2 shadow-2xs col-span-2 sm:col-span-1">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Est. Net Profit</span>
                   <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500">
@@ -2319,14 +2356,15 @@ export default function AdminKuroxPage() {
                     <th className="py-2.5 px-3">B&W Pgs</th>
                     <th className="py-2.5 px-3">Color Pgs</th>
                     <th className="py-2.5 px-3">Total Sheets</th>
-                    <th className="py-2.5 px-3">Revenue</th>
+                    <th className="py-2.5 px-3">Bypass Free</th>
+                    <th className="py-2.5 px-3">Collected Revenue</th>
                     <th className="py-2.5 px-3">Est. Profit</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-[#282a2c]">
                   {(!stats || (historyTab === 'monthly' ? stats.history.monthly.length === 0 : stats.history.daily.length === 0)) ? (
                     <tr>
-                      <td colSpan={7} className="py-6 text-center text-xs text-zinc-500">
+                      <td colSpan={8} className="py-6 text-center text-xs text-zinc-500">
                         No historical print jobs in this range.
                       </td>
                     </tr>
@@ -2336,6 +2374,10 @@ export default function AdminKuroxPage() {
                         0,
                         Math.round((row.revenue - (row.bw_pages * 0.15 + row.color_pages * 0.35 + row.sheets * 0.65)) * 100) / 100
                       );
+                      const freeJobs = row.free_jobs || 0;
+                      const freePages = row.free_pages || 0;
+                      const freeVal = row.free_bypass_value || 0;
+
                       return (
                         <tr key={row.period} className="hover:bg-zinc-50/50 dark:hover:bg-[#131314]/50 transition-colors">
                           <td className="py-2.5 px-3 font-mono font-bold text-zinc-900 dark:text-white">{row.period}</td>
@@ -2343,13 +2385,27 @@ export default function AdminKuroxPage() {
                             <span>{row.jobs}</span>
                             {row.paid_jobs !== undefined && (
                               <span className="text-[10px] text-zinc-400 block font-normal">
-                                {row.paid_jobs} paid {row.free_jobs ? `· ${row.free_jobs} free` : ''}
+                                {row.paid_jobs} paid {freeJobs > 0 ? `· ${freeJobs} free` : ''}
                               </span>
                             )}
                           </td>
                           <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300 font-mono">{row.bw_pages}</td>
                           <td className="py-2.5 px-3 text-pink-600 dark:text-pink-400 font-mono">{row.color_pages}</td>
                           <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300 font-mono font-semibold">{row.sheets}</td>
+                          <td className="py-2.5 px-3 font-mono text-zinc-600 dark:text-zinc-300">
+                            {freeJobs > 0 ? (
+                              <div>
+                                <span className="font-bold text-purple-600 dark:text-purple-400">
+                                  {freeJobs} orders
+                                </span>
+                                <span className="text-[10px] text-zinc-400 block font-normal">
+                                  {freePages} pgs · ₹{freeVal} val
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-zinc-400">—</span>
+                            )}
+                          </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-amber-600 dark:text-amber-400">
                             <span>₹{row.revenue}</span>
                             {row.commercial_value && row.commercial_value > row.revenue && (

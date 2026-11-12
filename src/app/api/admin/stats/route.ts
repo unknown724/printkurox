@@ -17,6 +17,9 @@ interface MetricRow {
   commercial_value?: number;
   paid_jobs?: number;
   free_jobs?: number;
+  paid_pages?: number;
+  free_pages?: number;
+  free_bypass_value?: number;
 }
 
 interface PeriodBreakdownRow {
@@ -30,6 +33,9 @@ interface PeriodBreakdownRow {
   commercial_value?: number;
   paid_jobs?: number;
   free_jobs?: number;
+  paid_pages?: number;
+  free_pages?: number;
+  free_bypass_value?: number;
 }
 
 interface HourlyBreakdownRow {
@@ -125,7 +131,10 @@ export async function GET(req: NextRequest) {
           ELSE total_pages * copies * 4
         END), 0) as commercial_value,
         COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
-        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as paid_pages,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as free_pages,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
     `;
@@ -142,6 +151,9 @@ export async function GET(req: NextRequest) {
       commercial_value: 0,
       paid_jobs: 0,
       free_jobs: 0,
+      paid_pages: 0,
+      free_pages: 0,
+      free_bypass_value: 0,
     };
     const allTimeFinance = computeProfit(allTime.gross_revenue, allTime.bw_pages, allTime.color_pages, allTime.total_sheets);
 
@@ -186,7 +198,10 @@ export async function GET(req: NextRequest) {
           ELSE total_pages * copies * 4
         END), 0) as commercial_value,
         COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
-        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as paid_pages,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as free_pages,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value
       FROM print_jobs
       ${periodWhere}
     `;
@@ -203,6 +218,9 @@ export async function GET(req: NextRequest) {
       commercial_value: 0,
       paid_jobs: 0,
       free_jobs: 0,
+      paid_pages: 0,
+      free_pages: 0,
+      free_bypass_value: 0,
     };
     const periodFinance = computeProfit(periodData.gross_revenue, periodData.bw_pages, periodData.color_pages, periodData.total_sheets);
 
@@ -214,6 +232,8 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
         COALESCE(SUM(total_pages * copies), 0) as total_pages,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as paid_pages,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as free_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'bw' THEN total_pages * copies ELSE 0 END), 0) as bw_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'color' THEN total_pages * copies ELSE 0 END), 0) as color_pages,
         COALESCE(SUM(CASE 
@@ -221,6 +241,7 @@ export async function GET(req: NextRequest) {
           ELSE total_pages * copies
         END), 0) as sheets,
         COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value,
         COALESCE(SUM(CASE 
           WHEN color_mode = 'color' THEN total_pages * copies * 7
           ELSE total_pages * copies * 4
@@ -242,6 +263,8 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
         COALESCE(SUM(total_pages * copies), 0) as total_pages,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as paid_pages,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as free_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'bw' THEN total_pages * copies ELSE 0 END), 0) as bw_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'color' THEN total_pages * copies ELSE 0 END), 0) as color_pages,
         COALESCE(SUM(CASE 
@@ -249,6 +272,7 @@ export async function GET(req: NextRequest) {
           ELSE total_pages * copies
         END), 0) as sheets,
         COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value,
         COALESCE(SUM(CASE 
           WHEN color_mode = 'color' THEN total_pages * copies * 7
           ELSE total_pages * copies * 4
