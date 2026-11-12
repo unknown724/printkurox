@@ -20,6 +20,8 @@ import {
   ExternalLink,
   ChevronRight,
   Zap,
+  Lock,
+  Cpu,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -33,11 +35,17 @@ interface SetupResult {
 }
 
 export default function SetupWizardPage() {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0); // 0 = Serial Gate, 1 = Info, 2 = Pay, 3 = Pricing, 4 = Success
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isVerifyingKey, setIsVerifyingKey] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [setupResult, setSetupResult] = useState<SetupResult | null>(null);
+
+  // Hardware Serial Key State
+  const [serialKey, setSerialKey] = useState('');
+  const [isKeyVerified, setIsKeyVerified] = useState(false);
+  const [deviceBatch, setDeviceBatch] = useState<string | null>(null);
 
   // Form State
   const [name, setName] = useState('');
@@ -66,6 +74,33 @@ export default function SetupWizardPage() {
     navigator.clipboard.writeText(text);
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const handleVerifySerial = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setErrorMessage(null);
+    setIsVerifyingKey(true);
+
+    try {
+      const clean = serialKey.trim().toUpperCase();
+      if (!clean) throw new Error('Please enter your Hardware Serial Key.');
+
+      const res = await fetch(`/api/setup-station?verifyKey=${encodeURIComponent(clean)}`);
+      const data = await res.json();
+
+      if (!res.ok || !data.valid) {
+        throw new Error(data.error || 'Invalid Hardware Serial Number.');
+      }
+
+      setIsKeyVerified(true);
+      setDeviceBatch(data.batch || 'OFFICIAL_HARDWARE');
+      setStep(1); // Proceed to station profile
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'Hardware verification failed');
+      setIsKeyVerified(false);
+    } finally {
+      setIsVerifyingKey(false);
+    }
   };
 
   const handleDownloadConfig = () => {
@@ -100,6 +135,7 @@ export default function SetupWizardPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          serialKey: serialKey.trim().toUpperCase(),
           name: name.trim(),
           shortName: shortName.trim() || name.trim().slice(0, 16),
           operatorName: operatorName.trim() || 'Owner',
@@ -145,18 +181,18 @@ export default function SetupWizardPage() {
         {/* Header */}
         <div className="text-center mb-8 sm:mb-12 space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-semibold uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Turnkey Kiosk Provisioning Engine</span>
+            <Cpu className="w-3.5 h-3.5" />
+            <span>Hardware Unit Activation Gate</span>
           </div>
           <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-white">
             PrintKurox Station Setup Wizard
           </h1>
           <p className="text-xs sm:text-sm text-zinc-400 max-w-xl mx-auto">
-            Configure a new commercial self-service printing kiosk in under 60 seconds. Auto-generates station tokens, pricing, customer QR posters, and daemon config.
+            Activate your physical PrintKurox Controller Box. Every hardware unit is strictly bound to its physical serial key to prevent duplicates.
           </p>
 
           {/* Stepper Progress */}
-          {step < 4 && (
+          {step > 0 && step < 4 && (
             <div className="flex items-center justify-center gap-2 sm:gap-4 pt-4">
               {[
                 { num: 1, label: 'Station Info' },
@@ -185,9 +221,80 @@ export default function SetupWizardPage() {
           )}
         </div>
 
-        {/* Wizard Form Card */}
-        {step < 4 ? (
+        {/* STEP 0: HARDWARE SERIAL GATE (MANDATORY GATE) */}
+        {step === 0 && (
+          <div className="max-w-lg mx-auto p-6 sm:p-8 rounded-3xl border border-white/10 bg-zinc-900/80 backdrop-blur-xl shadow-2xl space-y-6">
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-400 flex items-center justify-center mx-auto border border-amber-500/20">
+                <Lock className="w-6 h-6" />
+              </div>
+              <h2 className="text-lg font-bold text-white">Enter Hardware Serial Key</h2>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                To prevent unauthorized or duplicate setups, you must enter the unique Hardware Serial Key printed on the label underneath your controller box.
+              </p>
+            </div>
+
+            <form onSubmit={handleVerifySerial} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-300">Device Serial Number *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. KUROX-PRO-8821"
+                  value={serialKey}
+                  onChange={(e) => setSerialKey(e.target.value.toUpperCase())}
+                  className="w-full px-4 py-3 rounded-xl border border-white/10 bg-black/50 text-sm font-mono font-bold uppercase tracking-wider text-amber-300 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all text-center"
+                />
+                <p className="text-[11px] text-zinc-500 text-center">
+                  Pilot test keys: <code className="text-zinc-400">KUROX-PRO-8821</code> to <code className="text-zinc-400">KUROX-PRO-8830</code>
+                </p>
+              </div>
+
+              {errorMessage && (
+                <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isVerifyingKey || !serialKey.trim()}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-sm shadow-xl shadow-amber-500/25 transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40"
+              >
+                {isVerifyingKey ? (
+                  <span>Verifying Device Inventory...</span>
+                ) : (
+                  <>
+                    <Shield className="w-4 h-4" />
+                    <span>Verify Hardware &amp; Continue</span>
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Wizard Form Card (Unlocked only when Hardware Serial is verified) */}
+        {step > 0 && step < 4 && (
           <form onSubmit={handleSubmit} className="p-6 sm:p-8 rounded-3xl border border-white/10 bg-zinc-900/60 backdrop-blur-xl shadow-2xl space-y-6">
+            {/* Verified Hardware Badge Header */}
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  Hardware Verified: <b className="font-mono">{serialKey}</b> ({deviceBatch})
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStep(0)}
+                className="text-[11px] text-emerald-400 underline hover:text-emerald-300"
+              >
+                Change Key
+              </button>
+            </div>
+
             {/* STEP 1: Station Profile */}
             {step === 1 && (
               <div className="space-y-4">
@@ -310,7 +417,7 @@ export default function SetupWizardPage() {
                 <div className="border-b border-white/10 pb-3">
                   <h2 className="text-base font-bold flex items-center gap-2 text-white">
                     <CreditCard className="w-4 h-4 text-emerald-400" />
-                    <span>Step 2: Choose Payment & Settlement Method</span>
+                    <span>Step 2: Choose Payment &amp; Settlement Method</span>
                   </h2>
                   <p className="text-xs text-zinc-400">Decide how this kiosk receives money from customers with zero commission.</p>
                 </div>
@@ -442,14 +549,14 @@ export default function SetupWizardPage() {
                 <div className="border-b border-white/10 pb-3">
                   <h2 className="text-base font-bold flex items-center gap-2 text-white">
                     <Printer className="w-4 h-4 text-amber-400" />
-                    <span>Step 3: Set Page Rates & Printer Model</span>
+                    <span>Step 3: Set Page Rates &amp; Printer Model</span>
                   </h2>
                   <p className="text-xs text-zinc-400">Configure what customers pay per sheet at your kiosk.</p>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-zinc-300">B&W (Single Sheet)</label>
+                    <label className="text-[11px] font-semibold text-zinc-300">B&amp;W (Single Sheet)</label>
                     <div className="relative">
                       <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-xs text-zinc-400 font-bold">₹</span>
                       <input
@@ -463,7 +570,7 @@ export default function SetupWizardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-zinc-300">B&W (2-Sided Duplex)</label>
+                    <label className="text-[11px] font-semibold text-zinc-300">B&amp;W (2-Sided Duplex)</label>
                     <div className="relative">
                       <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-xs text-zinc-400 font-bold">₹</span>
                       <input
@@ -477,7 +584,7 @@ export default function SetupWizardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-zinc-300">B&W Bulk (10+ sheets)</label>
+                    <label className="text-[11px] font-semibold text-zinc-300">B&amp;W Bulk (10+ sheets)</label>
                     <div className="relative">
                       <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-xs text-zinc-400 font-bold">₹</span>
                       <input
@@ -572,7 +679,7 @@ export default function SetupWizardPage() {
                     ) : (
                       <>
                         <Sparkles className="w-4 h-4" />
-                        <span>Activate &amp; Generate Kiosk Setup</span>
+                        <span>Activate &amp; Bind to {serialKey}</span>
                       </>
                     )}
                   </button>
@@ -580,144 +687,143 @@ export default function SetupWizardPage() {
               </div>
             )}
           </form>
-        ) : (
-          /* STEP 4: SUCCESS & PROVISIONING COMPLETE */
-          setupResult && (
-            <div className="space-y-6">
-              <div className="p-6 sm:p-8 rounded-3xl border border-emerald-500/30 bg-emerald-950/20 backdrop-blur-xl space-y-6 text-center">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/40">
-                  <CheckCircle2 className="w-8 h-8" />
-                </div>
-                <div className="space-y-1">
-                  <h2 className="text-xl sm:text-2xl font-black text-white">
-                    {name} is Officially Activated!
-                  </h2>
-                  <p className="text-xs sm:text-sm text-zinc-400">
-                    Your commercial hardware node is enrolled in the central fleet with Station ID: <code className="text-emerald-300 font-bold">{setupResult.stationId}</code>
-                  </p>
-                </div>
+        )}
 
-                {/* Key Metrics / URLs */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
-                  <div className="p-4 rounded-2xl border border-white/10 bg-black/40 space-y-1">
-                    <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Customer Print URL</p>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-mono text-amber-400 truncate">{setupResult.customerUrl}</span>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(setupResult.customerUrl, 'url')}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 transition-colors"
-                        title="Copy Customer URL"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
+        {/* STEP 4: SUCCESS & PROVISIONING COMPLETE */}
+        {step === 4 && setupResult && (
+          <div className="space-y-6">
+            <div className="p-6 sm:p-8 rounded-3xl border border-emerald-500/30 bg-emerald-950/20 backdrop-blur-xl space-y-6 text-center">
+              <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/40">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-xl sm:text-2xl font-black text-white">
+                  {name} is Officially Activated!
+                </h2>
+                <p className="text-xs sm:text-sm text-zinc-400">
+                  Permanently bound to Hardware Unit: <code className="text-emerald-300 font-mono font-bold">{serialKey}</code>
+                </p>
+              </div>
 
-                  <div className="p-4 rounded-2xl border border-white/10 bg-black/40 space-y-1">
-                    <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Station Secret Token</p>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-mono text-zinc-300 truncate">{setupResult.stationToken.slice(0, 20)}...</span>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(setupResult.stationToken, 'token')}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 transition-colors"
-                        title="Copy Secret Token"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+              {/* Key Metrics / URLs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                <div className="p-4 rounded-2xl border border-white/10 bg-black/40 space-y-1">
+                  <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Customer Print URL</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-mono text-amber-400 truncate">{setupResult.customerUrl}</span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(setupResult.customerUrl, 'url')}
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 transition-colors cursor-pointer"
+                      title="Copy Customer URL"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadConfig}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Download station_config.json</span>
-                  </button>
-
-                  <Link
-                    href={`/?station=${encodeURIComponent(setupResult.stationId)}`}
-                    target="_blank"
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-white font-semibold text-xs transition-all"
-                  >
-                    <span>Test Customer View</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </Link>
-
-                  <Link
-                    href={setupResult.adminUrl}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-xs transition-all"
-                  >
-                    <span>Open Station Dashboard</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </Link>
+                <div className="p-4 rounded-2xl border border-white/10 bg-black/40 space-y-1">
+                  <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Station Secret Token</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-mono text-zinc-300 truncate">{setupResult.stationToken.slice(0, 20)}...</span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(setupResult.stationToken, 'token')}
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 transition-colors cursor-pointer"
+                      title="Copy Secret Token"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Printable Customer QR Poster Card */}
-              <div className="p-6 sm:p-8 rounded-3xl border border-white/10 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white space-y-6 shadow-2xl">
-                <div className="flex items-center justify-between border-b border-zinc-200 dark:border-white/10 pb-4">
-                  <div>
-                    <h3 className="text-lg font-black tracking-tight">{name}</h3>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">Official Self-Service Print Kiosk Poster</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black font-bold text-xs hover:opacity-90 transition-opacity cursor-pointer"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>Print Poster</span>
-                  </button>
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadConfig}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download station_config.json</span>
+                </button>
+
+                <Link
+                  href={`/?station=${encodeURIComponent(setupResult.stationId)}`}
+                  target="_blank"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-white font-semibold text-xs transition-all"
+                >
+                  <span>Test Customer View</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </Link>
+
+                <Link
+                  href={setupResult.adminUrl}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-xs transition-all"
+                >
+                  <span>Open Station Dashboard</span>
+                  <ChevronRight className="w-4 h-4" />
+                </Link>
+              </div>
+            </div>
+
+            {/* Printable Customer QR Poster Card */}
+            <div className="p-6 sm:p-8 rounded-3xl border border-white/10 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white space-y-6 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-white/10 pb-4">
+                <div>
+                  <h3 className="text-lg font-black tracking-tight">{name}</h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">Official Self-Service Print Kiosk Poster</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black font-bold text-xs hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Poster</span>
+                </button>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-6 justify-center py-4">
+                <div className="p-3 bg-white rounded-2xl border-2 border-zinc-900 shadow-xl shrink-0">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=4&data=${encodeURIComponent(setupResult.customerUrl)}`}
+                    alt="Customer Print QR Code"
+                    width={180}
+                    height={180}
+                    className="rounded-lg"
+                  />
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-center gap-6 justify-center py-4">
-                  {/* High-res QR code generated via public SVG API */}
-                  <div className="p-3 bg-white rounded-2xl border-2 border-zinc-900 shadow-xl shrink-0">
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=4&data=${encodeURIComponent(setupResult.customerUrl)}`}
-                      alt="Customer Print QR Code"
-                      width={180}
-                      height={180}
-                      className="rounded-lg"
-                    />
-                  </div>
-
-                  <div className="space-y-3 text-center sm:text-left">
-                    <div className="space-y-1">
-                      <span className="text-[11px] font-bold text-amber-500 uppercase tracking-wider">Fast &amp; Autonomous</span>
-                      <h4 className="text-xl font-black">Scan QR to Upload &amp; Print</h4>
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        Point your phone camera at the QR code to upload your PDF and pay via UPI.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                      <div className="p-2 rounded-lg bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
-                        <span className="text-[10px] text-zinc-500 uppercase block">Black &amp; White</span>
-                        <span className="font-bold text-sm">₹{bwSingle} / pg</span>
-                      </div>
-                      <div className="p-2 rounded-lg bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
-                        <span className="text-[10px] text-zinc-500 uppercase block">Color Print</span>
-                        <span className="font-bold text-sm">₹{colorSingle} / pg</span>
-                      </div>
-                    </div>
-
-                    <p className="text-[11px] text-zinc-400 flex items-center justify-center sm:justify-start gap-1">
-                      <Shield className="w-3 h-3 text-emerald-500" />
-                      <span>RBI Compliant &amp; TLS 256-Bit Encrypted</span>
+                <div className="space-y-3 text-center sm:text-left">
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-bold text-amber-500 uppercase tracking-wider">Fast &amp; Autonomous</span>
+                    <h4 className="text-xl font-black">Scan QR to Upload &amp; Print</h4>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Point your phone camera at the QR code to upload your PDF and pay via UPI.
                     </p>
                   </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                    <div className="p-2 rounded-lg bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Black &amp; White</span>
+                      <span className="font-bold text-sm">₹{bwSingle} / pg</span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Color Print</span>
+                      <span className="font-bold text-sm">₹{colorSingle} / pg</span>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-zinc-400 flex items-center justify-center sm:justify-start gap-1">
+                    <Shield className="w-3 h-3 text-emerald-500" />
+                    <span>RBI Compliant &amp; TLS 256-Bit Encrypted</span>
+                  </p>
                 </div>
               </div>
             </div>
-          )
+          </div>
         )}
       </div>
     </div>

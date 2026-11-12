@@ -28,6 +28,7 @@ from datetime import datetime
 # Base Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'station_config.json')
+DEVICE_IDENTITY_PATH = os.path.join(BASE_DIR, 'device_identity.json')
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 
@@ -68,6 +69,76 @@ _session.headers.update({
     "X-Station-Token": STATION_TOKEN,
     "User-Agent": f"PrintKurox-Linux-Daemon/2.0 ({STATION_ID})"
 })
+
+
+def ensure_station_paired():
+    """Auto-pairing engine for Method A pre-flashed controller boxes."""
+    global STATION_ID, STATION_TOKEN, SERVER_URL, station_data, _session
+    if STATION_TOKEN and STATION_TOKEN != 'YOUR_STATION_SECRET_TOKEN':
+        return
+
+    serial_key = None
+    if os.path.exists(DEVICE_IDENTITY_PATH):
+        try:
+            with open(DEVICE_IDENTITY_PATH, 'r', encoding='utf-8') as f:
+                ident = json.load(f)
+                serial_key = ident.get('serial_key')
+                if ident.get('cloud_url'):
+                    SERVER_URL = ident.get('cloud_url').rstrip('/')
+        except Exception as e:
+            warn(f"Failed to read device_identity.json: {e}")
+
+    serial_key = os.getenv('SERIAL_KEY', serial_key or station_data.get('serial_key'))
+
+    if not serial_key:
+        warn("No STATION_TOKEN and no SERIAL_KEY found. Proceeding with fallback station ID.")
+        return
+
+    log("=" * 60)
+    log(f"  PrintKurox Controller Box (Serial: {serial_key})")
+    log(f"  Device in Auto-Pairing Mode (Method A Pre-Flashing)")
+    log(f"  Waiting for operator activation at: {SERVER_URL}/setup")
+    log("=" * 60)
+
+    while True:
+        try:
+            pair_url = f"{SERVER_URL}/api/daemon/pair?serialKey={serial_key}"
+            res = requests.get(pair_url, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get('paired'):
+                    STATION_ID = data['station_id']
+                    STATION_TOKEN = data['station_token']
+                    station_name = data.get('station_name', 'Commercial Kiosk')
+
+                    station_data.update({
+                        'station_id': STATION_ID,
+                        'station_name': station_name,
+                        'station_token': STATION_TOKEN,
+                        'server_url': SERVER_URL,
+                        'serial_key': serial_key,
+                        'paired_at': datetime.utcnow().isoformat()
+                    })
+                    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                        json.dump(station_data, f, indent=2)
+
+                    log(f"🎉 AUTO-PAIRED SUCCESSFULLY! Station: {station_name} [{STATION_ID}]")
+                    _session.headers.update({
+                        "X-Station-Id": STATION_ID,
+                        "X-Station-Token": STATION_TOKEN,
+                        "User-Agent": f"PrintKurox-Linux-Daemon/2.0 ({STATION_ID})"
+                    })
+                    break
+                else:
+                    log(f"[Pairing Poll] Waiting for activation on /setup... ({data.get('message', 'pending')})")
+            elif res.status_code == 404:
+                error(f"Serial key '{serial_key}' not found in hardware inventory!")
+            else:
+                warn(f"Pairing poll returned HTTP {res.status_code}")
+        except Exception as e:
+            warn(f"Network glitch while polling pairing state: {e}")
+
+        time.sleep(5)
 
 
 def get_available_cups_printers():
@@ -206,6 +277,8 @@ def heartbeat_worker():
 
 
 def main():
+    ensure_station_paired()
+
     log(f"======================================================")
     log(f"PrintKurox Embedded Linux Daemon Starting")
     log(f"Station ID:    {STATION_ID}")
@@ -312,3 +385,4 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         log("Daemon terminated gracefully.")
         sys.exit(0)
+

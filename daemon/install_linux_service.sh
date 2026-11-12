@@ -66,3 +66,4 @@ echo "  PrintKurox Hardware Service Installed & Started!        "
 echo "  Check status anytime: sudo systemctl status printkurox  "
 echo "  View live logs:       sudo journalctl -u printkurox -f  "
 echo "=========================================================="
+
