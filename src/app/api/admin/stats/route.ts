@@ -143,6 +143,7 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(CASE WHEN (payment_id LIKE 'CASH_%' OR payment_id LIKE 'COUNTER_%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as cash_revenue
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
+        AND (payment_id IS NULL OR (payment_id NOT LIKE 'CASH_%' AND payment_id NOT LIKE 'COUNTER_%'))
     `;
     const allTimeRows = await queryD1<MetricRow>(allTimeSql);
     const allTime = allTimeRows[0] || {
@@ -166,7 +167,7 @@ export async function GET(req: NextRequest) {
     const allTimeFinance = computeProfit(allTime.gross_revenue, allTime.bw_pages, allTime.color_pages, allTime.total_sheets);
 
     // 3. Filtered Period Metrics
-    let periodWhere = "WHERE status IN ('COMPLETED', 'PAID')";
+    let periodWhere = "WHERE status IN ('COMPLETED', 'PAID') AND (payment_id IS NULL OR (payment_id NOT LIKE 'CASH_%' AND payment_id NOT LIKE 'COUNTER_%'))";
     const periodParams: (string | number)[] = [];
 
     if (period === 'today') {
@@ -262,6 +263,7 @@ export async function GET(req: NextRequest) {
         END), 0) as commercial_value
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
+        AND (payment_id IS NULL OR (payment_id NOT LIKE 'CASH_%' AND payment_id NOT LIKE 'COUNTER_%'))
       GROUP BY period
       ORDER BY period DESC
       LIMIT 12
@@ -295,6 +297,7 @@ export async function GET(req: NextRequest) {
         END), 0) as commercial_value
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
+        AND (payment_id IS NULL OR (payment_id NOT LIKE 'CASH_%' AND payment_id NOT LIKE 'COUNTER_%'))
         AND strftime('%Y-%m', created_at) = ?
       GROUP BY period
       ORDER BY period DESC
@@ -310,6 +313,7 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(total_pages * copies), 0) as pages
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
+        AND (payment_id IS NULL OR (payment_id NOT LIKE 'CASH_%' AND payment_id NOT LIKE 'COUNTER_%'))
       GROUP BY hour
       ORDER BY hour ASC
     `;
