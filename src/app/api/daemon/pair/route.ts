@@ -84,3 +84,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to query device pairing state' }, { status: 500 });
   }
 }
+
