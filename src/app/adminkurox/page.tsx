@@ -844,7 +844,6 @@ export default function AdminKuroxPage() {
       'Total Sheets',
       'Collected Revenue (INR)',
       'Free Bypass Value (INR)',
-      'Total Commercial Value (INR)',
       'Est. Net Profit (INR)',
     ];
     const rows = records.map((r) => [
@@ -860,7 +859,6 @@ export default function AdminKuroxPage() {
       r.sheets,
       r.revenue,
       r.free_bypass_value ?? 0,
-      r.commercial_value ?? (r.bw_pages * 4 + r.color_pages * 7),
       Math.max(0, Math.round((r.revenue - (r.bw_pages * 0.15 + r.color_pages * 0.35 + r.sheets * 0.65)) * 100) / 100),
     ]);
 
@@ -2258,11 +2256,6 @@ export default function AdminKuroxPage() {
                   <p className="text-[10px] text-zinc-500 mt-1">
                     {activeMetrics?.paid_jobs || 0} paid online orders
                   </p>
-                  {activeMetrics?.commercial_value && activeMetrics.commercial_value > (activeMetrics.gross_revenue || 0) && (
-                    <p className="text-[10px] text-zinc-400 font-mono mt-0.5" title="Total commercial print value at standard rates">
-                      Print Value: ₹{activeMetrics.commercial_value.toLocaleString()}
-                    </p>
-                  )}
                 </div>
               </div>
 
@@ -2412,11 +2405,6 @@ export default function AdminKuroxPage() {
                           </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-amber-600 dark:text-amber-400">
                             <span>₹{row.revenue}</span>
-                            {row.commercial_value && row.commercial_value > row.revenue && (
-                              <span className="text-[10px] text-zinc-400 block font-normal" title="Commercial value at standard rates">
-                                (Val: ₹{row.commercial_value})
-                              </span>
-                            )}
                           </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">₹{estProfit}</td>
                         </tr>
