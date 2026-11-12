@@ -149,6 +149,8 @@ interface MetricSummary {
   paid_pages?: number;
   free_pages?: number;
   free_bypass_value?: number;
+  razorpay_revenue?: number;
+  cash_revenue?: number;
 }
 
 interface PeriodBreakdown {
@@ -165,6 +167,8 @@ interface PeriodBreakdown {
   paid_pages?: number;
   free_pages?: number;
   free_bypass_value?: number;
+  razorpay_revenue?: number;
+  cash_revenue?: number;
 }
 
 interface AdminStatsResponse {
@@ -839,6 +843,8 @@ export default function AdminKuroxPage() {
       'Color Pages',
       'Total Sheets',
       'Collected Revenue (INR)',
+      'Online Razorpay (INR)',
+      'Counter Cash (INR)',
       'Free Bypass Value (INR)',
       'Total Commercial Value (INR)',
       'Est. Net Profit (INR)',
@@ -855,6 +861,8 @@ export default function AdminKuroxPage() {
       r.color_pages,
       r.sheets,
       r.revenue,
+      r.razorpay_revenue ?? r.revenue,
+      r.cash_revenue ?? 0,
       r.free_bypass_value ?? 0,
       r.commercial_value ?? (r.bw_pages * 4 + r.color_pages * 7),
       Math.max(0, Math.round((r.revenue - (r.bw_pages * 0.15 + r.color_pages * 0.35 + r.sheets * 0.65)) * 100) / 100),
@@ -2251,9 +2259,16 @@ export default function AdminKuroxPage() {
                   <span className="text-2xl font-bold text-amber-600 dark:text-amber-400 font-mono">
                     ₹{(activeMetrics?.gross_revenue || 0).toLocaleString()}
                   </span>
-                  <p className="text-[10px] text-zinc-500 mt-1">
-                    {activeMetrics?.paid_jobs || 0} paid customer orders
-                  </p>
+                  <div className="flex flex-col gap-0.5 mt-1 text-[10px]">
+                    <span className="text-zinc-600 dark:text-zinc-400 font-medium">
+                      ₹{(activeMetrics?.razorpay_revenue || 0).toLocaleString()} Online (Razorpay)
+                    </span>
+                    {(activeMetrics?.cash_revenue || 0) > 0 && (
+                      <span className="text-zinc-500">
+                        ₹{(activeMetrics?.cash_revenue || 0).toLocaleString()} Counter Cash ({activeMetrics?.paid_jobs || 0} orders)
+                      </span>
+                    )}
+                  </div>
                   {activeMetrics?.commercial_value && activeMetrics.commercial_value > (activeMetrics.gross_revenue || 0) && (
                     <p className="text-[10px] text-zinc-400 font-mono mt-0.5" title="Total commercial print value at standard rates">
                       Print Value: ₹{activeMetrics.commercial_value.toLocaleString()}
@@ -2406,8 +2421,11 @@ export default function AdminKuroxPage() {
                               <span className="text-zinc-400">—</span>
                             )}
                           </td>
-                          <td className="py-2.5 px-3 font-mono font-bold text-amber-600 dark:text-amber-400">
-                            <span>₹{row.revenue}</span>
+                          <td className="py-2.5 px-3 font-mono text-amber-600 dark:text-amber-400">
+                            <span className="font-bold">₹{row.revenue}</span>
+                            <span className="text-[10px] text-zinc-400 block font-normal">
+                              ₹{row.razorpay_revenue ?? row.revenue} online {row.cash_revenue ? `· ₹${row.cash_revenue} cash` : ''}
+                            </span>
                             {row.commercial_value && row.commercial_value > row.revenue && (
                               <span className="text-[10px] text-zinc-400 block font-normal" title="Commercial value at standard rates">
                                 (Val: ₹{row.commercial_value})

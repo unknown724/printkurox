@@ -20,6 +20,8 @@ interface MetricRow {
   paid_pages?: number;
   free_pages?: number;
   free_bypass_value?: number;
+  razorpay_revenue?: number;
+  cash_revenue?: number;
 }
 
 interface PeriodBreakdownRow {
@@ -36,6 +38,8 @@ interface PeriodBreakdownRow {
   paid_pages?: number;
   free_pages?: number;
   free_bypass_value?: number;
+  razorpay_revenue?: number;
+  cash_revenue?: number;
 }
 
 interface HourlyBreakdownRow {
@@ -134,7 +138,9 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
         COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as paid_pages,
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as free_pages,
-        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'pay_%' OR payment_id LIKE 'PAY_RECOVERED%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as razorpay_revenue,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'CASH_%' OR payment_id LIKE 'COUNTER_%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as cash_revenue
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
     `;
@@ -154,6 +160,8 @@ export async function GET(req: NextRequest) {
       paid_pages: 0,
       free_pages: 0,
       free_bypass_value: 0,
+      razorpay_revenue: 0,
+      cash_revenue: 0,
     };
     const allTimeFinance = computeProfit(allTime.gross_revenue, allTime.bw_pages, allTime.color_pages, allTime.total_sheets);
 
@@ -201,7 +209,9 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
         COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as paid_pages,
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN total_pages * copies ELSE 0 END), 0) as free_pages,
-        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'pay_%' OR payment_id LIKE 'PAY_RECOVERED%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as razorpay_revenue,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'CASH_%' OR payment_id LIKE 'COUNTER_%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as cash_revenue
       FROM print_jobs
       ${periodWhere}
     `;
@@ -221,6 +231,8 @@ export async function GET(req: NextRequest) {
       paid_pages: 0,
       free_pages: 0,
       free_bypass_value: 0,
+      razorpay_revenue: 0,
+      cash_revenue: 0,
     };
     const periodFinance = computeProfit(periodData.gross_revenue, periodData.bw_pages, periodData.color_pages, periodData.total_sheets);
 
@@ -241,6 +253,8 @@ export async function GET(req: NextRequest) {
           ELSE total_pages * copies
         END), 0) as sheets,
         COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'pay_%' OR payment_id LIKE 'PAY_RECOVERED%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as razorpay_revenue,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'CASH_%' OR payment_id LIKE 'COUNTER_%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as cash_revenue,
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value,
         COALESCE(SUM(CASE 
           WHEN color_mode = 'color' THEN total_pages * copies * 7
@@ -272,6 +286,8 @@ export async function GET(req: NextRequest) {
           ELSE total_pages * copies
         END), 0) as sheets,
         COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'pay_%' OR payment_id LIKE 'PAY_RECOVERED%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as razorpay_revenue,
+        COALESCE(SUM(CASE WHEN (payment_id LIKE 'CASH_%' OR payment_id LIKE 'COUNTER_%') AND total_price > 0 THEN total_price ELSE 0 END), 0) as cash_revenue,
         COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN (CASE WHEN color_mode = 'color' THEN total_pages * copies * 7 ELSE total_pages * copies * 4 END) ELSE 0 END), 0) as free_bypass_value,
         COALESCE(SUM(CASE 
           WHEN color_mode = 'color' THEN total_pages * copies * 7
