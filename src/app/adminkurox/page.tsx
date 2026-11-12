@@ -143,6 +143,9 @@ interface MetricSummary {
   gross_revenue: number;
   consumableCost: number;
   netProfit: number;
+  commercial_value?: number;
+  paid_jobs?: number;
+  free_jobs?: number;
 }
 
 interface PeriodBreakdown {
@@ -153,6 +156,9 @@ interface PeriodBreakdown {
   color_pages: number;
   sheets: number;
   revenue: number;
+  commercial_value?: number;
+  paid_jobs?: number;
+  free_jobs?: number;
 }
 
 interface AdminStatsResponse {
@@ -815,14 +821,28 @@ export default function AdminKuroxPage() {
   const handleExportCSV = () => {
     if (!stats) return;
     const records = historyTab === 'monthly' ? stats.history.monthly : stats.history.daily;
-    const header = ['Period', 'Completed Jobs', 'B&W Pages', 'Color Pages', 'Total Sheets', 'Gross Revenue (INR)', 'Est. Net Profit (INR)'];
+    const header = [
+      'Period',
+      'Total Orders',
+      'Paid Orders',
+      'Free Bypass Orders',
+      'B&W Pages',
+      'Color Pages',
+      'Total Sheets',
+      'Collected Revenue (INR)',
+      'Commercial Print Value (INR)',
+      'Est. Net Profit (INR)',
+    ];
     const rows = records.map((r) => [
       r.period,
       r.jobs,
+      r.paid_jobs ?? '',
+      r.free_jobs ?? '',
       r.bw_pages,
       r.color_pages,
       r.sheets,
       r.revenue,
+      r.commercial_value ?? (r.bw_pages * 4 + r.color_pages * 7),
       Math.max(0, Math.round((r.revenue - (r.bw_pages * 0.15 + r.color_pages * 0.35 + r.sheets * 0.65)) * 100) / 100),
     ]);
 
@@ -2218,8 +2238,13 @@ export default function AdminKuroxPage() {
                     ₹{(activeMetrics?.gross_revenue || 0).toLocaleString()}
                   </span>
                   <p className="text-[10px] text-zinc-500 mt-1">
-                    {activeMetrics?.total_jobs || 0} completed orders
+                    {activeMetrics?.paid_jobs || 0} paid · {activeMetrics?.free_jobs || 0} free ({activeMetrics?.total_jobs || 0} orders)
                   </p>
+                  {activeMetrics?.commercial_value && activeMetrics.commercial_value > (activeMetrics.gross_revenue || 0) && (
+                    <p className="text-[10px] text-zinc-400 font-mono mt-0.5" title="Total commercial print value at standard rates">
+                      Print Value: ₹{activeMetrics.commercial_value.toLocaleString()}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2314,11 +2339,25 @@ export default function AdminKuroxPage() {
                       return (
                         <tr key={row.period} className="hover:bg-zinc-50/50 dark:hover:bg-[#131314]/50 transition-colors">
                           <td className="py-2.5 px-3 font-mono font-bold text-zinc-900 dark:text-white">{row.period}</td>
-                          <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300 font-mono">{row.jobs}</td>
+                          <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300 font-mono">
+                            <span>{row.jobs}</span>
+                            {row.paid_jobs !== undefined && (
+                              <span className="text-[10px] text-zinc-400 block font-normal">
+                                {row.paid_jobs} paid {row.free_jobs ? `· ${row.free_jobs} free` : ''}
+                              </span>
+                            )}
+                          </td>
                           <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300 font-mono">{row.bw_pages}</td>
                           <td className="py-2.5 px-3 text-pink-600 dark:text-pink-400 font-mono">{row.color_pages}</td>
-                          <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300 font-mono">{row.sheets}</td>
-                          <td className="py-2.5 px-3 font-mono font-bold text-amber-600 dark:text-amber-400">₹{row.revenue}</td>
+                          <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-300 font-mono font-semibold">{row.sheets}</td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-amber-600 dark:text-amber-400">
+                            <span>₹{row.revenue}</span>
+                            {row.commercial_value && row.commercial_value > row.revenue && (
+                              <span className="text-[10px] text-zinc-400 block font-normal" title="Commercial value at standard rates">
+                                (Val: ₹{row.commercial_value})
+                              </span>
+                            )}
+                          </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">₹{estProfit}</td>
                         </tr>
                       );

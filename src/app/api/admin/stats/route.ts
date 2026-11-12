@@ -14,6 +14,9 @@ interface MetricRow {
   duplex_sheets: number;
   single_sheets: number;
   gross_revenue: number;
+  commercial_value?: number;
+  paid_jobs?: number;
+  free_jobs?: number;
 }
 
 interface PeriodBreakdownRow {
@@ -24,6 +27,9 @@ interface PeriodBreakdownRow {
   color_pages: number;
   sheets: number;
   revenue: number;
+  commercial_value?: number;
+  paid_jobs?: number;
+  free_jobs?: number;
 }
 
 interface HourlyBreakdownRow {
@@ -101,10 +107,25 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(total_pages * copies), 0) as total_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'bw' THEN total_pages * copies ELSE 0 END), 0) as bw_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'color' THEN total_pages * copies ELSE 0 END), 0) as color_pages,
-        COALESCE(SUM((duplex_sheets + single_sheets) * copies), 0) as total_sheets,
-        COALESCE(SUM(duplex_sheets * copies), 0) as duplex_sheets,
-        COALESCE(SUM(single_sheets * copies), 0) as single_sheets,
-        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' OR payment_id IS NULL THEN total_price ELSE 0 END), 0) as gross_revenue
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN CAST((total_pages + 1) / 2 AS INTEGER) * copies
+          ELSE total_pages * copies
+        END), 0) as total_sheets,
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN CAST(total_pages / 2 AS INTEGER) * copies
+          ELSE 0
+        END), 0) as duplex_sheets,
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN (total_pages % 2) * copies
+          ELSE total_pages * copies
+        END), 0) as single_sheets,
+        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as gross_revenue,
+        COALESCE(SUM(CASE 
+          WHEN color_mode = 'color' THEN total_pages * copies * 7
+          ELSE total_pages * copies * 4
+        END), 0) as commercial_value,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
     `;
@@ -118,6 +139,9 @@ export async function GET(req: NextRequest) {
       duplex_sheets: 0,
       single_sheets: 0,
       gross_revenue: 0,
+      commercial_value: 0,
+      paid_jobs: 0,
+      free_jobs: 0,
     };
     const allTimeFinance = computeProfit(allTime.gross_revenue, allTime.bw_pages, allTime.color_pages, allTime.total_sheets);
 
@@ -144,10 +168,25 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(total_pages * copies), 0) as total_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'bw' THEN total_pages * copies ELSE 0 END), 0) as bw_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'color' THEN total_pages * copies ELSE 0 END), 0) as color_pages,
-        COALESCE(SUM((duplex_sheets + single_sheets) * copies), 0) as total_sheets,
-        COALESCE(SUM(duplex_sheets * copies), 0) as duplex_sheets,
-        COALESCE(SUM(single_sheets * copies), 0) as single_sheets,
-        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' OR payment_id IS NULL THEN total_price ELSE 0 END), 0) as gross_revenue
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN CAST((total_pages + 1) / 2 AS INTEGER) * copies
+          ELSE total_pages * copies
+        END), 0) as total_sheets,
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN CAST(total_pages / 2 AS INTEGER) * copies
+          ELSE 0
+        END), 0) as duplex_sheets,
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN (total_pages % 2) * copies
+          ELSE total_pages * copies
+        END), 0) as single_sheets,
+        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as gross_revenue,
+        COALESCE(SUM(CASE 
+          WHEN color_mode = 'color' THEN total_pages * copies * 7
+          ELSE total_pages * copies * 4
+        END), 0) as commercial_value,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs
       FROM print_jobs
       ${periodWhere}
     `;
@@ -161,6 +200,9 @@ export async function GET(req: NextRequest) {
       duplex_sheets: 0,
       single_sheets: 0,
       gross_revenue: 0,
+      commercial_value: 0,
+      paid_jobs: 0,
+      free_jobs: 0,
     };
     const periodFinance = computeProfit(periodData.gross_revenue, periodData.bw_pages, periodData.color_pages, periodData.total_sheets);
 
@@ -169,11 +211,20 @@ export async function GET(req: NextRequest) {
       SELECT 
         strftime('%Y-%m', created_at) as period,
         COUNT(*) as jobs,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
         COALESCE(SUM(total_pages * copies), 0) as total_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'bw' THEN total_pages * copies ELSE 0 END), 0) as bw_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'color' THEN total_pages * copies ELSE 0 END), 0) as color_pages,
-        COALESCE(SUM((duplex_sheets + single_sheets) * copies), 0) as sheets,
-        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' OR payment_id IS NULL THEN total_price ELSE 0 END), 0) as revenue
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN CAST((total_pages + 1) / 2 AS INTEGER) * copies
+          ELSE total_pages * copies
+        END), 0) as sheets,
+        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE 
+          WHEN color_mode = 'color' THEN total_pages * copies * 7
+          ELSE total_pages * copies * 4
+        END), 0) as commercial_value
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
       GROUP BY period
@@ -188,11 +239,20 @@ export async function GET(req: NextRequest) {
       SELECT 
         strftime('%Y-%m-%d', created_at) as period,
         COUNT(*) as jobs,
+        COALESCE(SUM(CASE WHEN total_price > 0 AND payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as paid_jobs,
+        COALESCE(SUM(CASE WHEN total_price = 0 OR payment_id LIKE 'ADMIN_%' OR payment_id LIKE 'OWNER_%' THEN 1 ELSE 0 END), 0) as free_jobs,
         COALESCE(SUM(total_pages * copies), 0) as total_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'bw' THEN total_pages * copies ELSE 0 END), 0) as bw_pages,
         COALESCE(SUM(CASE WHEN color_mode = 'color' THEN total_pages * copies ELSE 0 END), 0) as color_pages,
-        COALESCE(SUM((duplex_sheets + single_sheets) * copies), 0) as sheets,
-        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' OR payment_id IS NULL THEN total_price ELSE 0 END), 0) as revenue
+        COALESCE(SUM(CASE 
+          WHEN is_duplex = 1 THEN CAST((total_pages + 1) / 2 AS INTEGER) * copies
+          ELSE total_pages * copies
+        END), 0) as sheets,
+        COALESCE(SUM(CASE WHEN payment_id NOT LIKE 'ADMIN_%' AND payment_id NOT LIKE 'OWNER_%' AND total_price > 0 THEN total_price ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE 
+          WHEN color_mode = 'color' THEN total_pages * copies * 7
+          ELSE total_pages * copies * 4
+        END), 0) as commercial_value
       FROM print_jobs
       WHERE status IN ('COMPLETED', 'PAID')
         AND strftime('%Y-%m', created_at) = ?
