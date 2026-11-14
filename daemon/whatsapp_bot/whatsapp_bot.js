@@ -35,7 +35,7 @@ const {
   generateWAMessageFromContent,
 } = require('@whiskeysockets/baileys');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, degrees } = require('pdf-lib');
 const Razorpay = require('razorpay');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
@@ -44,13 +44,18 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { convertDocxToPdf, findSoffice } = require('./docx_converter');
 const { handleStudentMessage } = require('./student_bot_module');
+const { handleFacultyMessage, isGroupFacultyCommand, getFacultySearchCount } = require('./faculty_bot_module');
+const { handleServerAdminCommand, onBotConnectionOpen } = require('./server_controller_module');
 const { generatePreviewImage } = require('./pdf_preview_renderer');
 
-// Synchronous diagnostic log helper to defeat standard output stream buffering
-const BOT_LOG_FILE = path.join(__dirname, 'whatsapp_bot.log');
+// Dedicated diagnostic event log (avoids file-offset collision with stdout redirection on whatsapp_bot.log)
+const BOT_LOG_FILE = path.join(__dirname, 'whatsapp_bot_events.log');
 function appendBotLog(msg) {
   try {
     const ts = new Date().toISOString();
+    if (fs.existsSync(BOT_LOG_FILE) && fs.statSync(BOT_LOG_FILE).size > 5 * 1024 * 1024) {
+      fs.renameSync(BOT_LOG_FILE, BOT_LOG_FILE + '.old');
+    }
     fs.appendFileSync(BOT_LOG_FILE, `[${ts}] ${msg}\n`, 'utf8');
   } catch (e) {}
 }
@@ -181,6 +186,62 @@ const incomingFileBuffers = new Map();
 
 // In-Memory Message Store for Baileys (msgId -> message)
 const messageStore = new Map();
+const botSentIds = new Set();
+
+// Persistent incoming message deduplication (prevents replay loops across 50-min reconnects / restarts)
+const PROCESSED_MSG_FILE = path.join(__dirname, 'processed_msg_ids.json');
+const MAX_PROCESSED_MSG_IDS = 2500;
+const STALE_MESSAGE_AGE_SEC = 300; // Ignore incoming messages older than 5 minutes on replay
+const processedMsgIds = new Map();
+let processedSaveTimer = null;
+
+function loadProcessedMsgIds() {
+  try {
+    if (fs.existsSync(PROCESSED_MSG_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(PROCESSED_MSG_FILE, 'utf8'));
+      if (Array.isArray(raw)) {
+        for (const item of raw.slice(-MAX_PROCESSED_MSG_IDS)) {
+          if (item && item.id) processedMsgIds.set(item.id, item.ts || Date.now());
+        }
+      }
+    }
+  } catch (e) {}
+}
+loadProcessedMsgIds();
+
+function scheduleSaveProcessedMsgIds() {
+  if (processedSaveTimer) clearTimeout(processedSaveTimer);
+  processedSaveTimer = setTimeout(() => {
+    try {
+      const entries = Array.from(processedMsgIds.entries())
+        .slice(-MAX_PROCESSED_MSG_IDS)
+        .map(([id, ts]) => ({ id, ts }));
+      fs.writeFile(PROCESSED_MSG_FILE, JSON.stringify(entries), 'utf8', () => {});
+    } catch (e) {}
+  }, 1500);
+}
+
+function hasProcessedMessage(msgId) {
+  return Boolean(msgId && processedMsgIds.has(msgId));
+}
+
+function markMessageProcessed(msgId) {
+  if (!msgId) return;
+  processedMsgIds.set(msgId, Date.now());
+  if (processedMsgIds.size > MAX_PROCESSED_MSG_IDS) {
+    const first = processedMsgIds.keys().next().value;
+    processedMsgIds.delete(first);
+  }
+  scheduleSaveProcessedMsgIds();
+}
+
+function getMessageTimestampSec(msg) {
+  const ts = msg?.messageTimestamp;
+  if (!ts) return 0;
+  const num = typeof ts === 'object' && typeof ts.toNumber === 'function' ? ts.toNumber() : Number(ts);
+  if (!Number.isFinite(num) || num <= 0) return 0;
+  return num > 1e12 ? Math.floor(num / 1000) : Math.floor(num);
+}
 
 // Active Payment Link Pollers (jobId -> Interval)
 const activePollers = new Map();
@@ -245,39 +306,74 @@ async function queryD1(sql, params = []) {
 
 function generateRandomPickupCode() {
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  const randomLetter = letters[Math.floor(Math.random() * letters.length)];
+  const letter1 = letters[Math.floor(Math.random() * letters.length)];
+  const letter2 = letters[Math.floor(Math.random() * letters.length)];
   const randomNumber = Math.floor(Math.random() * 900) + 100;
-  return `#${randomLetter}${randomNumber}`;
+  return `#${letter1}${letter2}${randomNumber}`;
 }
 
-function parsePageRange(rangeStr, maxPages) {
-  if (!rangeStr || rangeStr.trim().toLowerCase() === 'all') {
-    return Array.from({ length: maxPages }, (_, i) => i + 1);
+function parsePageRange(input, maxPages) {
+  if (!input) return { pages: [], outOfBounds: [], isValid: false };
+  let str = String(input).trim().toLowerCase();
+
+  if (str === 'all' || str === 'full' || str === 'everything') {
+    return { pages: Array.from({ length: maxPages }, (_, i) => i + 1), outOfBounds: [], isValid: true };
   }
 
+  if (/\bodd\b/i.test(str)) {
+    const pages = [];
+    for (let i = 1; i <= maxPages; i += 2) pages.push(i);
+    return { pages, outOfBounds: [], isValid: true };
+  }
+
+  if (/\beven\b/i.test(str)) {
+    const pages = [];
+    for (let i = 2; i <= maxPages; i += 2) pages.push(i);
+    return { pages, outOfBounds: [], isValid: true };
+  }
+
+  // Clean up natural language words:
+  // Remove 'pages', 'page', 'p.', 'p', '#'
+  str = str.replace(/\bpages?\b|\bp\.?\b|#/gi, ' ');
+  // Convert 'and', '&', 'with', '+' to commas
+  str = str.replace(/\band\b|&|\bwith\b|\+/gi, ',');
+  // Convert 'to', 'through' to hyphens
+  str = str.replace(/\bto\b|\bthrough\b/gi, '-');
+  // Convert space-separated numbers like '1 3' into '1, 3'
+  str = str.replace(/(?<=\d)\s+(?=\d)/g, ',');
+
   const pagesSet = new Set();
-  const parts = rangeStr.split(',');
+  const outOfBounds = [];
+  const parts = str.split(',').map((s) => s.trim()).filter(Boolean);
 
   for (const part of parts) {
-    const trimmed = part.trim();
-    if (trimmed.includes('-')) {
-      const [startStr, endStr] = trimmed.split('-');
+    if (part.includes('-')) {
+      const [startStr, endStr] = part.split('-');
       const start = parseInt(startStr, 10);
       const end = parseInt(endStr, 10);
       if (!isNaN(start) && !isNaN(end)) {
-        const min = Math.max(1, Math.min(start, end));
-        const max = Math.min(maxPages, Math.max(start, end));
-        for (let i = min; i <= max; i++) pagesSet.add(i);
+        const min = Math.min(start, end);
+        const max = Math.max(start, end);
+        for (let i = min; i <= max; i++) {
+          if (i >= 1 && i <= maxPages) pagesSet.add(i);
+          else outOfBounds.push(i);
+        }
       }
     } else {
-      const page = parseInt(trimmed, 10);
-      if (!isNaN(page) && page >= 1 && page <= maxPages) {
-        pagesSet.add(page);
+      const p = parseInt(part, 10);
+      if (!isNaN(p)) {
+        if (p >= 1 && p <= maxPages) pagesSet.add(p);
+        else outOfBounds.push(p);
       }
     }
   }
 
-  return Array.from(pagesSet).sort((a, b) => a - b);
+  const pages = Array.from(pagesSet).sort((a, b) => a - b);
+  return {
+    pages,
+    outOfBounds: Array.from(new Set(outOfBounds)).sort((a, b) => a - b),
+    isValid: pages.length > 0,
+  };
 }
 
 function formatPageRange(pages) {
@@ -414,53 +510,112 @@ const lidMappingCache = new Map();
  */
 async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintKurox AutoPrint', buttons = [] }) {
   if (!jid || !body) return null;
+  const liveSock = (typeof activeBotSock !== 'undefined' && activeBotSock && activeBotSock.ws?.readyState === 1) ? activeBotSock : sock;
+  sock = liveSock;
 
-  // Dispatch to the active conversation JID directly
-  const targetSendJid = jid;
-
-  // Build high-clarity, beautifully styled WhatsApp text card
+  const targetJid = jid;
   const cleanTitle = title ? title.replace(/^\*+|\*+$/g, '').trim() : '';
-  const header = cleanTitle ? `*${cleanTitle}*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` : '';
 
-  let optionsText = '';
-  if (buttons && buttons.length > 0) {
-    optionsText = buttons.map((b, idx) => {
-      if (b.url) {
-        return `• 🔗 *${b.text}:*\n  ${b.url}`;
-      }
-      return `• Reply *${idx + 1}* ➔ ${b.text}`;
-    }).join('\n\n');
-  }
-
-  const footerText = footer ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n_${footer}_` : '';
-  const fullText = `${header}${body}${optionsText ? '\n\n' + optionsText : ''}${footerText}`.trim();
+  const nativeButtons = (buttons || []).map((btn) => {
+    if (btn.url) {
+      return {
+        name: 'cta_url',
+        buttonParamsJson: JSON.stringify({
+          display_text: btn.text,
+          url: btn.url,
+          merchant_url: btn.url,
+        }),
+      };
+    }
+    return {
+      name: 'quick_reply',
+      buttonParamsJson: JSON.stringify({
+        display_text: btn.text,
+        id: btn.id || btn.text,
+      }),
+    };
+  });
 
   try {
-    const sentMsg = await sock.sendMessage(targetSendJid, { text: fullText });
-    if (sentMsg?.key?.id && sentMsg?.message) {
-      messageStore.set(sentMsg.key.id, sentMsg.message);
+    const waMsg = generateWAMessageFromContent(
+      targetJid,
+      {
+        viewOnceMessage: {
+          message: {
+            messageContextInfo: {
+              deviceListMetadata: {},
+              deviceListMetadataVersion: 2,
+            },
+            interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+              header: proto.Message.InteractiveMessage.Header.fromObject({
+                title: cleanTitle || '',
+                hasMediaAttachment: false,
+              }),
+              body: proto.Message.InteractiveMessage.Body.fromObject({
+                text: body,
+              }),
+              footer: proto.Message.InteractiveMessage.Footer.fromObject({
+                text: footer || 'PrintKurox AutoPrint',
+              }),
+              nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+                buttons: nativeButtons,
+              }),
+            }),
+          },
+        },
+      },
+      { userJid: sock.user?.id }
+    );
+
+    const additionalNodes = [
+      {
+        tag: 'biz',
+        attrs: {},
+        content: [
+          {
+            tag: 'interactive',
+            attrs: {
+              type: 'native_flow',
+              v: '1',
+            },
+            content: [
+              {
+                tag: 'native_flow',
+                attrs: {
+                  name: 'mixed',
+                  v: '9',
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    await sock.relayMessage(targetJid, waMsg.message, {
+      messageId: waMsg.key.id,
+      additionalNodes,
+    });
+
+    if (waMsg?.key?.id) {
+      botSentIds.add(waMsg.key.id);
+      if (waMsg.message) messageStore.set(waMsg.key.id, waMsg.message);
     }
-    return sentMsg;
-  } catch (sendErr) {
-    console.error(`[WA-Bot] sendInteractiveButtons delivery error to ${targetSendJid}:`, sendErr.message);
-    // If sending to LID failed, attempt fallback to phone-based JID
-    if (jid.endsWith('@lid')) {
-      try {
-        const lidNum = jid.split('@')[0];
-        const resolvedPhone = resolveLidToPhone(lidNum);
-        if (resolvedPhone) {
-          const fallbackJid = `91${resolvedPhone}@s.whatsapp.net`;
-          const sentFallback = await sock.sendMessage(fallbackJid, { text: fullText });
-          if (sentFallback?.key?.id && sentFallback?.message) {
-            messageStore.set(sentFallback.key.id, sentFallback.message);
-          }
-          return sentFallback;
-        }
-      } catch (fbErr) {
-        console.error('[WA-Bot] PN fallback delivery also failed:', fbErr.message);
-      }
+    appendBotLog(`[sendInteractiveButtons] ✅ Delivered native interactive quick reply buttons to ${targetJid} (msgId: ${waMsg?.key?.id || 'unknown'})`);
+    return waMsg;
+  } catch (btnErr) {
+    appendBotLog(`[sendInteractiveButtons] ⚠️ Native button relay error to ${targetJid}: ${btnErr.message}, falling back to text`);
+    const header = cleanTitle ? `*${cleanTitle}*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` : '';
+    let optionsText = '';
+    if (buttons && buttons.length > 0) {
+      optionsText = buttons.map((b, idx) => {
+        if (b.url) return `• 🔗 *${b.text}:*\n  ${b.url}`;
+        return `• [${b.text}] (Reply: \`${b.id || idx + 1}\`)`;
+      }).join('\n\n');
     }
-    return null;
+    const footerText = footer ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n_${footer}_` : '';
+    const fullText = `${header}${body}\n\n${optionsText}${footerText}`.trim();
+    return await sock.sendMessage(targetJid, { text: fullText });
   }
 }
 
@@ -468,6 +623,7 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
 // ADMIN PROMOTION & DIRECTORY BROADCAST HELPER
 // ============================================================================
 const ADMIN_NUMBERS = ['9863013886', '9362980761'];
+const ADMIN_LIDS = ['60769525878871'];
 const PROMO_LOG_FILE = path.join(__dirname, 'sent_promo_recipients.json');
 const USER_ACTIVITY_LOG_FILE = path.join(__dirname, 'user_activity_log.json');
 
@@ -478,6 +634,9 @@ function isSenderAdmin(senderJid, normalizedJid, isMessageToSelf, resolvedPhone 
   if (isMessageToSelf) return true;
   if (resolvedPhone && ADMIN_NUMBERS.includes(resolvedPhone.slice(-10))) return true;
   if (!senderJid && !normalizedJid) return false;
+  if (ADMIN_LIDS.some((lid) => (senderJid && senderJid.includes(lid)) || (normalizedJid && normalizedJid.includes(lid)))) {
+    return true;
+  }
   return ADMIN_NUMBERS.some(num => (senderJid && senderJid.includes(num)) || (normalizedJid && normalizedJid.includes(num)));
 }
 
@@ -576,6 +735,10 @@ function parseTimeframeHours(inputStr) {
   if (!inputStr) return { hours: 24, label: '24 Hours' };
   const str = inputStr.toLowerCase().trim();
 
+  if (str === 'all' || str.includes('all')) {
+    return { hours: 0, label: 'All Contacts' };
+  }
+
   if (str.includes('today')) {
     const now = new Date();
     const hoursSinceMidnight = now.getHours() + (now.getMinutes() / 60);
@@ -610,28 +773,35 @@ function parseTimeframeHours(inputStr) {
 }
 
 /**
- * Discovers active students within specified hours from activity log and session_auth (with real student names)
+ * Discovers contacts who personally messaged this bot number within the specified timeframe.
+ * Strictly sources from user_activity_log.json (direct 1-on-1 private WhatsApp messages).
  */
 async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
-  const cutoffMs = Date.now() - (hours * 60 * 60 * 1000);
+  const cutoffMs = hours > 0 ? (Date.now() - (hours * 60 * 60 * 1000)) : 0;
   const foundMap = new Map();
 
-  // 1. Check user_activity_log.json (direct 1-on-1 private messages logged live)
+  // 1. Direct 1-on-1 private messages logged live in user_activity_log.json
   const activityLog = loadUserActivityLog();
   for (const [phone, item] of Object.entries(activityLog)) {
+    const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) continue;
+
+    // Exclude bot itself and admin numbers
+    if (ADMIN_NUMBERS.includes(cleanPhone)) continue;
+    if (cleanPhone === '9362980761' || cleanPhone === '9863013886') continue;
+
     const activeTime = new Date(item.lastActive || 0).getTime();
-    if (activeTime >= cutoffMs) {
-      const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
-      if (/^[6-9]\d{9}$/.test(cleanPhone)) {
-        const studentName = (item.name && item.name !== 'Student' && item.name !== 'WhatsApp User') ? item.name : getStudentNameByPhone(cleanPhone);
-        const validName = (studentName && studentName !== 'Student' && studentName !== 'WhatsApp User') ? studentName : null;
-        foundMap.set(cleanPhone, {
-          phone: cleanPhone,
-          jid: item.jid || `91${cleanPhone}@s.whatsapp.net`,
-          name: validName,
-          lastActive: item.lastActive,
-        });
-      }
+    if (cutoffMs === 0 || activeTime >= cutoffMs) {
+      const studentName = (item.name && item.name !== 'Student' && item.name !== 'WhatsApp User')
+        ? item.name
+        : getStudentNameByPhone(cleanPhone);
+      const validName = (studentName && studentName !== 'Student' && studentName !== 'WhatsApp User') ? studentName : null;
+      foundMap.set(cleanPhone, {
+        phone: cleanPhone,
+        jid: item.jid || `91${cleanPhone}@s.whatsapp.net`,
+        name: validName,
+        lastActive: item.lastActive,
+      });
     }
   }
 
@@ -642,10 +812,10 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
       const quotas = JSON.parse(fs.readFileSync(quotasPath, 'utf8'));
       for (const [key, q] of Object.entries(quotas)) {
         const clean = key.replace(/[^0-9]/g, '').slice(-10);
-        if (/^[6-9]\d{9}$/.test(clean)) {
+        if (/^[6-9]\d{9}$/.test(clean) && !ADMIN_NUMBERS.includes(clean) && clean !== '9362980761' && clean !== '9863013886') {
           if (q.lastDate) {
             const dateMs = new Date(q.lastDate).getTime();
-            if (dateMs >= cutoffMs - (24 * 60 * 60 * 1000) || q.lastDate === new Date().toISOString().slice(0, 10)) {
+            if (cutoffMs === 0 || dateMs >= cutoffMs || q.lastDate === new Date().toISOString().slice(0, 10)) {
               if (!foundMap.has(clean)) {
                 const sName = getStudentNameByPhone(clean);
                 const validName = (sName && sName !== 'Student' && sName !== 'WhatsApp User') ? sName : null;
@@ -663,82 +833,6 @@ async function getActiveStudentsInTimeframe(hours = 24, sock = null) {
     }
   } catch (e) {}
 
-  // 2. Check session_auth directory, strictly filtering out group-only activity
-  try {
-    const authDir = path.join(__dirname, 'session_auth');
-    if (fs.existsSync(authDir)) {
-      const files = fs.readdirSync(authDir);
-      for (const file of files) {
-        if (file.startsWith('session-') && file.endsWith('.json')) {
-          const filePath = path.join(authDir, file);
-          const mtime = fs.statSync(filePath).mtimeMs;
-          if (mtime >= cutoffMs) {
-            const rawId = file.replace(/^session-/, '').split('.')[0];
-            const baseId = rawId.split(/[_:]/)[0];
-
-            // CRITICAL GROUP-FILTER: Check if this session was created/updated purely by a group message!
-            // In Baileys, when a group participant sends a message to @g.us, both sender-key-<group>--<lid>--0.json
-            // and session-<lid>.0.json are updated within milliseconds of each other.
-            // If sender-key file exists and its timestamp matches session mtime (within 3 seconds),
-            // it was triggered by a GROUP message, NOT a 1-on-1 personal message to this bot!
-            const skFiles = files.filter(sk => sk.startsWith('sender-key-') && sk.includes(`--${baseId}--`));
-            if (skFiles.length > 0) {
-              const maxSkTime = Math.max(...skFiles.map(sk => fs.statSync(path.join(authDir, sk)).mtimeMs));
-              if (Math.abs(mtime - maxSkTime) < 3000) {
-                // Group activity only! Exclude from personal message audience.
-                continue;
-              }
-            }
-
-            let cleanPhone = null;
-
-            if (rawId.startsWith('91') && rawId.length === 12) {
-              cleanPhone = rawId.slice(-10);
-            } else if (rawId.endsWith('@s.whatsapp.net')) {
-              cleanPhone = rawId.split('@')[0].replace(/[^0-9]/g, '').slice(-10);
-            } else {
-              // Multi-directory reverse LID mapping lookup
-              cleanPhone = resolveLidToPhone(rawId);
-              if (!cleanPhone && sock?.signalRepository?.lidMapping?.getPNForLID) {
-                try {
-                  const pn = await sock.signalRepository.lidMapping.getPNForLID(`${baseId}@lid`);
-                  if (pn) {
-                    const digits = pn.split('@')[0].replace(/[^0-9]/g, '').slice(-10);
-                    if (/^[6-9]\d{9}$/.test(digits)) cleanPhone = digits;
-                  }
-                } catch (e) {}
-              }
-            }
-
-            // CRITICAL: ONLY add verified 10-digit Indian phone numbers
-            // User instruction: Never show raw IDs or "User (ID: ...)"
-            if (cleanPhone && /^[6-9]\d{9}$/.test(cleanPhone)) {
-              if (!foundMap.has(cleanPhone)) {
-                const sName = getStudentNameByPhone(cleanPhone);
-                const validName = (sName && sName !== 'Student' && sName !== 'WhatsApp User') ? sName : null;
-                foundMap.set(cleanPhone, {
-                  phone: cleanPhone,
-                  jid: `91${cleanPhone}@s.whatsapp.net`,
-                  name: validName,
-                  lastActive: new Date(mtime).toISOString(),
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-  } catch (e) {}
-
-  // 3. Exclude admin numbers, bot itself, and bot's own LID
-  for (const adminNum of ADMIN_NUMBERS) {
-    const cleanAdmin = adminNum.slice(-10);
-    foundMap.delete(cleanAdmin);
-  }
-  foundMap.delete('261469505642610');
-  foundMap.delete('9362980761');
-  foundMap.delete('9863013886');
-
   return Array.from(foundMap.values()).sort(
     (a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime()
   );
@@ -751,7 +845,6 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
   const count = campaign.recipients.length;
   let listStr = '';
 
-  // Requirement: Show ALL numbers directly without truncation (no maxDisplay limit)
   campaign.recipients.forEach((r, idx) => {
     const phone = r.phone.slice(-10);
     const hasValidName = r.name && r.name !== 'Student' && r.name !== 'WhatsApp User';
@@ -770,38 +863,36 @@ async function sendCampaignReviewCard({ sock, adminJid, campaign, noticeText = '
 
   const targetSendJid = isSelf ? myJid : adminJid;
 
-  const quickActionsText = isSelf
-    ? `👉 *Quick Actions (Tap a 1-tap link or reply directly):*\n` +
-      `• 🚀 *Send to All (${count}):*\n  https://wa.me/91${botPhone}?text=send\n\n` +
-      `• ❌ *Remove Numbers:*\n  https://wa.me/91${botPhone}?text=remove\n\n` +
-      `• 🚫 *Cancel Broadcast:*\n  https://wa.me/91${botPhone}?text=cancel\n\n` +
-      `💬 *Or simply reply with text:*\n` +
-      `• Reply *send* ➔ 🚀 Dispatch promo to all ${count} students\n` +
-      `• Reply *remove 2* ➔ ❌ Exclude contact #2\n` +
-      `• Reply *remove 1, 3* ➔ ❌ Exclude multiple\n` +
-      `• Reply *cancel* ➔ 🚫 Cancel broadcast`
-    : `👉 *Quick Actions (Reply directly or tap buttons below):*\n` +
-      `• Reply *send* (or *proceed*) ➔ 🚀 Send promo to all ${count} students\n` +
-      `• Reply *remove 2* ➔ ❌ Exclude contact #2\n` +
-      `• Reply *remove 1, 3* ➔ ❌ Exclude multiple\n` +
-      `• Reply *cancel* ➔ 🚫 Cancel broadcast`;
+  const cardTitle = `📋 Audience Review · ${campaign.timeframeLabel}`;
+  const cardBody = count > 0
+    ? `${noticeText ? `${noticeText}\n\n` : ''}` +
+      `Found *${count}* contact(s) who personally messaged this bot:\n\n` +
+      `${listStr.trim()}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📊 *Total Audience:* *${count}* recipient(s)`
+    : `${noticeText ? `${noticeText}\n\n` : ''}` +
+      `⚠️ *No contacts remaining in this audience.*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `_Reply with numbers directly (e.g. \`@send 9863013886\`) or use \`@send 7d\` to expand search._`;
 
-  const cardText =
-    (noticeText ? `${noticeText}\n\n` : '') +
-    (count > 0
-      ? `📋 *Campaign Audience Review* · ${campaign.timeframeLabel}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `Found *${count}* active student contact(s) who personally messaged this bot in the past ${campaign.timeframeLabel}:\n\n` +
-        `${listStr}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `📊 *Total Audience:* *${count}* recipient(s)\n\n` +
-        `${quickActionsText}`
-      : `⚠️ *No contacts found or remaining in this audience.*\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `_Reply with numbers directly (e.g. \`@send 9863013886, ...\`) or use \`@send 7d\` to expand the search timeframe._`);
+  const buttons = count > 0
+    ? [
+        { id: 'btn_campaign_send', text: `🚀 Send to All (${count})` },
+        { id: 'btn_campaign_remove', text: '❌ Remove Numbers' },
+        { id: 'btn_campaign_cancel', text: '🚫 Cancel Broadcast' },
+      ]
+    : [
+        { id: 'btn_campaign_cancel', text: '🚫 Cancel' },
+      ];
 
-  // ALWAYS send standard text message directly to targetSendJid (guarantees 0ms instant display without "Waiting for this message" delays)
-  await sock.sendMessage(targetSendJid, { text: cardText });
+  await sendInteractiveButtons({
+    sock,
+    jid: targetSendJid,
+    title: cardTitle,
+    body: cardBody,
+    footer: 'PrintKurox Campaign Manager',
+    buttons,
+  });
 }
 
 async function executeCampaignBroadcast({ sock, adminJid, campaign }) {
@@ -900,7 +991,10 @@ async function sendStep2PageButtons(sock, senderJid, session) {
     `📄 *File:* ${session.fileName} (${session.totalPages} pages)\n` +
     `🖨️ *Mode:* ${modeLabel}\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `Choose pages to print:`;
+    `Choose pages to print:\n` +
+    `• Tap an option below, or\n` +
+    `• Reply *1* for *All Pages*\n` +
+    `• Reply *2* for *Custom Range* (or reply *1, 3* directly)`;
 
   session.stage = 'AWAITING_PAGE_SELECTION';
 
@@ -1352,7 +1446,7 @@ function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode,
           `_Need help? Call operator: +91 ${STATION_CONTACT}_`;
 
         await sendInteractiveButtons({
-          sock,
+          sock: activeBotSock || sock,
           jid: senderJid,
           title: 'PrintKurox · Payment Confirmed',
           body: confirmBody,
@@ -1439,27 +1533,74 @@ async function handleCashOrder({ sock, senderJid, session }) {
   console.log(`[WA-Bot] Cash order confirmed for ${session.pickupCode} (${senderJid})`);
 }
 
+function getExifOrientation(buffer) {
+  try {
+    if (!buffer || buffer.length < 14) return 1;
+    if (buffer[0] !== 0xFF || buffer[1] !== 0xD8) return 1;
+    let offset = 2;
+    while (offset < buffer.length - 4) {
+      if (buffer[offset] !== 0xFF) break;
+      const marker = buffer[offset + 1];
+      const len = buffer.readUInt16BE(offset + 2);
+      if (marker === 0xE1) {
+        if (buffer.slice(offset + 4, offset + 10).toString('latin1') === 'Exif\0\0') {
+          const tiffStart = offset + 10;
+          const isLittle = buffer.slice(tiffStart, tiffStart + 2).toString('latin1') === 'II';
+          const read16 = (o) => isLittle ? buffer.readUInt16LE(o) : buffer.readUInt16BE(o);
+          const read32 = (o) => isLittle ? buffer.readUInt32LE(o) : buffer.readUInt32BE(o);
+          const firstIfdOffset = read32(tiffStart + 4);
+          const ifdStart = tiffStart + firstIfdOffset;
+          const numEntries = read16(ifdStart);
+          for (let i = 0; i < numEntries; i++) {
+            const entryStart = ifdStart + 2 + i * 12;
+            if (entryStart + 12 > buffer.length) break;
+            const tag = read16(entryStart);
+            if (tag === 0x0112) {
+              return read16(entryStart + 8);
+            }
+          }
+        }
+        break;
+      }
+      offset += 2 + len;
+    }
+  } catch (e) {}
+  return 1;
+}
+
 /**
- * Fast binary header inspection to detect if image is Landscape (width > height)
+ * Fast binary header inspection to detect if image is truly Landscape.
+ * Documents photographed sideways on WhatsApp default to Portrait on A4.
  */
 function detectImageLandscape(buffer) {
   try {
     if (!buffer) return false;
+    let w = 0, h = 0;
     // PNG inspection: IHDR width at offset 16, height at offset 20
     if (buffer.length > 24 && buffer[0] === 0x89 && buffer[1] === 0x50) {
-      const w = buffer.readUInt32BE(16);
-      const h = buffer.readUInt32BE(20);
-      return w > h;
+      w = buffer.readUInt32BE(16);
+      h = buffer.readUInt32BE(20);
     }
     // JPEG inspection: SOF0/SOF2 marker
-    if (buffer.length > 4 && buffer[0] === 0xFF && buffer[1] === 0xD8) {
+    else if (buffer.length > 4 && buffer[0] === 0xFF && buffer[1] === 0xD8) {
       for (let i = 2; i < buffer.length - 8; i++) {
         if (buffer[i] === 0xFF && (buffer[i + 1] === 0xC0 || buffer[i + 1] === 0xC2)) {
-          const h = buffer.readUInt16BE(i + 5);
-          const w = buffer.readUInt16BE(i + 7);
-          return w > h;
+          h = buffer.readUInt16BE(i + 5);
+          w = buffer.readUInt16BE(i + 7);
+          break;
         }
       }
+      const exifOrient = getExifOrientation(buffer);
+      if (exifOrient === 6 || exifOrient === 8) {
+        const temp = w;
+        w = h;
+        h = temp;
+      }
+    }
+    if (w > 0 && h > 0) {
+      // Standard camera ratios (4:3 = 1.33, 16:9 = 1.77) for documents are printed on Portrait A4.
+      // Only set true landscape if extreme panorama (w > h * 2.0).
+      return w > h * 2.0;
     }
   } catch (e) {}
   return false;
@@ -1547,12 +1688,85 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
 
   if (files.length === 1) {
     const f = files[0];
-    finalBuffer = f.buffer;
-    finalFileName = f.fileName;
-    finalMimeType = f.mimeType;
-    totalPages = f.pages;
-    isLandscapeDefault = f.isLandscape;
-    isMergedBatch = false;
+    const isImg = f.isImg || (f.mimeType && f.mimeType.startsWith('image/')) || (f.fileName && /\.(jpe?g|png|webp|bmp)$/i.test(f.fileName));
+    if (isImg) {
+      try {
+        const singlePdf = await PDFDocument.create();
+        let embeddedImage;
+        const isPng = f.buffer.length > 24 && f.buffer[0] === 0x89 && f.buffer[1] === 0x50;
+        if (isPng) {
+          try { embeddedImage = await singlePdf.embedPng(f.buffer); }
+          catch (e) { embeddedImage = await singlePdf.embedJpg(f.buffer); }
+        } else {
+          try { embeddedImage = await singlePdf.embedJpg(f.buffer); }
+          catch (e) { embeddedImage = await singlePdf.embedPng(f.buffer); }
+        }
+
+        if (embeddedImage) {
+          const a4W = 595.28;
+          const a4H = 841.89;
+          const page = singlePdf.addPage([a4W, a4H]);
+          const margin = 24;
+          const maxW = a4W - (margin * 2);
+          const maxH = a4H - (margin * 2);
+
+          if (embeddedImage.width > embeddedImage.height) {
+            // Auto-rotate sideways document 90° CCW so it is upright on Portrait A4
+            const targetW = embeddedImage.height;
+            const targetH = embeddedImage.width;
+            const scale = Math.min(maxW / targetW, maxH / targetH);
+            const drawW = targetW * scale;
+            const drawH = targetH * scale;
+            const drawX = (a4W - drawW) / 2;
+            const drawY = (a4H - drawH) / 2;
+            page.drawImage(embeddedImage, {
+              x: drawX + drawW,
+              y: drawY,
+              width: embeddedImage.width * scale,
+              height: embeddedImage.height * scale,
+              rotate: degrees(90),
+            });
+          } else {
+            const dims = embeddedImage.scaleToFit(maxW, maxH);
+            page.drawImage(embeddedImage, {
+              x: (a4W - dims.width) / 2,
+              y: (a4H - dims.height) / 2,
+              width: dims.width,
+              height: dims.height,
+            });
+          }
+
+          const pdfBytes = await singlePdf.save();
+          finalBuffer = Buffer.from(pdfBytes);
+          finalFileName = (f.fileName || 'photo').replace(/\.[^.]+$/, '') + '.pdf';
+          finalMimeType = 'application/pdf';
+          totalPages = 1;
+          isLandscapeDefault = false;
+          isMergedBatch = false;
+        } else {
+          finalBuffer = f.buffer;
+          finalFileName = f.fileName;
+          finalMimeType = f.mimeType;
+          totalPages = f.pages;
+          isLandscapeDefault = false;
+          isMergedBatch = false;
+        }
+      } catch (err) {
+        finalBuffer = f.buffer;
+        finalFileName = f.fileName;
+        finalMimeType = f.mimeType;
+        totalPages = f.pages;
+        isLandscapeDefault = false;
+        isMergedBatch = false;
+      }
+    } else {
+      finalBuffer = f.buffer;
+      finalFileName = f.fileName;
+      finalMimeType = f.mimeType;
+      totalPages = f.pages;
+      isLandscapeDefault = f.isLandscape;
+      isMergedBatch = false;
+    }
   } else {
     // Multi-file batch! Merge all files into 1 clean A4 PDF document
     isMergedBatch = true;
@@ -1598,14 +1812,32 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
               const margin = 24;
               const maxW = a4W - (margin * 2);
               const maxH = a4H - (margin * 2);
-              const dims = embeddedImage.scaleToFit(maxW, maxH);
 
-              page.drawImage(embeddedImage, {
-                x: (a4W - dims.width) / 2,
-                y: (a4H - dims.height) / 2,
-                width: dims.width,
-                height: dims.height,
-              });
+              if (embeddedImage.width > embeddedImage.height) {
+                // Auto-rotate sideways document 90° CCW so it is upright on Portrait A4
+                const targetW = embeddedImage.height;
+                const targetH = embeddedImage.width;
+                const scale = Math.min(maxW / targetW, maxH / targetH);
+                const drawW = targetW * scale;
+                const drawH = targetH * scale;
+                const drawX = (a4W - drawW) / 2;
+                const drawY = (a4H - drawH) / 2;
+                page.drawImage(embeddedImage, {
+                  x: drawX + drawW,
+                  y: drawY,
+                  width: embeddedImage.width * scale,
+                  height: embeddedImage.height * scale,
+                  rotate: degrees(90),
+                });
+              } else {
+                const dims = embeddedImage.scaleToFit(maxW, maxH);
+                page.drawImage(embeddedImage, {
+                  x: (a4W - dims.width) / 2,
+                  y: (a4H - dims.height) / 2,
+                  width: dims.width,
+                  height: dims.height,
+                });
+              }
             }
           } catch (imgErr) {
             console.warn(`[WA-Bot] Could not embed image item ${i + 1}:`, imgErr.message);
@@ -2020,7 +2252,7 @@ function handleIncomingMediaAttachment({
         return;
       }
       try {
-        await processBufferedFiles({ sock, senderJid, normalizedJid, senderName });
+        await processBufferedFiles({ sock: activeBotSock || sock, senderJid, normalizedJid, senderName });
       } catch (err) {
         console.error('[WA-Bot] Error processing buffered files:', err);
       }
@@ -2137,7 +2369,55 @@ function handleIncomingMediaAttachment({
 // MAIN BAILEYS WHATSAPP BOT DAEMON
 // ============================================================================
 
+let activeBotSock = null;
+let currentSocketGeneration = 0;
+let isStartingBot = false;
+let reconnectTimer = null;
+let currentLivenessTimer = null;
+let currentHeartbeatTimer = null;
+
+function scheduleReconnect(delayMs, reason = '') {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  appendBotLog(`[WA-Bot] Scheduling single reconnect in ${delayMs}ms${reason ? ' (' + reason + ')' : ''}`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    startBot();
+  }, delayMs);
+}
+
 async function startBot() {
+  if (isStartingBot) {
+    appendBotLog('[WA-Bot] Skipping duplicate startBot() call while startup is in progress.');
+    return;
+  }
+  isStartingBot = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (currentLivenessTimer) {
+    clearInterval(currentLivenessTimer);
+    currentLivenessTimer = null;
+  }
+  if (currentHeartbeatTimer) {
+    clearInterval(currentHeartbeatTimer);
+    currentHeartbeatTimer = null;
+  }
+
+  const generation = ++currentSocketGeneration;
+
+  // Cleanly tear down any prior socket so two sockets never fight over session_auth keys
+  if (activeBotSock) {
+    try { activeBotSock.ev?.removeAllListeners?.(); } catch (e) {}
+    try { activeBotSock.ws?.terminate?.(); } catch (e) {}
+    try { activeBotSock.end?.(new Error('Replaced by fresh socket')); } catch (e) {}
+    activeBotSock = null;
+  }
+
+  try {
   const authDir = path.join(__dirname, 'session_auth');
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   let version = [2, 3000, 1015901307];
@@ -2150,11 +2430,9 @@ async function startBot() {
 
   console.log(`[WA-Bot] Using Baileys version ${version.join('.')}`);
 
-  const botSentIds = new Set();
+  // Preserve botSentIds across reconnects so sent messages are never re-processed
   const heartbeatPath = path.join(__dirname, 'bot_heartbeat.json');
   let lastTrafficTime = Date.now();
-  let livenessTimer = null;
-  let heartbeatTimer = null;
 
   const updateHeartbeat = (connected = false) => {
     try {
@@ -2203,7 +2481,10 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
+  activeBotSock = sock;
+
   sock.ev.on('connection.update', (update) => {
+    if (generation !== currentSocketGeneration) return;
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -2213,8 +2494,8 @@ async function startBot() {
     }
 
     if (connection === 'close') {
-      if (livenessTimer) clearInterval(livenessTimer);
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (currentLivenessTimer) { clearInterval(currentLivenessTimer); currentLivenessTimer = null; }
+      if (currentHeartbeatTimer) { clearInterval(currentHeartbeatTimer); currentHeartbeatTimer = null; }
       updateHeartbeat(false);
 
       const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -2224,13 +2505,16 @@ async function startBot() {
       appendBotLog(warnMsg);
 
       if (shouldReconnect) {
-        setTimeout(startBot, 3000);
+        // If connection was replaced (440), wait 15 seconds to prevent spam conflict fight
+        const delay = statusCode === 440 ? 15000 : 3000;
+        scheduleReconnect(delay, `status=${statusCode}`);
       } else {
         const errMsg = '[WA-Bot] Logged out from WhatsApp. Delete "session_auth" folder and scan QR again.';
         console.error(errMsg);
         appendBotLog(errMsg);
       }
     } else if (connection === 'open') {
+      activeBotSock = sock;
       lastTrafficTime = Date.now();
       updateHeartbeat(true);
 
@@ -2242,16 +2526,18 @@ async function startBot() {
       appendBotLog(successMsg);
 
       // Clean existing timers if any
-      if (livenessTimer) clearInterval(livenessTimer);
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (currentLivenessTimer) { clearInterval(currentLivenessTimer); currentLivenessTimer = null; }
+      if (currentHeartbeatTimer) { clearInterval(currentHeartbeatTimer); currentHeartbeatTimer = null; }
 
       // Active Heartbeat writer every 15 seconds
-      heartbeatTimer = setInterval(() => {
+      currentHeartbeatTimer = setInterval(() => {
+        if (generation !== currentSocketGeneration) return;
         updateHeartbeat(true);
       }, 15000);
 
       // WebSocket Liveness & Anti-Zombie Watchdog (detects silent firewall disconnects / captive portal resets)
-      livenessTimer = setInterval(() => {
+      currentLivenessTimer = setInterval(() => {
+        if (generation !== currentSocketGeneration) return;
         const ws = sock.ws;
         if (!ws) return;
 
@@ -2262,21 +2548,24 @@ async function startBot() {
           } catch (e) {}
 
           const quietSec = (Date.now() - lastTrafficTime) / 1000;
-          if (quietSec > 50) {
+          if (quietSec > 90) {
             const staleMsg = `[WA-Bot Watchdog] Zombie connection detected (${Math.floor(quietSec)}s without traffic/pong). Forcing clean reconnect...`;
             console.warn(staleMsg);
             appendBotLog(staleMsg);
+            if (currentLivenessTimer) { clearInterval(currentLivenessTimer); currentLivenessTimer = null; }
+            if (currentHeartbeatTimer) { clearInterval(currentHeartbeatTimer); currentHeartbeatTimer = null; }
             try { ws.terminate(); } catch (e) {}
             try { sock.end(new Error('Liveness timeout')); } catch (e) {}
+            scheduleReconnect(2000, 'liveness timeout');
           }
         } else if (ws.readyState === 2 || ws.readyState === 3) {
-          const closedWsMsg = `[WA-Bot Watchdog] WebSocket is dead (state: ${ws.readyState}). Triggering immediate restart...`;
+          const closedWsMsg = `[WA-Bot Watchdog] WebSocket is dead (state: ${ws.readyState}). Triggering single clean restart...`;
           console.warn(closedWsMsg);
           appendBotLog(closedWsMsg);
-          clearInterval(livenessTimer);
-          if (heartbeatTimer) clearInterval(heartbeatTimer);
+          if (currentLivenessTimer) { clearInterval(currentLivenessTimer); currentLivenessTimer = null; }
+          if (currentHeartbeatTimer) { clearInterval(currentHeartbeatTimer); currentHeartbeatTimer = null; }
           updateHeartbeat(false);
-          setTimeout(startBot, 2000);
+          scheduleReconnect(2000, `ws state=${ws.readyState}`);
         }
       }, 20000);
 
@@ -2287,31 +2576,67 @@ async function startBot() {
           sock.ws.on('message', () => { lastTrafficTime = Date.now(); });
         } catch (e) {}
       }
+
+      // Start server power watchdog & send startup notification once to admin (9863013886)
+      onBotConnectionOpen({
+        getSock: () => activeBotSock,
+        sendInteractiveButtons,
+        logFn: appendBotLog,
+      }).catch((err) => appendBotLog(`[Server Controller] Open hook error: ${err.message}`));
     }
   });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     try {
+      if (generation !== currentSocketGeneration) return;
       if (type !== 'notify') return;
       lastTrafficTime = Date.now();
       if (!messages || messages.length === 0) return;
 
       for (const msg of messages) {
-        if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue;
-
+        if (!msg.message || !msg.key?.remoteJid) continue;
         const senderJid = msg.key.remoteJid;
-        const normalizedJid = jidNormalizedUser(senderJid);
-        const senderName = msg.pushName || 'Student';
-        lastTrafficTime = Date.now();
-        appendBotLog(`Incoming message from ${senderName} (${senderJid})`);
-        const isGroup = senderJid.endsWith('@g.us');
-
-        if (isGroup && !msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(sock.user?.id)) {
+        if (
+          senderJid === 'status@broadcast' ||
+          senderJid.endsWith('@newsletter') ||
+          senderJid.endsWith('@broadcast')
+        ) {
           continue;
         }
 
-        // Normalize content to unwrap viewOnce wrappers automatically
+        const msgId = msg.key?.id;
+        if (msgId && (botSentIds.has(msgId) || hasProcessedMessage(msgId))) {
+          continue;
+        }
+
+        const msgTsSec = getMessageTimestampSec(msg);
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (msgTsSec > 0 && (nowSec - msgTsSec) > STALE_MESSAGE_AGE_SEC) {
+          appendBotLog(`[Dedup] Ignoring stale replayed message ${msgId || ''} from ${senderJid} (${nowSec - msgTsSec}s old)`);
+          if (msgId) markMessageProcessed(msgId);
+          continue;
+        }
+
+        const normalizedJid = jidNormalizedUser(senderJid);
+        const senderName = msg.pushName || 'Student';
+        lastTrafficTime = Date.now();
+        const isGroup = senderJid.endsWith('@g.us');
+
+        // Normalize content to unwrap viewOnce / ephemeral wrappers automatically
         const content = normalizeMessageContent(msg.message);
+        const rawGroupText = (
+          content?.conversation ||
+          content?.extendedTextMessage?.text ||
+          content?.imageMessage?.caption ||
+          content?.documentMessage?.caption ||
+          content?.videoMessage?.caption ||
+          ''
+        ).trim();
+
+        // In groups, respond ONLY to faculty search (@find / !find) & @help / !help (never student search or print flow)
+        if (isGroup && !isGroupFacultyCommand(rawGroupText)) {
+          continue;
+        }
 
         // ======================================================================
         // 0. DETECT BUTTON INTERACTION (NATIVE FLOW QUICK-REPLY / TEMPLATE BUTTON)
@@ -2348,7 +2673,7 @@ async function startBot() {
         }
 
         // Check if this message was sent by the bot itself
-        if (msg.key.id && botSentIds.has(msg.key.id)) continue;
+        if (msgId && botSentIds.has(msgId)) continue;
 
         const myJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
         const myLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : null;
@@ -2358,29 +2683,46 @@ async function startBot() {
         // Resolve phone number of sender (handling LID reverse mappings)
         const userActivityPhone = await resolveUserPhone(sock, senderJid);
 
-        // Allow message if it's sent to self or testing in the bot's own chat
+        // Allow fromMe ONLY when the bot account (9362980761) literally messages itself (never for ADMIN_NUMBERS chats)
         const isMessageToSelf = !isGroup && isFromMe && (
           senderJid === myJid ||
           senderJid === myLid ||
           (myPhone && senderJid.includes(myPhone)) ||
-          (userActivityPhone && userActivityPhone === myPhone) ||
-          (userActivityPhone && ADMIN_NUMBERS.includes(userActivityPhone.slice(-10)))
+          (userActivityPhone && userActivityPhone === myPhone)
         );
 
         if (isFromMe && !isMessageToSelf) continue;
 
-        // Acknowledge read receipt asynchronously to keep connection responsive
-        sock.readMessages([msg.key]).catch(() => {});
+        // Skip protocol/system-only updates (revokes, disappearing-timer changes, senderKeyDistribution) with no content
+        const hasMediaPayload = Boolean(extractMediaFromMessage(content) || extractMediaFromMessage(msg.message));
+        if (!buttonId && !rawGroupText && !buttonText && !hasMediaPayload) {
+          if (msgId) markMessageProcessed(msgId);
+          continue;
+        }
+
+        // Persist message ID immediately so reconnects/retries can NEVER re-trigger this message
+        if (msgId) markMessageProcessed(msgId);
+        appendBotLog(`Incoming message id=${msgId || 'none'} from ${senderName} (${senderJid}) isGroup=${isGroup}`);
+
+        // Acknowledge read receipt asynchronously for DMs
+        if (!isGroup) {
+          sock.readMessages([msg.key]).catch(() => {});
+        }
 
         let session = userSessions.get(senderJid) || userSessions.get(normalizedJid);
         if (session) session.senderName = senderName;
 
-        // Continuously record active student contact for automated audience discovery
-        if (userActivityPhone) {
+        // Continuously record active student DM contact for automated audience discovery (skip groups)
+        if (!isGroup && userActivityPhone) {
           recordUserActivity(userActivityPhone, senderJid, senderName);
         }
 
         const rawText =
+          content?.conversation ||
+          content?.extendedTextMessage?.text ||
+          content?.imageMessage?.caption ||
+          content?.documentMessage?.caption ||
+          content?.videoMessage?.caption ||
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
           buttonText ||
@@ -2390,9 +2732,9 @@ async function startBot() {
         const lowerText = trimmedText.toLowerCase();
 
         // ======================================================================
-        // ADMIN COMMANDS (@ad, @preview, @send, @send 24 hour, send 24 hour, 24 hour, @send <numbers>)
+        // ADMIN COMMANDS (@ad, @preview, @send, #status, #wifilogin, #shutdown, etc.)
         // ======================================================================
-        const isAdmin = isSenderAdmin(senderJid, normalizedJid, isMessageToSelf, userActivityPhone);
+        const isAdmin = !isGroup && isSenderAdmin(senderJid, normalizedJid, isMessageToSelf, userActivityPhone);
         const adminReplyJid = isMessageToSelf
           ? (myJid || `91${myPhone}@s.whatsapp.net`)
           : senderJid;
@@ -2425,7 +2767,7 @@ async function startBot() {
               `2. *Auto-Discover Audience:* Reply with \`24 hour\` (or \`@send 24 hour\` / \`@send 7d\`) to stage active students and review the list before broadcasting!\n\n` +
               `3. *Targeted Numbers:* Reply with \`@send 9863013886, 9362980761\` to stage specific phone numbers.`,
           });
-          return;
+          continue;
         }
 
         // ======================================================================
@@ -2443,7 +2785,7 @@ async function startBot() {
           const cleanAdminText = trimmedText.toLowerCase();
 
           // 1. Cancel / Exit Campaign
-          if (/^(cancel|stop|abort|exit|quit|close)$/i.test(cleanAdminText)) {
+          if (/^(cancel|stop|abort|exit|quit|close|3)$/i.test(cleanAdminText) || buttonId === 'btn_campaign_cancel') {
             if (activeCampaign.isAwaitingRemoval) {
               activeCampaign.isAwaitingRemoval = false;
               await sendCampaignReviewCard({
@@ -2452,29 +2794,35 @@ async function startBot() {
                 campaign: activeCampaign,
                 noticeText: '⚠️ Removal mode cancelled. Audience list preserved.',
               });
-              return;
+              continue;
             } else {
               clearCampaignState();
               await sock.sendMessage(adminReplyJid, {
                 text: '🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched.',
               });
-              return;
+              continue;
             }
           }
 
           // 2. Send / Proceed Broadcast
-          if (/^(send|proceed|broadcast|go|ok)$/i.test(cleanAdminText)) {
+          if (/^(send|proceed|broadcast|go|ok|1)$/i.test(cleanAdminText) || buttonId === 'btn_campaign_send') {
             clearCampaignState();
             await executeCampaignBroadcast({ sock, adminJid: adminReplyJid, campaign: activeCampaign });
-            return;
+            continue;
           }
 
           // 3. Remove Command or Direct Numbers to Exclude
-          const isRemoveCmd = /^(remove|delete|del|exclude)\b/i.test(cleanAdminText);
+          const isRemoveCmd = /^(remove|delete|del|exclude|2)\b/i.test(cleanAdminText) || buttonId === 'btn_campaign_remove';
           const isNumericOnly = /^[\d\s,]+$/.test(cleanAdminText);
 
           if (isRemoveCmd || activeCampaign.isAwaitingRemoval || isNumericOnly) {
-            const rawTarget = cleanAdminText.replace(/^(?:remove|delete|del|exclude)\s*/i, '').trim();
+            let rawTarget = '';
+            if (activeCampaign.isAwaitingRemoval) {
+              rawTarget = cleanAdminText;
+            } else {
+              rawTarget = cleanAdminText.replace(/^(?:remove|delete|del|exclude|2|btn_campaign_remove)\s*/i, '').trim();
+            }
+
             if (!rawTarget) {
               activeCampaign.isAwaitingRemoval = true;
               await sock.sendMessage(adminReplyJid, {
@@ -2482,11 +2830,11 @@ async function startBot() {
                   `❌ *Remove Numbers from Audience*\n` +
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                   `Reply with the list item number(s) or phone number(s) to exclude.\n\n` +
-                  `• *By Number:* reply \`2\` or \`1, 3\`\n` +
-                  `• *By Phone:* reply \`+91 9233052856\`\n\n` +
+                  `• *By Item Number:* reply \`1\` or \`1, 2\`\n` +
+                  `• *By Phone:* reply \`9366035076\`\n\n` +
                   `_Or reply *cancel* to return to the audience review card._`,
               });
-              return;
+              continue;
             }
 
             const tokens = rawTarget.split(/[\s,]+/).filter(Boolean);
@@ -2524,17 +2872,17 @@ async function startBot() {
                 campaign: activeCampaign,
                 noticeText: `✅ *Removed ${removedCount} contact(s) from campaign audience.*`,
               });
-              return;
+              continue;
             } else if (activeCampaign.isAwaitingRemoval) {
               await sock.sendMessage(adminReplyJid, {
                 text: `⚠️ *No matching contacts found to remove.*\nReply with a valid number from the list (1 to ${activeCampaign.recipients.length}) or a 10-digit phone number, or reply *cancel*.`,
               });
-              return;
+              continue;
             }
           }
         }
 
-        // Targeted or Automated Discovery: "@send 24 hour", "send 24 hour", "24 hour", "24h", "today", "@send <numbers>"
+        // Targeted or Automated Discovery: "@send 24 hour", "send 24 hour", "24 hour", "24h", "today", "all", "@send <numbers>"
         const isCampaignDiscoveryIntent =
           isAdmin && (
             lowerText.startsWith('@send') ||
@@ -2543,7 +2891,7 @@ async function startBot() {
             lowerText.startsWith('campaign ') ||
             lowerText === '@send' ||
             lowerText === 'send' ||
-            /^(?:@?send\s+)?(?:\d+\s*(?:hours?|hrs?|h|days?|d|weeks?|w)|today)$/i.test(trimmedText)
+            /^(?:@?send\s+)?(?:\d+\s*(?:hours?|hrs?|h|days?|d|weeks?|w)|today|all)$/i.test(trimmedText)
           );
 
         if (isCampaignDiscoveryIntent) {
@@ -2571,29 +2919,25 @@ async function startBot() {
             saveCampaignState(campaign);
 
             await sendCampaignReviewCard({ sock, adminJid: adminReplyJid, campaign });
-            return;
+            continue;
           }
 
-          // Otherwise, it is an automated timeframe scan (e.g. "@send 24 hour", "send 24 hour", "24 hour", "12h", "7d", "today")
+          // Otherwise, it is an automated timeframe scan (e.g. "@send 24 hour", "send 24 hour", "24 hour", "12h", "7d", "today", "all")
           const tf = parseTimeframeHours(rawArg);
-          await sock.sendMessage(adminReplyJid, {
-            text: `🔍 *Scanning active students from the past ${tf.label}...*\n_Searching activity logs, kiosk orders, and chat sessions..._`,
-          });
-
           const activeStudents = await getActiveStudentsInTimeframe(tf.hours, sock);
 
           if (activeStudents.length === 0) {
             await sock.sendMessage(adminReplyJid, {
               text:
-                `⚠️ *No active student contacts found in the past ${tf.label}.*\n` +
+                `⚠️ *No contacts found who messaged this bot in the past ${tf.label}.*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `None of the students who messaged recently were within the last ${tf.label}.\n\n` +
+                `None of the contacts who messaged recently were within the last ${tf.label}.\n\n` +
                 `💡 *What you can do:*\n` +
-                `• Expand search window: reply \`@send 7d\` or \`@send 30d\`\n` +
+                `• Expand search window: reply \`@send 7d\` or \`@send all\`\n` +
                 `• Or target specific phone numbers directly:\n` +
                 `  \`@send 9863013886, 9362980761\``,
             });
-            return;
+            continue;
           }
 
           const campaign = {
@@ -2606,19 +2950,23 @@ async function startBot() {
           saveCampaignState(campaign);
 
           await sendCampaignReviewCard({ sock, adminJid: adminReplyJid, campaign });
-          return;
+          continue;
         }
 
-        // Student & Confidential Dossier Commands (@student, @find student, student, phone, dossier, buttons, Razorpay)
+        // Student & Confidential Dossier Commands (@student, @find student, student, phone, dossier, quota, buttons, Razorpay)
         const isStudentExplicit =
           buttonId?.startsWith('view_student_') ||
           buttonId?.startsWith('unlock_') ||
           buttonId?.startsWith('search_ex_') ||
           buttonId?.startsWith('btn_pay_') ||
           buttonId === 'btn_flow_student' ||
-          /^[@!#]?(student|phone|dossier|find\s+student|search\s+student)/i.test(rawText.trim()) ||
+          buttonId === 'info_limit_policy' ||
+          /^[@!#]?(student|phone|dossier|quota|credits|find\s+student|search\s+student)/i.test(rawText.trim()) ||
           rawText.trim().toLowerCase() === 'student' ||
-          rawText.trim().toLowerCase() === 'directory';
+          rawText.trim().toLowerCase() === 'directory' ||
+          rawText.trim().toLowerCase() === 'why limit' ||
+          rawText.trim().toLowerCase() === 'limit policy' ||
+          rawText.trim().toLowerCase() === 'my credits';
 
         const isStudentMenuChoice =
           (!session || session.stage === 'COMPLETED') &&
@@ -2626,16 +2974,39 @@ async function startBot() {
 
         const isUnlockOrPay =
           rawText.trim().toLowerCase() === 'unlock' ||
-          rawText.trim().toLowerCase() === '3' ||
-          rawText.trim().toLowerCase() === '119';
+          rawText.trim().toLowerCase() === 'pay 5' ||
+          rawText.trim().toLowerCase() === 'supporter' ||
+          ((!session || session.stage === 'COMPLETED') && (
+            rawText.trim().toLowerCase() === '5' ||
+            rawText.trim().toLowerCase() === '49' ||
+            rawText.trim().toLowerCase() === '3' ||
+            rawText.trim().toLowerCase() === '119'
+          ));
 
         const isStudentTrigger = isStudentExplicit || isStudentMenuChoice || isUnlockOrPay;
 
-        if (isStudentTrigger && (!session || session.stage === 'COMPLETED' || isStudentTrigger)) {
+        // Server Admin Controls (#status, #wifilogin, #wifi, #shutdown, #cancelshutdown, #update, admin buttons)
+        if (isAdmin && !isGroup) {
+          const adminHandled = await handleServerAdminCommand({
+            sock,
+            senderJid: adminReplyJid,
+            rawBody: trimmedText,
+            lowerBody: lowerText,
+            buttonId,
+            sendInteractiveButtons,
+            getSearchCount: getFacultySearchCount,
+            logFn: appendBotLog,
+          });
+          if (adminHandled) continue;
+        }
+
+        // Student & Confidential Dossier Commands (STRICTLY DM-only; disabled in groups)
+        if (!isGroup && isStudentTrigger && (!session || session.stage === 'COMPLETED' || isStudentTrigger)) {
           try {
             const resolvedUserPhone = await resolveUserPhone(sock, senderJid);
             const handled = await handleStudentMessage({
               sock,
+              getSock: () => activeBotSock,
               msg,
               rawBody: rawText,
               lowerBody: rawText.toLowerCase().trim(),
@@ -2650,6 +3021,21 @@ async function startBot() {
             console.error('[Student Module] Error handling student query:', e);
           }
         }
+
+        // Faculty Search (@find / !find) & Help (@help / !help) - works in BOTH DMs and Groups
+        const facultyHandled = await handleFacultyMessage({
+          sock,
+          senderJid,
+          rawBody: trimmedText,
+          lowerBody: lowerText,
+          isAdmin,
+          isGroup,
+          logFn: appendBotLog,
+        });
+        if (facultyHandled) continue;
+
+        // Hard guard: never run printing/media/greeting flows inside groups
+        if (isGroup) continue;
 
         // ======================================================================
         // 1. INCOMING FILE (PDF / IMAGE / DOCUMENT) - UNWRAPPED & NON-BLOCKING
@@ -2676,19 +3062,19 @@ async function startBot() {
             const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
             if (!campaign) {
               await sock.sendMessage(senderJid, { text: `ℹ️ No active campaign found. Type *@send 24 hour* to start one.` });
-              return;
+              continue;
             }
             adminCampaignState.delete(senderJid);
             adminCampaignState.delete(normalizedJid);
             await executeCampaignBroadcast({ sock, adminJid: senderJid, campaign });
-            return;
+            continue;
           }
 
           if (buttonId === 'btn_campaign_remove_prompt') {
             const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
             if (!campaign) {
               await sock.sendMessage(senderJid, { text: `ℹ️ No active campaign found. Type *@send 24 hour* to start one.` });
-              return;
+              continue;
             }
             campaign.isAwaitingRemoval = true;
             await sock.sendMessage(senderJid, {
@@ -2700,7 +3086,7 @@ async function startBot() {
                 `• *By Phone:* reply \`+91 9233052856\`\n\n` +
                 `_Or reply *cancel* to return to the audience review card._`,
             });
-            return;
+            continue;
           }
 
           if (buttonId === 'btn_campaign_cancel') {
@@ -2709,7 +3095,7 @@ async function startBot() {
             await sock.sendMessage(senderJid, {
               text: `🚫 *Campaign Broadcast Cancelled.*\nNo promotional messages were dispatched. Active list cleared.`,
             });
-            return;
+            continue;
           }
 
           if (buttonId === 'btn_campaign_cancel_remove') {
@@ -2718,13 +3104,14 @@ async function startBot() {
               campaign.isAwaitingRemoval = false;
               await sendCampaignReviewCard({ sock, adminJid: senderJid, campaign });
             }
-            return;
+            continue;
           }
 
           if (buttonId === 'btn_flow_student') {
             const resolvedUserPhone = await resolveUserPhone(sock, senderJid);
             await handleStudentMessage({
               sock,
+              getSock: () => activeBotSock,
               msg,
               rawBody: '',
               lowerBody: '',
@@ -2734,7 +3121,21 @@ async function startBot() {
               razorpay,
               userPhone: resolvedUserPhone,
             });
-            return;
+            continue;
+          }
+          if (buttonId === 'btn_flow_faculty') {
+            const facultyGuide =
+              '👨‍🏫 *NERIST Faculty Directory Search*\n' +
+              '━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+              'Search 350+ faculty profiles, phone numbers & departments instantly:\n\n' +
+              '🔍 *Quick Search Examples:*\n' +
+              '• *By Initials:* `@find akr` or `@find jb`\n' +
+              '• *By Name:* `@find Rajesh Kumar` or `@find Ashok`\n' +
+              '• *By Email Handle:* `@find kry`\n' +
+              '• *By Department:* `@find CSE` or `@find Chemistry`\n\n' +
+              '_Works both here in DM and in WhatsApp groups!_';
+            await sock.sendMessage(senderJid, { text: facultyGuide });
+            continue;
           }
           if (buttonId === 'btn_flow_printing') {
             const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
@@ -2756,14 +3157,14 @@ async function startBot() {
               `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
               `_Send your file now to start!_`;
             await sock.sendMessage(senderJid, { text: onboardingPrompt });
-            return;
+            continue;
           }
           // Session Expiration Guard
           if (session && isSessionExpired(session) && session.stage !== 'COMPLETED') {
             userSessions.delete(senderJid);
             userSessions.delete(normalizedJid);
             await sendSessionExpiredMessage(sock, senderJid);
-            return;
+            continue;
           }
 
           // --- QUEUE STAGING BUTTON: ADD MORE FILES ---
@@ -2772,7 +3173,7 @@ async function startBot() {
               await sock.sendMessage(senderJid, {
                 text: `📎 *Please forward or attach a PDF or photo to start!*`,
               });
-              return;
+              continue;
             }
             session.stage = 'AWAITING_MORE_FILES';
             session.timestamp = Date.now();
@@ -2787,17 +3188,17 @@ async function startBot() {
                 { id: 'btn_queue_clear', text: '❌ Cancel Print' },
               ],
             });
-            return;
+            continue;
           }
 
           // --- QUEUE STAGING BUTTON: CONTINUE TO PRINT ---
           if (buttonId === 'btn_queue_continue') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
             await continueWithQueuedFiles({ sock, senderJid, session, senderName });
-            return;
+            continue;
           }
 
           // --- QUEUE STAGING BUTTON: CLEAR QUEUE ---
@@ -2818,14 +3219,14 @@ async function startBot() {
                 `Your print queue has been emptied.\n` +
                 `Whenever you're ready, forward or send any document or photo to start fresh!`,
             });
-            return;
+            continue;
           }
 
           // --- STEP 1 BUTTON: COLOR SELECTION ---
           if (buttonId === 'btn_bw' || buttonId === 'btn_color') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
 
             // AUTO-MERGE GUARD: If student has multiple files in queue and hasn't merged yet, merge now!
@@ -2847,49 +3248,50 @@ async function startBot() {
               session.pageRangeStr = 'All';
               await sendStep3CopiesButtons(sock, senderJid, session);
             }
-            return;
+            continue;
           }
 
           // --- STEP 2 BUTTON: PAGE SELECTION (ALL vs CUSTOM) ---
           if (buttonId === 'btn_pages_all') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
             session.selectedPages = Array.from({ length: session.totalPages }, (_, i) => i + 1);
             session.pageRangeStr = 'All';
             session.timestamp = Date.now();
             console.log(`[WA-Bot] ${senderName} selected All Pages, advancing to Copies`);
             await sendStep3CopiesButtons(sock, senderJid, session);
-            return;
+            continue;
           }
 
           if (buttonId === 'btn_pages_custom') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
             session.stage = 'AWAITING_CUSTOM_RANGE';
             session.timestamp = Date.now();
             await sock.sendMessage(senderJid, {
               text:
-                `📑 *Custom Page Range:*\n` +
+                `🔢 *Custom Page Range:*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `Total pages in file: *${session.totalPages}*\n\n` +
                 `Reply with the pages you want to print, e.g.:\n` +
-                `• *1-5* (pages 1 to 5)\n` +
-                `• *1, 3, 5* (specific pages)\n` +
+                `• *1, 3* (or *1 and 3*)\n` +
+                `• *1-${Math.min(3, session.totalPages)}* (a range of pages)\n` +
+                `• *all* (to print all pages)\n` +
                 `• *odd* or *even*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━`,
             });
-            return;
+            continue;
           }
 
           // --- STEP 3 BUTTON: COPIES SELECTION ---
           if (buttonId === 'btn_copies_custom') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
             session.stage = 'AWAITING_CUSTOM_COPIES';
             session.timestamp = Date.now();
@@ -2901,13 +3303,13 @@ async function startBot() {
                 `Reply with any number from *1 to 50* (e.g. *3*, *5*, *10*):\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━`,
             });
-            return;
+            continue;
           }
 
           if (buttonId.startsWith('btn_copies_')) {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
             const copies = parseInt(buttonId.replace('btn_copies_', ''), 10) || 1;
             session.copies = copies;
@@ -2921,20 +3323,20 @@ async function startBot() {
 
             console.log(`[WA-Bot] ${senderName} selected ${copies} ${copies === 1 ? 'Copy' : 'Copies'}, advancing to Summary & 1-Tap UPI`);
             await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
-            return;
+            continue;
           }
 
           // --- BUTTON: VIEW PREVIEW ---
           if (buttonId === 'btn_view_preview') {
             await sendDocumentVisualPreview({ sock, senderJid, senderName, session });
-            return;
+            continue;
           }
 
           // --- BUTTON: PROCEED TO PAYMENT / PAY NOW ---
           if (buttonId === 'btn_pay_now' || buttonId === 'btn_proceed_payment') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
             if (session.paymentLinkUrl) {
               await sock.sendMessage(senderJid, {
@@ -2950,18 +3352,18 @@ async function startBot() {
                   `🖨️ _Your document will print automatically once payment is received._\n` +
                   `_Code: ${session.pickupCode || 'Active'}_`,
               });
-              return;
+              continue;
             }
             console.log(`[WA-Bot] ${senderName} tapped pay now, re-dispatching 1-Tap UPI Card`);
             await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
-            return;
+            continue;
           }
 
           // --- RESET / CHANGE SETTINGS BUTTON ---
           if (buttonId === 'btn_reset') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
-              return;
+              continue;
             }
             if (session.jobId && activePollers.has(session.jobId)) {
               clearInterval(activePollers.get(session.jobId));
@@ -2984,13 +3386,13 @@ async function startBot() {
             } else if (session.fileName) {
               await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb);
             }
-            return;
+            continue;
           }
 
           // --- STEP 5 PAYMENT: CASH BUTTON ---
           if (buttonId === 'btn_pay_cash') {
             await handleCashOrder({ sock, senderJid, session });
-            return;
+            continue;
           }
 
           // --- STATION SELECTION BUTTON ---
@@ -3002,7 +3404,7 @@ async function startBot() {
               await sock.sendMessage(senderJid, {
                 text: `✅ *Print Station Updated!*\n📍 *${chosen.name}* (${chosen.room})\n\nYour prints will be routed to this printer screen.`,
               });
-              return;
+              continue;
             }
           }
         }
@@ -3024,7 +3426,7 @@ async function startBot() {
             userSessions.delete(senderJid);
             userSessions.delete(normalizedJid);
             await sendSessionExpiredMessage(sock, senderJid);
-            return;
+            continue;
           }
 
           // --- UNIVERSAL CANCEL / STOP COMMAND ---
@@ -3046,7 +3448,7 @@ async function startBot() {
                 `No payment has been charged.\n\n` +
                 `_Whenever you're ready, simply send or forward a new document or photo to start fresh!_`,
             });
-            return;
+            continue;
           }
 
           // --- QUEUE ACTIONS: ADD MORE / CONTINUE / CLEAR / VIEW QUEUE ---
@@ -3060,12 +3462,12 @@ async function startBot() {
                   `I will add it to your queue (${session.queuedFiles?.length || 0} files currently).\n\n` +
                   `_Reply *continue* or *done* when you are finished!_`,
               });
-              return;
+              continue;
             }
 
             if (clean === 'continue' || clean === 'done' || clean === 'print' || clean === 'next' || clean === 'ok' || clean === 'proceed') {
               await continueWithQueuedFiles({ sock, senderJid, session, senderName });
-              return;
+              continue;
             }
 
             if (clean === 'clear' || clean === 'cancel' || clean === 'cancel queue' || clean === 'clear queue' || clean === 'empty' || clean === 'delete' || clean === 'stop' || clean === 'quit' || clean === 'exit') {
@@ -3077,12 +3479,12 @@ async function startBot() {
               await sock.sendMessage(senderJid, {
                 text: `🗑️ *Print queue cleared!* Forward or send a new document to start fresh.`,
               });
-              return;
+              continue;
             }
 
             if (clean === 'queue' || clean === 'files' || clean === 'list') {
               await sendQueueStagingCard({ sock, senderJid, session });
-              return;
+              continue;
             }
           }
 
@@ -3105,7 +3507,7 @@ async function startBot() {
                 `5. Enter your Pickup Code on the printer screen!\n\n` +
                 `_Tip: Send multiple files to bundle them under 1 single pickup code._`,
             });
-            return;
+            continue;
           }
 
           // --- RESET COMMAND ---
@@ -3123,10 +3525,10 @@ async function startBot() {
               session.timestamp = Date.now();
               if (session.queuedFiles && session.queuedFiles.length > 0) {
                 await sendQueueStagingCard({ sock, senderJid, session });
-                return;
+                continue;
               } else if (session.fileName) {
                 await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb);
-                return;
+                continue;
               }
             }
           }
@@ -3149,7 +3551,7 @@ async function startBot() {
                 await sock.sendMessage(senderJid, {
                   text: `✅ *Print Station Updated!*\n📍 *${chosen.name}* (${chosen.room})\n\nYour prints will be routed to this printer screen.`,
                 });
-                return;
+                continue;
               }
             }
 
@@ -3164,7 +3566,7 @@ async function startBot() {
               footer: 'PrintKurox AutoPrint',
               buttons: STATION_BUTTONS,
             });
-            return;
+            continue;
           }
 
           // --- TYPED FALLBACK: STEP 1 (COLOR MODE) ---
@@ -3188,49 +3590,99 @@ async function startBot() {
                 session.pageRangeStr = 'All';
                 await sendStep3CopiesButtons(sock, senderJid, session);
               }
-              return;
+              continue;
             } else {
               await sock.sendMessage(senderJid, {
                 text: `👉 Please tap an option button above, or reply *1* for *Black & White* or *2* for *Color*.`,
               });
-              return;
+              continue;
             }
           }
 
-          // --- TYPED FALLBACK: STEP 2 (PAGE SELECTION & CUSTOM RANGE) ---
-          if (session && (session.stage === 'AWAITING_PAGE_SELECTION' || session.stage === 'AWAITING_CUSTOM_RANGE')) {
-            let selectedPages = Array.from({ length: session.totalPages }, (_, i) => i + 1);
-            let pageRangeStr = 'All';
-
-            if (clean === 'all' || clean === '1' || clean === 'ok' || clean === 'full') {
-              selectedPages = Array.from({ length: session.totalPages }, (_, i) => i + 1);
-              pageRangeStr = 'All';
-            } else if (/\bodd\b/i.test(clean)) {
-              selectedPages = [];
-              for (let i = 1; i <= session.totalPages; i += 2) selectedPages.push(i);
-              pageRangeStr = `Odd (${formatPageRange(selectedPages)})`;
-            } else if (/\beven\b/i.test(clean)) {
-              selectedPages = [];
-              for (let i = 2; i <= session.totalPages; i += 2) selectedPages.push(i);
-              pageRangeStr = `Even (${formatPageRange(selectedPages)})`;
-            } else {
-              const rangeMatch = clean.match(/(?:pages?|p\.?)\s*([0-9\s,-]+)/i) || clean.match(/\b(\d+\s*-\s*\d+)\b/) || clean.match(/^([0-9\s,-]+)$/);
-              if (rangeMatch && rangeMatch[1]) {
-                const parsed = parsePageRange(rangeMatch[1], session.totalPages);
-                if (parsed.length > 0) {
-                  selectedPages = parsed;
-                  pageRangeStr = formatPageRange(selectedPages);
-                }
-              }
+          // --- TYPED FALLBACK: STEP 2 (PAGE SELECTION) ---
+          if (session && session.stage === 'AWAITING_PAGE_SELECTION') {
+            if (clean === '1' || clean === 'all' || clean === 'all pages' || clean === 'ok' || clean === 'full' || clean === 'everything') {
+              session.selectedPages = Array.from({ length: session.totalPages }, (_, i) => i + 1);
+              session.pageRangeStr = 'All';
+              session.timestamp = Date.now();
+              console.log(`[WA-Bot] ${senderName} typed All Pages, advancing to Copies`);
+              await sendStep3CopiesButtons(sock, senderJid, session);
+              continue;
             }
 
-            session.selectedPages = selectedPages;
-            session.pageRangeStr = pageRangeStr;
-            session.timestamp = Date.now();
-            console.log(`[WA-Bot] ${senderName} specified pages: ${pageRangeStr}, advancing to Copies`);
+            if (clean === '2' || clean === 'custom' || clean === 'custom range' || clean === 'range' || clean === 'pages' || clean === 'select') {
+              session.stage = 'AWAITING_CUSTOM_RANGE';
+              session.timestamp = Date.now();
+              await sock.sendMessage(senderJid, {
+                text:
+                  `🔢 *Custom Page Range:*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Total pages in file: *${session.totalPages}*\n\n` +
+                  `Reply with the pages you want to print, e.g.:\n` +
+                  `• *1, 3* (to print pages 1 and 3)\n` +
+                  `• *1-${Math.min(3, session.totalPages)}* (pages 1 to ${Math.min(3, session.totalPages)})\n` +
+                  `• *all* (to print all pages)\n` +
+                  `• *odd* or *even*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+              });
+              continue;
+            }
 
-            await sendStep3CopiesButtons(sock, senderJid, session);
-            return;
+            // Direct page range typed while in page selection (e.g. user typed "1 and 3", "1, 3", "1-2", "odd", "even")
+            const parsed = parsePageRange(clean, session.totalPages);
+            if (parsed.isValid) {
+              session.selectedPages = parsed.pages;
+              session.pageRangeStr = formatPageRange(parsed.pages);
+              session.timestamp = Date.now();
+              console.log(`[WA-Bot] ${senderName} directly specified pages: ${session.pageRangeStr}, advancing to Copies`);
+              await sendStep3CopiesButtons(sock, senderJid, session);
+              continue;
+            }
+
+            // Unrecognized input in page selection
+            await sock.sendMessage(senderJid, {
+              text: `👉 Reply *1* for *All Pages (1-${session.totalPages})* or *2* for *Custom Range* (or type page numbers like *1, 3* directly).`,
+            });
+            continue;
+          }
+
+          // --- TYPED FALLBACK: STEP 2 (CUSTOM RANGE INPUT) ---
+          if (session && session.stage === 'AWAITING_CUSTOM_RANGE') {
+            const parsed = parsePageRange(clean, session.totalPages);
+
+            if (parsed.isValid) {
+              session.selectedPages = parsed.pages;
+              session.pageRangeStr = formatPageRange(parsed.pages);
+              session.timestamp = Date.now();
+              console.log(`[WA-Bot] ${senderName} specified custom pages: ${session.pageRangeStr}, advancing to Copies`);
+              await sendStep3CopiesButtons(sock, senderJid, session);
+              continue;
+            }
+
+            if (parsed.outOfBounds.length > 0) {
+              await sock.sendMessage(senderJid, {
+                text:
+                  `⚠️ *Page Number Out of Range!*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Your file only has *${session.totalPages} pages* (1 to ${session.totalPages}).\n` +
+                  `Page(s) *${parsed.outOfBounds.join(', ')}* do not exist.\n\n` +
+                  `Please reply with valid pages (e.g., *1, 3* or *1-${session.totalPages}*).`,
+              });
+              continue;
+            }
+
+            await sock.sendMessage(senderJid, {
+              text:
+                `⚠️ *Invalid Page Format*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Total pages in file: *${session.totalPages}*\n\n` +
+                `Reply with the pages you want to print, e.g.:\n` +
+                `• *1, 3* (or *1 and 3*)\n` +
+                `• *1-${Math.min(3, session.totalPages)}* (a range of pages)\n` +
+                `• *all* (to print all pages)\n` +
+                `• *odd* or *even*`,
+            });
+            continue;
           }
 
           // --- TYPED FALLBACK: STEP 3 (COPIES & CUSTOM COPIES) ---
@@ -3255,14 +3707,14 @@ async function startBot() {
 
             console.log(`[WA-Bot] ${senderName} selected ${copies} copies, advancing to Summary & 1-Tap UPI`);
             await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
-            return;
+            continue;
           }
 
           // --- TYPED FALLBACK: SUMMARY, PREVIEW & PAYMENT ---
           if (session && (session.stage === 'AWAITING_SUMMARY_CONFIRMATION' || session.stage === 'AWAITING_PAYMENT')) {
             if (clean.includes('preview') || clean.includes('view') || clean.includes('show')) {
               await sendDocumentVisualPreview({ sock, senderJid, senderName, session });
-              return;
+              continue;
             }
 
             if (
@@ -3289,17 +3741,17 @@ async function startBot() {
                     `_Your document will print automatically once payment is received._\n` +
                     `_Code: ${session.pickupCode || 'Active'}_`,
                 });
-                return;
+                continue;
               }
               await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
-              return;
+              continue;
             }
           }
 
           // --- CASH CONFIRMATION (WHEN AWAITING PAYMENT) ---
           if (clean === 'cash' || clean === 'pay cash' || clean === 'counter') {
             await handleCashOrder({ sock, senderJid, session });
-            return;
+            continue;
           }
 
           // --- STATUS & RECENT CODE ---
@@ -3313,7 +3765,7 @@ async function startBot() {
                   `💰 *Amount:* ₹${session.totalPrice || 0}\n` +
                   `📍 *Station:* ${STATION_NAME}`,
               });
-              return;
+              continue;
             }
 
             const recent = await queryD1(
@@ -3331,7 +3783,7 @@ async function startBot() {
                   `📊 *Status:* ${j.status}\n` +
                   `📍 *Station:* ${STATION_NAME}`,
               });
-              return;
+              continue;
             }
           }
 
@@ -3348,23 +3800,27 @@ async function startBot() {
           const isPureGreeting = /^(hi|hello|hey|start|menu|options|help|yo|info|hlo|hii|helo)$/i.test(clean);
 
           if (isPrintGreetingIntent || isPureGreeting) {
-            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
+            appendBotLog(`[Greeting] Matched greeting from ${senderName} (${senderJid}), dispatching menu card`);
+            const cleanName = (senderName && /^[a-zA-Z\s]{2,25}$/.test(senderName.trim())) ? (' ' + senderName.trim()) : '';
+            const welcomeLine = cleanName ? `👋 Hi${cleanName}! Welcome to PrintKurox.` : `👋 Welcome to PrintKurox Campus Services!`;
             await sendInteractiveButtons({
               sock,
               jid: senderJid,
               title: '⚡ NERIST Campus Assistant',
-              body: `👋 Hi${displayName}! Welcome to PrintKurox.\n\nPlease choose a service below:`,
+              body: `${welcomeLine}\n\nPlease choose a service below:`,
               footer: 'PrintKurox AutoPrint',
               buttons: [
                 { id: 'btn_flow_printing', text: '🖨️ Printing Service' },
                 { id: 'btn_flow_student', text: '🎓 Student Directory' },
+                { id: 'btn_flow_faculty', text: '👨‍🏫 Faculty Search' },
               ],
             });
-            return;
+            appendBotLog(`[Greeting] Menu card dispatched to ${senderJid}`);
+            continue;
           }
 
-          // Direct typed choice: "1", "print", "autoprint" -> Direct Printing Onboarding
-          if ((clean === '1' || clean === 'print' || clean === 'autoprint') && (!session || session.stage === 'COMPLETED')) {
+          // Direct typed choice or button tap: "1", "print", "btn_flow_printing" -> Direct Printing Onboarding
+          if ((clean === '1' || clean === 'print' || clean === 'autoprint' || buttonId === 'btn_flow_printing') && (!session || session.stage === 'COMPLETED')) {
             const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
             const onboardingPrompt =
               `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
@@ -3385,68 +3841,7 @@ async function startBot() {
               `_Send your file now to start!_`;
 
             await sock.sendMessage(senderJid, { text: onboardingPrompt });
-            return;
-          }
-
-          if (false) {
-            
-
-          const isGreetingOrPrintIntent =
-            clean.includes('print') ||
-            clean.includes('document') ||
-            clean.includes('pdf') ||
-            clean.includes('photo') ||
-            clean.includes('file') ||
-            clean.includes('xerox') ||
-            clean.includes('price') ||
-            clean.includes('rate') ||
-            clean.includes('offer') ||
-            clean.includes('discount');
-
-          if (!session || session.stage === 'COMPLETED' || isGreetingOrPrintIntent) {
-            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
-            const onboardingPrompt =
-              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
-              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
-              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)_\n` +
-              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)_\n` +
-              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
-              `📄 *Standard Rates (1–9 pages):*\n` +
-              `• B&W Single: ₹4/page\n` +
-              `• Color Single: ₹7/page\n\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
-              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
-              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `_Send your file now to start!_`;
-
-            await sock.sendMessage(senderJid, { text: onboardingPrompt });
-            return;
-          }
-            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
-            const onboardingPrompt =
-              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
-              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
-              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)_\n` +
-              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)_\n` +
-              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
-              `📄 *Standard Rates (1–9 pages):*\n` +
-              `• B&W Single: ₹4/page\n` +
-              `• Color Single: ₹7/page\n\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
-              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
-              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `_Send your file now to start!_`;
-
-            await sock.sendMessage(senderJid, { text: onboardingPrompt }, { quoted: msg });
-            return;
+            continue;
           }
 
           // Fallback if session exists but user typed something unhandled
@@ -3454,8 +3849,26 @@ async function startBot() {
             await sock.sendMessage(senderJid, {
               text: `👉 Please tap an option button above to continue, or forward a new PDF/photo to start fresh!`,
             });
-            return;
+            continue;
           }
+
+          // Universal fallback for ANY incoming text query when no active session exists:
+          appendBotLog(`[Fallback] Unhandled text from ${senderName} (${senderJid}): "${clean.slice(0, 50)}", dispatching welcome card`);
+          const cleanName = (senderName && /^[a-zA-Z\s]{2,25}$/.test(senderName.trim())) ? (' ' + senderName.trim()) : '';
+          const welcomeLine = cleanName ? `👋 Hi${cleanName}! Welcome to PrintKurox.` : `👋 Welcome to PrintKurox Campus Services!`;
+          await sendInteractiveButtons({
+            sock,
+            jid: senderJid,
+            title: '⚡ NERIST Campus Assistant',
+            body: `${welcomeLine}\n\n• 🖨️ *To print:* Send or forward any *PDF*, *Document*, or *Photo* here!\n• 📍 *Station:* ${STATION_NAME} (${STATION_ROOM})\n• ⚡ *Rates:* B&W ₹3-4/p · Color ₹5-7/p\n\nPlease choose an option below:`,
+            footer: 'PrintKurox AutoPrint',
+            buttons: [
+              { id: 'btn_flow_printing', text: '🖨️ How to Print' },
+              { id: 'btn_flow_student', text: '🎓 Student Directory' },
+              { id: 'btn_flow_faculty', text: '👨‍🏫 Faculty Search' },
+            ],
+          });
+          continue;
         }
       }
     } catch (msgErr) {
@@ -3463,6 +3876,9 @@ async function startBot() {
       appendBotLog(`[ERROR] Processing message: ${msgErr?.stack || msgErr}`);
     }
   });
+  } finally {
+    isStartingBot = false;
+  }
 }
 
 process.on('uncaughtException', (err) => {

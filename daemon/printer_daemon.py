@@ -124,8 +124,8 @@ if not STATION_TOKEN:
 PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  # Leave blank for default Windows printer
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
-POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 12))))
-HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '30'))
+POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '6'))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '90')) # Retains local print archive for 90 days on laptop
@@ -566,7 +566,18 @@ def ensure_printable_pdf(file_path, orientation=None, fit_mode='fill', color_mod
             elif orientation == "portrait":
                 is_landscape = False
             else:
-                is_landscape = image.width > image.height
+                # Document photos default to Portrait on standard A4 paper unless extreme panorama
+                is_landscape = (image.width > image.height * 2.0)
+
+            # Auto-align image orientation to target canvas:
+            # If target canvas is Portrait but image is Landscape (width > height),
+            # auto-rotate 90° CCW so the document is upright in Portrait!
+            if not is_landscape and image.width > image.height:
+                image = image.rotate(90, expand=True)
+                log(f"Auto-rotated sideways image to upright Portrait for {os.path.basename(file_path)}", "INFO")
+            elif is_landscape and image.width < image.height:
+                image = image.rotate(270, expand=True)
+                log(f"Auto-rotated portrait image to fit Landscape canvas for {os.path.basename(file_path)}", "INFO")
 
             a4_width, a4_height = (3508, 2480) if is_landscape else (2480, 3508)
             canvas = Image.new("L" if is_bw else "RGB", (a4_width, a4_height), 255 if is_bw else (255, 255, 255))
@@ -1013,9 +1024,11 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     #    - If PDF is Portrait (taller than wide):
     #      SumatraPDF prints it upright 1:1.
     if target_orientation == "landscape":
-        settings_list.append("landscape")
+        if not pdf_is_landscape:
+            settings_list.append("landscape")
     else:
-        settings_list.append("portrait")
+        if pdf_is_landscape:
+            settings_list.append("disable-auto-rotation")
 
     if duplex:
         settings_list.append("duplex")
@@ -1260,31 +1273,52 @@ def archive_printed_file(job, local_file_path):
 
 def find_local_archived_file(pickup_code, job_id=None, file_name=None):
     """
-    Searches TEMP_DIR and ARCHIVE_DIR recursively for any file matching pickup_code, job_id, or file_name.
-    Enables instant reprinting & local PDF previewing of finished/purged jobs from local disk with 0 cloud dependencies.
+    Searches TEMP_DIR and ARCHIVE_DIR for a local cached copy of a specific print job.
+    Prioritizes unique job_id[:6] matching to prevent pickup_code collision mismatches.
+    Searches newest date folders first (reverse chronological order).
     """
     clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code or '').upper()
+    job_prefix = job_id[:6].lower() if job_id and len(job_id) >= 6 else None
+    clean_base = re.sub(r'[^a-zA-Z0-9]', '', os.path.splitext(file_name or '')[0]).upper() if file_name else None
+
+    def is_authentic_match(fname):
+        f_lower = fname.lower()
+        f_upper = fname.upper()
+
+        # 1. Primary Gold Standard: Match by unique job_id prefix
+        if job_prefix and (f"_{job_prefix}_" in f_lower or f_lower.startswith(f"{job_prefix}_")):
+            return True
+
+        # 2. Secondary: If pickup_code matches, REQUIRE that file_name also matches!
+        # NEVER match by pickup_code alone without job_id or file_name!
+        if clean_pickup and (f_upper.startswith(f"{clean_pickup}_") or f"_{clean_pickup}_" in f_upper or f_upper.startswith(clean_pickup)):
+            if job_prefix and job_prefix in f_lower:
+                return True
+            if clean_base and len(clean_base) >= 4 and clean_base in f_upper:
+                return True
+
+        return False
 
     # 1. Search in working TEMP_DIR
     if os.path.exists(TEMP_DIR):
         for fname in os.listdir(TEMP_DIR):
             fpath = os.path.join(TEMP_DIR, fname)
-            if os.path.isfile(fpath):
-                f_upper = fname.upper()
-                if clean_pickup and (f_upper.startswith(f"{clean_pickup}_") or f"_{clean_pickup}_" in f_upper or f_upper.startswith(clean_pickup)):
-                    return fpath
-                if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
-                    return fpath
+            if os.path.isfile(fpath) and is_authentic_match(fname):
+                return fpath
 
-    # 2. Search in date-organized ARCHIVE_DIR
+    # 2. Search in date-organized ARCHIVE_DIR (NEWEST DATES FIRST!)
     if os.path.exists(ARCHIVE_DIR):
-        for root, dirs, files in os.walk(ARCHIVE_DIR):
-            for fname in files:
-                f_upper = fname.upper()
-                if clean_pickup and (f_upper.startswith(f"{clean_pickup}_") or f"_{clean_pickup}_" in f_upper or f_upper.startswith(clean_pickup)):
-                    return os.path.join(root, fname)
-                if job_id and len(job_id) >= 6 and job_id[:6].lower() in fname.lower():
-                    return os.path.join(root, fname)
+        try:
+            date_folders = sorted(os.listdir(ARCHIVE_DIR), reverse=True)
+            for dfolder in date_folders:
+                dpath = os.path.join(ARCHIVE_DIR, dfolder)
+                if os.path.isdir(dpath):
+                    for fname in sorted(os.listdir(dpath), reverse=True):
+                        fpath = os.path.join(dpath, fname)
+                        if os.path.isfile(fpath) and is_authentic_match(fname):
+                            return fpath
+        except Exception as scan_err:
+            log(f"Notice: Archive directory scan error: {scan_err}", "WARN")
 
     return None
 
@@ -1711,7 +1745,8 @@ def main():
                         log(f"Job {job_id[:8]} was already claimed by another worker. Skipping.", "WARN")
                         continue
 
-                    # 1. Resolve document file: Check local PC archive first, then Server Proxy
+                    # 1. Resolve document file: ALWAYS download fresh file from server proxy first!
+                    # Local PC archive is strictly a fallback for reprints after cloud file 15-minute purge.
                     raw_name = os.path.basename(file_name.replace('\\', '/'))
                     base_name = re.sub(r'[^a-zA-Z0-9._-]', '_', raw_name) or "document"
                     clean_pickup = re.sub(r'[^a-zA-Z0-9]', '', pickup_code)
@@ -1722,18 +1757,24 @@ def main():
                         local_filename = f"{clean_pickup}_{job_id[:6]}_{base_name}"
                     local_path = os.path.join(TEMP_DIR, local_filename)
 
-                    # Search local disk storage (printed_archive and temp_prints)
-                    local_archived = find_local_archived_file(pickup_code, job_id, file_name)
-                    if local_archived and os.path.exists(local_archived):
-                        log(f"Found document in local PC archive: {os.path.basename(local_archived)}! Printing directly from local disk.", "SUCCESS")
-                        local_path = local_archived
-                    else:
-                        try:
-                            log(f"Downloading document securely via server proxy...")
-                            download_cloud_file(job_id, local_path)
+                    download_success = False
+                    try:
+                        log(f"Downloading document securely via server proxy...")
+                        download_cloud_file(job_id, local_path)
+                        if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
                             log(f"Downloaded {os.path.basename(local_path)} successfully", "SUCCESS")
-                        except Exception as dl_err:
-                            log(f"Failed to download job {pickup_code} via server proxy: {dl_err}", "ERROR")
+                            download_success = True
+                    except Exception as dl_err:
+                        log(f"Notice: Server proxy download unavailable ({dl_err}). Checking local PC archive fallback...", "WARN")
+
+                    # If cloud file was already purged (15-min zero retention policy on reprint), search local archive
+                    if not download_success:
+                        local_archived = find_local_archived_file(pickup_code, job_id, file_name)
+                        if local_archived and os.path.exists(local_archived):
+                            log(f"Found document in local PC archive fallback: {os.path.basename(local_archived)}! Printing from local disk.", "SUCCESS")
+                            local_path = local_archived
+                        else:
+                            log(f"Failed to download job {pickup_code} ({file_name}) and not found in local archive.", "ERROR")
                             update_job_status(job_id, "FAILED")
                             continue
 
@@ -1762,9 +1803,7 @@ def main():
             time.sleep(1)
 
         # Sleep or wake up immediately if a print job trigger is received via local HTTP
-        # Use fast 2s poll if jobs were just processed; otherwise back off to idle interval (12s)
-        next_timeout = 2 if ('jobs' in locals() and jobs) else POLL_INTERVAL_SECONDS
-        _wake_event.wait(timeout=next_timeout)
+        _wake_event.wait(timeout=POLL_INTERVAL_SECONDS)
         _wake_event.clear()
 
 if __name__ == '__main__':
