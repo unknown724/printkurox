@@ -1780,11 +1780,13 @@ export function PageVisualizer({
                     const docIsLandscape = naturalOrientations[cfg.pageNumber] ? naturalIsLandscape : (cfg.orientation === 'landscape');
 
                     // Auto-rotate logic:
-                    // When autoRotate is enabled (default true) and the slot orientation does not match
-                    // the document orientation, auto-rotate 90 degrees so the page fills the sheet.
+                    // Only auto-rotate in multi-up layouts (N-Up > 1, e.g. 2-up, 4-up) to pack pages efficiently.
+                    // In 1-Up mode, sheet orientation should never rotate the document sideways (matches Adobe Acrobat).
+                    const isMultiUp = (gridConfig.cols * gridConfig.rows) > 1;
                     const effectiveAutoRotate = autoRotate ?? true;
                     const autoRot90 =
                       effectiveAutoRotate &&
+                      isMultiUp &&
                       (!cfg.rotation || cfg.rotation === 0) &&
                       isSlotLandscape !== docIsLandscape
                         ? 90
@@ -2231,19 +2233,14 @@ export function PageVisualizer({
                             : p
                         );
                         onChange(updated);
-                        const stillHasLandscape = updated.some(
-                          (p) => p.included && (p.orientation === 'landscape' || p.naturalOrientation === 'landscape' || p.rotation === 90 || p.rotation === 270)
-                        );
-                        if (!stillHasLandscape) {
-                          onOrientationChange?.('portrait');
-                        }
+                        onOrientationChange?.('portrait');
                       }}
                       className={`h-6.5 px-2 rounded-md flex items-center gap-0.5 text-[11px] font-medium transition-all cursor-pointer ${
-                        currentEffectiveOrient === 'portrait'
+                        !isSheetLandscape
                           ? 'bg-blue-600 text-white font-bold shadow-xs'
                           : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
                       }`}
-                      title="Set this page to Portrait orientation"
+                      title="Set sheet to Portrait orientation"
                     >
                       <span>▯</span>
                       <span>Port</span>
@@ -2261,11 +2258,11 @@ export function PageVisualizer({
                         onOrientationChange?.('landscape');
                       }}
                       className={`h-6.5 px-2 rounded-md flex items-center gap-0.5 text-[11px] font-medium transition-all cursor-pointer ${
-                        currentEffectiveOrient === 'landscape'
+                        isSheetLandscape
                           ? 'bg-blue-600 text-white font-bold shadow-xs'
                           : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
                       }`}
-                      title="Set this page to Landscape orientation"
+                      title="Set sheet to Landscape orientation"
                     >
                       <span>▭</span>
                       <span>Land</span>

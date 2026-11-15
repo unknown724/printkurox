@@ -762,7 +762,7 @@ export async function mergeFilesToPdf(
         drawBorder,
         pageCfg?.rotation || 0,
         pageScaleMultiplier,
-        autoRotate ?? true
+        false // Keep upright in 1-Up mode (Adobe Acrobat style; explicit rotation is handled via pageCfg.rotation)
       );
     }
   }
