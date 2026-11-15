@@ -1780,13 +1780,11 @@ export function PageVisualizer({
                     const docIsLandscape = naturalOrientations[cfg.pageNumber] ? naturalIsLandscape : (cfg.orientation === 'landscape');
 
                     // Auto-rotate logic:
-                    // Only auto-rotate in multi-up layouts (N-Up > 1, e.g. 2-up, 4-up) to pack pages efficiently.
-                    // In 1-Up ("Size") mode, sheet orientation should never rotate the document sideways (matches Adobe Acrobat).
-                    const isMultiUp = (gridConfig.cols * gridConfig.rows) > 1;
+                    // When autoRotate is enabled (default true) and the slot orientation does not match
+                    // the document orientation, auto-rotate 90 degrees so the page fills the sheet.
                     const effectiveAutoRotate = autoRotate ?? true;
                     const autoRot90 =
                       effectiveAutoRotate &&
-                      isMultiUp &&
                       (!cfg.rotation || cfg.rotation === 0) &&
                       isSlotLandscape !== docIsLandscape
                         ? 90
