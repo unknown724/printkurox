@@ -796,13 +796,34 @@ def wait_for_spooler_completion(target_printer_name=None, timeout_seconds=45):
     log("Spooler wait timeout reached; proceeding to complete job.", "INFO")
     return True
 
+def resolve_printer_name(printer_name=None):
+    """
+    Returns the explicitly provided printer name or dynamically resolves the
+    Windows default printer via native winspool.drv / WMI.
+    """
+    target = (printer_name or PRINTER_NAME or "").strip()
+    if target:
+        return target
+    if sys.platform == 'win32':
+        try:
+            winspool = ctypes.WinDLL('winspool.drv')
+            needed = ctypes.wintypes.DWORD(0)
+            winspool.GetDefaultPrinterW(None, ctypes.byref(needed))
+            if needed.value > 0:
+                buf = ctypes.create_unicode_buffer(needed.value)
+                if winspool.GetDefaultPrinterW(buf, ctypes.byref(needed)):
+                    return buf.value
+        except Exception:
+            pass
+    return ""
+
 def set_printer_hardware_orientation(printer_name, target_orientation):
     """
     Dynamically aligns the Windows printer driver hardware orientation (DEVMODE / PrintTicket)
     to 'psk:Landscape' or 'psk:Portrait' via PowerShell Set-PrintConfiguration.
     Ensures true hardware landscape orientation without content squishing.
     """
-    target = (printer_name or PRINTER_NAME or "").strip()
+    target = resolve_printer_name(printer_name)
     if not target:
         return False
 
@@ -814,11 +835,13 @@ $pName = '{target.replace("'", "''")}'
 try {{
     $cfg = Get-PrintConfiguration -PrinterName $pName -ErrorAction Stop
     $xml = $cfg.PrintTicketXml
-    if ($xml -and ($xml -match '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opp_opt}"/>')) {{
-        $newXml = $xml -replace '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opp_opt}"/>', '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opt}"/>'
+    $oppStr = '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opp_opt}"/>'
+    $optStr = '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opt}"/>'
+    if ($xml -and $xml.Contains($oppStr)) {{
+        $newXml = $xml.Replace($oppStr, $optStr)
         Set-PrintConfiguration -PrinterName $pName -PrintTicketXml $newXml -ErrorAction Stop
         Write-Output "CHANGED"
-    }} elseif ($xml -and ($xml -match '<psf:Feature name="psk:PageOrientation"><psf:Option name="{opt}"/>')) {{
+    }} elseif ($xml -and $xml.Contains($optStr)) {{
         Write-Output "ALREADY_SET"
     }} else {{
         Write-Output "NOT_SUPPORTED"
@@ -860,14 +883,15 @@ def printer_hardware_orientation_scope(printer_name, target_orientation):
     needs_switch = (target == "landscape")
     prev_scope = _in_orientation_scope
     _in_orientation_scope = True
+    resolved_printer = resolve_printer_name(printer_name)
     if needs_switch:
-        set_printer_hardware_orientation(printer_name, "landscape")
+        set_printer_hardware_orientation(resolved_printer, "landscape")
     try:
         yield
     finally:
         _in_orientation_scope = prev_scope
         if needs_switch and not _in_orientation_scope:
-            set_printer_hardware_orientation(printer_name, "portrait")
+            set_printer_hardware_orientation(resolved_printer, "portrait")
 
 def resolve_effective_orientation(job, local_pdf_path):
     """
@@ -980,11 +1004,13 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     if target_orientation not in ["portrait", "landscape"]:
         target_orientation = "landscape" if pdf_is_landscape else "portrait"
 
+    resolved_printer = resolve_printer_name(PRINTER_NAME)
+
     # If standalone invocation outside printer_hardware_orientation_scope, align driver
     standalone_switch = False
     if not _in_orientation_scope and target_orientation == "landscape":
         standalone_switch = True
-        set_printer_hardware_orientation(PRINTER_NAME, "landscape")
+        set_printer_hardware_orientation(resolved_printer, "landscape")
 
     # Build print settings
     settings_list = []
@@ -1037,7 +1063,9 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     settings_str = ",".join(settings_list)
 
     cmd = [sumatra_exe]
-    if PRINTER_NAME:
+    if resolved_printer:
+        cmd.extend(["-print-to", resolved_printer])
+    elif PRINTER_NAME:
         cmd.extend(["-print-to", PRINTER_NAME])
     else:
         cmd.append("-print-to-default")
@@ -1057,7 +1085,7 @@ def print_file_silent(file_path, page_range=None, color_mode="bw", copies=1, ori
     finally:
         if standalone_switch:
             time.sleep(1.0)
-            set_printer_hardware_orientation(PRINTER_NAME, "portrait")
+            set_printer_hardware_orientation(resolved_printer, "portrait")
 
 # =============================================================================
 # JOB EXECUTION LOGIC

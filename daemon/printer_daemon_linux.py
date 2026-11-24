@@ -173,7 +173,7 @@ def resolve_target_printer():
     return selected
 
 
-def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None):
+def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto'):
     """Prints a PDF file using native Linux CUPS lp command."""
     cmd = ['lp']
     if printer_name:
@@ -183,6 +183,12 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         cmd.extend(['-n', str(copies)])
 
     cmd.extend(['-o', 'fit-to-page'])
+
+    # Orientation handling for CUPS (landscape / portrait)
+    if orientation and orientation.lower() == 'landscape':
+        cmd.extend(['-o', 'landscape'])
+    elif orientation and orientation.lower() == 'portrait':
+        cmd.extend(['-o', 'portrait'])
 
     # Color mode
     if color_mode == 'bw':
@@ -324,8 +330,9 @@ def main():
                     color_mode = job.get("color_mode", "bw")
                     copies = job.get("copies", 1)
                     page_range = job.get("page_range", "All")
+                    orientation = job.get("orientation", "auto")
 
-                    log(f"Processing Job {pickup_code} ({file_name}) — {total_pages} pgs, Copies: {copies}")
+                    log(f"Processing Job {pickup_code} ({file_name}) — {total_pages} pgs, Copies: {copies}, Orient: {orientation}")
 
                     # Claim job
                     if not claim_paid_job(job_id):
@@ -353,7 +360,8 @@ def main():
                             copies=copies,
                             color_mode=color_mode,
                             is_duplex=is_duplex,
-                            page_range=page_range
+                            page_range=page_range,
+                            orientation=orientation
                         )
                         update_job_status(job_id, "COMPLETED", pages_printed=total_pages, sheets_used=total_pages)
                         log(f"Successfully printed Job {pickup_code} on {target_printer}!", "SUCCESS")
