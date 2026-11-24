@@ -20,6 +20,14 @@
 # production
 /build
 
+*.log
+daemon/**/*.log
+daemon/whatsapp_bot/**/*.log
+daemon/whatsapp_bot/bot_heartbeat.json
+daemon/whatsapp_bot/processed_msg_ids.json
+daemon/whatsapp_bot/user_activity_log.json
+daemon/whatsapp_bot/user_quotas.json
+
 # misc
 .DS_Store
 *.pem
