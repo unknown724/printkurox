@@ -1,0 +1,15 @@
+[Student Module] Loaded 3959 student records.
+============================================================
+       PrintKurox AutoPrint — Conversational Ingestion & Payment Daemon
+       Target Station: Hostel Block B (Pare) (block_b)
+       Live Web App:   https://printkurox.vercel.app
+       Storage:        Cloudflare R2 [kiosk-uploads]
+       Payment:        Razorpay UPI (Connected)
+============================================================
+
+[WA-Bot] Using Baileys version 2.3000.1043857760
+------------------------------------------------------------
+[SUCCESS] PrintKurox WhatsApp Bot is ONLINE & READY! (PID: 18540)
+IndiGo-Style Action Buttons & Instant Payments Active.
+------------------------------------------------------------
+

@@ -31,7 +31,10 @@ function isAdminUser(userPhone, senderJid) {
     return false;
 }
 const QUOTA_FILE = path.join(__dirname, 'user_quotas.json');
-const DAILY_FREE_LIMIT = 3; // 3 free dossier unlocks per day
+const DAILY_FREE_LIMIT = 3; // 3 free dossier unlocks per day (anti-abuse cap)
+const SUPPORT_PACK_PRICE = 5;
+const SUPPORT_PACK_CREDITS = 5;
+const SUPPORTER_MONTHLY_PRICE = 49;
 
 let studentsList = [];
 const studentCleanIdMap = new Map();
@@ -458,8 +461,17 @@ async function deliverUnlockedDossier({ sock, senderJid, targetRoll, targetName,
         if (effDossier.address) dossierText += `🏠 *Address/Pin:* ${effDossier.address}\n`;
         if (effDossier.aadhaar) dossierText += `💳 *Aadhaar:* \`${effDossier.aadhaar}\`\n`;
 
+        const accessSnapshot = checkAccess(userPhone, senderJid);
         if (isAdmin) {
             dossierText += `\n👑 *Access Level:* Administrator (Unlimited Searches & Decryptions Active)\n`;
+        } else if (accessSnapshot.type === 'monthly_pass') {
+            dossierText += `\n_🛡️ Server Supporter Pass Active (${accessSnapshot.daysLeft} days left)_\n`;
+        } else if (accessSnapshot.type === 'paid_credit') {
+            const leftAfter = Math.max(0, (accessSnapshot.credits || 1) - 1);
+            dossierText += `\n_⚡ Bypass Credit Used (${leftAfter} never-expiring left)_\n`;
+        } else if (accessSnapshot.type === 'free_daily') {
+            const leftAfter = Math.max(0, (accessSnapshot.remaining || 1) - 1);
+            dossierText += `\n_🛡️ Anti-Abuse Quota: ${leftAfter}/${DAILY_FREE_LIMIT} free left today (resets 12:00 AM IST)_\n`;
         }
 
         // Consume access quota
@@ -488,6 +500,7 @@ async function deliverUnlockedDossier({ sock, senderJid, targetRoll, targetName,
 async function createAndPollPaymentLink({
     razorpay,
     sock,
+    getSock = null,
     senderJid,
     userPhone,
     senderName,
@@ -507,8 +520,8 @@ async function createAndPollPaymentLink({
             currency: 'INR',
             accept_partial: false,
             description: isMonthly
-                ? 'PrintKurox Student Directory VIP Monthly Pass (30 Days)'
-                : `PrintKurox Student Dossier Unlock (${targetRoll || 'Single'})`,
+                ? 'NERIST Directory Server Supporter (30 Days Unlimited)'
+                : `NERIST Directory +${SUPPORT_PACK_CREDITS} Bypass Credits (Never Expire)`,
             customer: {
                 name: senderName || 'NERIST Student',
                 contact: formattedPhone,
@@ -517,7 +530,7 @@ async function createAndPollPaymentLink({
             reminder_enable: false,
             notes: {
                 service: 'student_directory',
-                plan: isMonthly ? 'monthly_pass' : 'single_unlock',
+                plan: isMonthly ? 'supporter_monthly' : 'bypass_pack_5',
                 targetRoll: targetRoll || '',
                 userPhone: clean10Phone,
             },
@@ -539,6 +552,7 @@ async function createAndPollPaymentLink({
                     clearInterval(pollInterval);
                     activePaymentPollers.delete(link.id);
                     console.log(`[Student Payment] Link ${link.id} PAID by ${clean10Phone}! Granting access...`);
+                    const liveSock = (typeof getSock === 'function' ? getSock() : null) || sock;
 
                     if (isMonthly) {
                         const thirtyDays = 30 * 24 * 60 * 60 * 1000;
@@ -550,24 +564,25 @@ async function createAndPollPaymentLink({
                             month: 'short',
                             year: 'numeric'
                         });
-                        await sock.sendMessage(senderJid, {
+                        await liveSock.sendMessage(senderJid, {
                             text:
-                                `🎉 *VIP MONTHLY PASS ACTIVATED!*\n` +
+                                `🛡️ *SERVER SUPPORTER PASS ACTIVATED!*\n` +
                                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                                `✅ *Payment Received:* ₹119\n` +
-                                `⭐ *Plan:* VIP Pass (30 Days Unlimited Access)\n` +
+                                `✅ *Contribution Confirmed:* ₹${SUPPORTER_MONTHLY_PRICE}\n` +
+                                `🚀 *Tier:* Server Supporter (30 Days Unlimited, Anti-Abuse Exempt)\n` +
                                 `📅 *Valid Until:* ${expiryDate}\n\n` +
-                                `You now have unlimited student directory searches and dossier unlocks!`
+                                `🙏 _Thank you for helping keep the 24/7 campus server & internet alive!_`
                         });
                     } else {
                         updateUserQuota(clean10Phone, (q) => {
-                            q.paidCredits = (q.paidCredits || 0) + 1;
+                            q.paidCredits = (q.paidCredits || 0) + SUPPORT_PACK_CREDITS;
                         });
-                        await sock.sendMessage(senderJid, {
+                        await liveSock.sendMessage(senderJid, {
                             text:
-                                `✅ *PAYMENT CONFIRMED (₹3)*\n` +
+                                `✅ *SERVER SUPPORT CONFIRMED (₹${SUPPORT_PACK_PRICE})*\n` +
                                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                                `1 Dossier unlock credit added. Decrypting student archive...`
+                                `⚡ *+${SUPPORT_PACK_CREDITS} Extra Bypass Credits* added (never expire).\n` +
+                                `🙏 _Thank you for supporting server upkeep! Unlocking requested record..._`
                         });
                     }
 
@@ -576,7 +591,7 @@ async function createAndPollPaymentLink({
                         const matches = searchStudents(targetRoll);
                         const top = matches.length > 0 ? matches[0] : null;
                         await deliverUnlockedDossier({
-                            sock,
+                            sock: liveSock,
                             senderJid,
                             targetRoll,
                             targetName: targetName || top?.full_name || targetRoll,
@@ -598,11 +613,11 @@ async function createAndPollPaymentLink({
     }
 }
 
-// Send Paywall Card when quota is exhausted
-async function sendPaywallOptions({ sock, senderJid, targetRoll, targetName, userPhone, senderName, sendInteractiveButtons, razorpay }) {
+// Send Anti-Abuse Limit & Optional Server Support Card when quota is exhausted
+async function sendPaywallOptions({ sock, getSock = null, senderJid, targetRoll, targetName, userPhone, senderName, sendInteractiveButtons, razorpay }) {
     const cleanRollToken = (targetRoll || '').replace(/[^a-zA-Z0-9]/g, '_');
 
-    // Pre-generate direct 1-Tap UPI Links for seamless instant payment via Google Pay / PhonePe
+    // Pre-generate direct 1-Tap UPI Links for seamless instant support via Google Pay / PhonePe
     let singleLink = null;
     let monthlyLink = null;
     if (razorpay) {
@@ -611,10 +626,11 @@ async function sendPaywallOptions({ sock, senderJid, targetRoll, targetName, use
                 createAndPollPaymentLink({
                     razorpay,
                     sock,
+                    getSock,
                     senderJid,
                     userPhone,
                     senderName,
-                    amountInRs: 3,
+                    amountInRs: SUPPORT_PACK_PRICE,
                     isMonthly: false,
                     targetRoll,
                     targetName
@@ -622,10 +638,11 @@ async function sendPaywallOptions({ sock, senderJid, targetRoll, targetName, use
                 createAndPollPaymentLink({
                     razorpay,
                     sock,
+                    getSock,
                     senderJid,
                     userPhone,
                     senderName,
-                    amountInRs: 119,
+                    amountInRs: SUPPORTER_MONTHLY_PRICE,
                     isMonthly: true,
                     targetRoll,
                     targetName
@@ -641,62 +658,65 @@ async function sendPaywallOptions({ sock, senderJid, targetRoll, targetName, use
     let linkAddendum = '';
     if (singleLink?.short_url || monthlyLink?.short_url) {
         linkAddendum =
-            `\n\n🔗 *Direct 1-Tap UPI Links:*\n` +
-            (singleLink?.short_url ? `• *Pay ₹3 (Single):* ${singleLink.short_url}\n` : '') +
-            (monthlyLink?.short_url ? `• *Pay ₹119 (VIP Pass):* ${monthlyLink.short_url}\n` : '') +
-            `_Tap a button or link above to pay instantly via Google Pay, PhonePe, or Paytm._\n` +
-            `_Access unlocks automatically upon payment!_`;
+            `\n\n🔗 *Optional Support Links (Instant UPI):*\n` +
+            (singleLink?.short_url ? `• *₹${SUPPORT_PACK_PRICE} (+${SUPPORT_PACK_CREDITS} Credits):* ${singleLink.short_url}\n` : '') +
+            (monthlyLink?.short_url ? `• *₹${SUPPORTER_MONTHLY_PRICE} (30-Day Supporter):* ${monthlyLink.short_url}\n` : '') +
+            `_Auto-activates immediately upon UPI confirmation._`;
     }
 
     const resetInfo = getDailyQuotaResetInfo();
     const paywallText =
-        `🔒 *CONFIDENTIAL DOSSIER LOCKED*\n` +
+        `🛡️ *ANTI-ABUSE LIMIT REACHED (${DAILY_FREE_LIMIT}/${DAILY_FREE_LIMIT} Today)*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `👤 *Student:* ${targetName || 'NERIST Student'} (${targetRoll})\n\n` +
-        `⚠️ *Daily Free Limit Reached (3/3 used today)*\n` +
-        `⏳ Your 3 free credits will renew at *12:00 AM midnight tonight* (in ${resetInfo.countdownStr}).\n\n` +
-        `Unlock immediately without waiting:\n\n` +
-        `💳 *1. Single Dossier Unlock — ₹3*\n` +
-        `• Full confidential profile for ${targetName}\n` +
-        `• Official photo\n` +
-        `• 1 instant unlock\n\n` +
-        `⭐ *2. Monthly VIP Pass — ₹119 / month*\n` +
-        `• 30 Days Unlimited Searches & Dossiers\n` +
-        `• Unlimited photo downloads\n` +
-        `• Instant VIP badge`;
+        `To protect student privacy and prevent bulk data scraping or server overload, full dossier lookups are capped at *${DAILY_FREE_LIMIT} free records per day*.\n\n` +
+        `✅ *Basic \`@student\` search* stays *100% free & unlimited*.\n` +
+        `⏳ Your 3 free credits auto-renew at *12:00 AM midnight IST* (in ${resetInfo.countdownStr}).\n\n` +
+        `Need extra lookups right now or want to help keep the 24/7 server running?\n\n` +
+        `⚡ *1. +${SUPPORT_PACK_CREDITS} Extra Bypass Credits — ₹${SUPPORT_PACK_PRICE}*\n` +
+        `• ₹1 per unlock · Credits *never expire*\n` +
+        `• Full confidential profile + photo\n\n` +
+        `🛡️ *2. Server Supporter (30 Days) — ₹${SUPPORTER_MONTHLY_PRICE} / month*\n` +
+        `• Unlimited lookups (anti-abuse exempt)\n` +
+        `• Helps cover 24/7 server, power & internet`;
 
     const buttons = [];
     if (singleLink?.short_url) {
         buttons.push({
-            text: '⚡ Pay ₹3 (UPI / GPay / PhonePe)',
+            text: `⚡ +${SUPPORT_PACK_CREDITS} Credits (₹${SUPPORT_PACK_PRICE})`,
             url: singleLink.short_url
         });
     } else {
         buttons.push({
             id: `btn_pay_single_${cleanRollToken}`,
-            text: '💳 Unlock Once (₹3)'
+            text: `⚡ +${SUPPORT_PACK_CREDITS} Credits (₹${SUPPORT_PACK_PRICE})`
         });
     }
 
     if (monthlyLink?.short_url) {
         buttons.push({
-            text: '⭐ VIP Monthly Pass (₹119)',
+            text: `🛡️ Supporter (₹${SUPPORTER_MONTHLY_PRICE}/mo)`,
             url: monthlyLink.short_url
         });
     } else {
         buttons.push({
             id: 'btn_pay_monthly',
-            text: '⭐ Monthly VIP Pass (₹119)'
+            text: `🛡️ Supporter (₹${SUPPORTER_MONTHLY_PRICE}/mo)`
         });
     }
+
+    buttons.push({
+        id: 'info_limit_policy',
+        text: '❓ Why This Limit?'
+    });
 
     if (sendInteractiveButtons) {
         await sendInteractiveButtons({
             sock,
             jid: senderJid,
-            title: '🔒 Unlock Confidential Student Dossier',
+            title: '🛡️ Daily Anti-Abuse Cap Reached',
             body: paywallText,
-            footer: 'Razorpay Instant UPI Auto-Verify',
+            footer: 'Anti-Abuse Protection · Optional Server Support',
             buttons
         });
     } else {
@@ -704,11 +724,11 @@ async function sendPaywallOptions({ sock, senderJid, targetRoll, targetName, use
     }
 }
 
-// Generate Razorpay Payment Link with auto-prefilled phone & start poller (for manual 3 / 119 replies)
-async function handleRazorpayPayment({ sock, senderJid, userPhone, senderName, amountInRs, isMonthly, targetRoll, targetName, razorpay, sendInteractiveButtons }) {
+// Generate Razorpay Payment Link with auto-prefilled phone & start poller (for manual 5 / 49 replies)
+async function handleRazorpayPayment({ sock, getSock = null, senderJid, userPhone, senderName, amountInRs, isMonthly, targetRoll, targetName, razorpay, sendInteractiveButtons }) {
     if (!razorpay) {
         await sock.sendMessage(senderJid, {
-            text: `⚠️ *Payment Gateway Unavailable:* Razorpay credentials are not configured.`
+            text: `⚠️ *Support Gateway Unavailable:* UPI link generator is not configured right now.`
         });
         return;
     }
@@ -719,6 +739,7 @@ async function handleRazorpayPayment({ sock, senderJid, userPhone, senderName, a
     const link = await createAndPollPaymentLink({
         razorpay,
         sock,
+        getSock,
         senderJid,
         userPhone,
         senderName,
@@ -730,30 +751,30 @@ async function handleRazorpayPayment({ sock, senderJid, userPhone, senderName, a
 
     if (!link || !link.short_url) {
         await sock.sendMessage(senderJid, {
-            text: `⚠️ *Payment Link Error:* Could not generate UPI link. Please try again.`
+            text: `⚠️ *Link Error:* Could not generate UPI support link. Please try again.`
         });
         return;
     }
 
     const paymentPrompt =
-        `💳 *Razorpay Instant UPI Payment*\n` +
+        `🛡️ *SERVER SUPPORT · INSTANT UPI*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `📦 *Service:* ${isMonthly ? '⭐ 30-Day VIP Pass (Unlimited)' : `🔓 Dossier Unlock (${targetName || targetRoll})`}\n` +
-        `💰 *Amount Due:* *₹${amountInRs}*\n` +
+        `📦 *Support Tier:* ${isMonthly ? '🛡️ 30-Day Server Supporter (Unlimited)' : `⚡ +${SUPPORT_PACK_CREDITS} Bypass Credits (Never Expire)`}\n` +
+        `🙏 *Contribution:* *₹${amountInRs}*\n` +
         `📱 *Registered Phone:* ${formattedPhone}\n\n` +
-        `🔗 *Direct 1-Tap UPI Link:*\n${link.short_url}\n\n` +
-        `_Tap the button or link above to pay via GPay, PhonePe, or Paytm._\n` +
-        `_Your phone number is pre-verified! Access unlocks automatically upon payment._`;
+        `🔗 *1-Tap UPI Link:*\n${link.short_url}\n\n` +
+        `_Tap below to pay via GPay, PhonePe, or Paytm._\n` +
+        `_Thank you for supporting 24/7 server maintenance — unlocks automatically once confirmed!_`;
 
     if (sendInteractiveButtons) {
         await sendInteractiveButtons({
             sock,
             jid: senderJid,
-            title: `💳 Pay ₹${amountInRs} via UPI`,
+            title: `🛡️ Server Support (₹${amountInRs})`,
             body: paymentPrompt,
-            footer: 'Razorpay Auto-Verify',
+            footer: 'Optional Server Maintenance Support',
             buttons: [
-                { text: `⚡ Pay ₹${amountInRs} (GPay / PhonePe / UPI)`, url: link.short_url }
+                { text: `⚡ Contribute ₹${amountInRs} via UPI`, url: link.short_url }
             ]
         });
     } else {
@@ -762,7 +783,7 @@ async function handleRazorpayPayment({ sock, senderJid, userPhone, senderName, a
 }
 
 // MAIN MESSAGE HANDLER
-async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, senderJid, sendInteractiveButtons, razorpay, userPhone: passedPhone }) {
+async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerBody, buttonId, senderJid, sendInteractiveButtons, razorpay, userPhone: passedPhone }) {
     if (!rawBody && !buttonId) return false;
     let userPhone = passedPhone || (senderJid || '').split('@')[0].replace(/[^0-9]/g, '').slice(-10);
     if (isAdminUser(userPhone, senderJid)) {
@@ -832,7 +853,51 @@ async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, s
         return true;
     }
 
-    // 3. RAZORPAY PAYMENT TRIGGERS (₹3 Single Unlock or ₹119 Monthly Pass)
+    // 2b. WHY IS THERE A LIMIT? (ANTI-ABUSE & SERVER COST TRANSPARENCY)
+    if (buttonId === 'info_limit_policy' || lowerBody === 'why limit' || lowerBody === 'limit policy') {
+        const resetInfo = getDailyQuotaResetInfo();
+        const policyText =
+            `🛡️ *WHY IS THERE A ${DAILY_FREE_LIMIT}/DAY DOSSIER LIMIT?*\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `1️⃣ *Anti-Abuse & Student Privacy:*\n` +
+            `Full dossiers contain personal phone numbers, parent contacts, DOB, and Aadhaar details. Without a daily cap, bots or spammers could scrape the entire campus directory.\n\n` +
+            `2️⃣ *100% Free Every Day:*\n` +
+            `• Basic \`@student\` search (name, roll, dept, sem, CGPA) is *unlimited & free*.\n` +
+            `• You get *${DAILY_FREE_LIMIT} free dossier unlocks daily*, resetting automatically at *12:00 AM IST* (in ${resetInfo.countdownStr}).\n\n` +
+            `3️⃣ *Optional Server Support (₹${SUPPORT_PACK_PRICE} / ₹${SUPPORTER_MONTHLY_PRICE}):*\n` +
+            `Keeping the 24/7 server, proxy, electricity, and WhatsApp relay running has real costs. If you wait until midnight, you never need to pay ₹1. If you need extra lookups immediately or want full power:\n` +
+            `• *₹${SUPPORT_PACK_PRICE}* → *+${SUPPORT_PACK_CREDITS} Extra Credits* (₹1/unlock, never expire)\n` +
+            `• *₹${SUPPORTER_MONTHLY_PRICE}* → *30-Day Server Supporter* (unlimited, anti-abuse exempt)`;
+
+        await sock.sendMessage(senderJid, { text: policyText });
+        return true;
+    }
+
+    // 2c. FREE QUOTA & RESET CHECK (@quota / @credits / quota)
+    if (lowerBody === '@quota' || lowerBody === '!quota' || lowerBody === 'quota' || lowerBody === '@credits' || lowerBody === 'my credits') {
+        const access = checkAccess(userPhone, senderJid);
+        const resetInfo = getDailyQuotaResetInfo();
+        const q = getUserQuota((userPhone || '').slice(-10));
+        let quotaMsg =
+            `🛡️ *YOUR ANTI-ABUSE QUOTA STATUS*\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+        if (access.type === 'admin') {
+            quotaMsg += `👑 *Status:* Admin Unlimited Access\n`;
+        } else if (access.type === 'monthly_pass') {
+            quotaMsg += `🛡️ *Server Supporter Pass:* Active (${access.daysLeft} days left)\n`;
+        } else {
+            const freeLeft = Math.max(0, DAILY_FREE_LIMIT - (q.dailyCount || 0));
+            quotaMsg += `🆓 *Free Daily Unlocks:* ${freeLeft}/${DAILY_FREE_LIMIT} left today\n`;
+            quotaMsg += `⏳ *Next Free Reset:* 12:00 AM IST (in ${resetInfo.countdownStr})\n`;
+            quotaMsg += `⚡ *Extra Bypass Credits:* ${q.paidCredits || 0} (never expire)\n`;
+        }
+        quotaMsg += `\n_Basic \`@student\` search is always 100% free & unlimited._`;
+        await sock.sendMessage(senderJid, { text: quotaMsg });
+        return true;
+    }
+
+    // 3. RAZORPAY SERVER SUPPORT TRIGGERS (₹5 for +5 Credits or ₹49 Monthly Supporter)
     if (buttonId && buttonId.startsWith('btn_pay_single_')) {
         const cleanToken = buttonId.replace('btn_pay_single_', '');
         const targetRoll = studentCleanIdMap.get(cleanToken) || cleanToken.replace(/_/g, '/');
@@ -840,10 +905,11 @@ async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, s
         const top = matches.length > 0 ? matches[0] : null;
         await handleRazorpayPayment({
             sock,
+            getSock,
             senderJid,
             userPhone,
             senderName,
-            amountInRs: 3,
+            amountInRs: SUPPORT_PACK_PRICE,
             isMonthly: false,
             targetRoll,
             targetName: top ? top.full_name : targetRoll,
@@ -853,16 +919,17 @@ async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, s
         return true;
     }
 
-    if (buttonId === 'btn_pay_monthly' || lowerBody === '119' || lowerBody === 'monthly' || lowerBody === 'vip') {
+    if (buttonId === 'btn_pay_monthly' || lowerBody === '49' || lowerBody === '119' || lowerBody === 'monthly' || lowerBody === 'supporter' || lowerBody === 'vip') {
         const targetRoll = userLastStudent.get(senderJid) || '';
         const matches = targetRoll ? searchStudents(targetRoll) : [];
         const top = matches.length > 0 ? matches[0] : null;
         await handleRazorpayPayment({
             sock,
+            getSock,
             senderJid,
             userPhone,
             senderName,
-            amountInRs: 119,
+            amountInRs: SUPPORTER_MONTHLY_PRICE,
             isMonthly: true,
             targetRoll,
             targetName: top ? top.full_name : targetRoll,
@@ -872,17 +939,18 @@ async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, s
         return true;
     }
 
-    if (lowerBody === '3' || lowerBody === 'pay 3' || lowerBody === 'single') {
+    if (lowerBody === '5' || lowerBody === 'pay 5' || lowerBody === '3' || lowerBody === 'pay 3' || lowerBody === 'single' || lowerBody === 'pack') {
         const targetRoll = userLastStudent.get(senderJid) || '';
         if (targetRoll) {
             const matches = searchStudents(targetRoll);
             const top = matches.length > 0 ? matches[0] : null;
             await handleRazorpayPayment({
                 sock,
+                getSock,
                 senderJid,
                 userPhone,
                 senderName,
-                amountInRs: 3,
+                amountInRs: SUPPORT_PACK_PRICE,
                 isMonthly: false,
                 targetRoll,
                 targetName: top ? top.full_name : targetRoll,
@@ -926,6 +994,7 @@ async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, s
             // Send paywall with 1-Tap direct UPI buttons & background poller
             await sendPaywallOptions({
                 sock,
+                getSock,
                 senderJid,
                 targetRoll,
                 targetName,
@@ -987,7 +1056,12 @@ async function handleStudentMessage({ sock, msg, rawBody, lowerBody, buttonId, s
                 }
             }
 
-            replyBody += '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n👉 Reply *unlock* to view full dossier & photo!';
+            if (matches.length > 3) {
+                replyBody += `\n\n_Additional matches (${matches.length - 3} more):_\n` +
+                             matches.slice(3, 7).map(s => `• *${s.full_name}* (\`@student ${s.user_id}\`)`).join('\n');
+            }
+
+            replyBody += '\n\n_Tap a button below to unlock dossier or switch candidate:_';
 
             if (sendInteractiveButtons) {
                 await sendInteractiveButtons({

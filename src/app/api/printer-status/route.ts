@@ -69,8 +69,8 @@ export async function GET(req: Request) {
 
         const lastSeenDate = new Date(row.updated_at.replace(' ', 'T') + 'Z');
         const ageSeconds = Math.max(0, (now - lastSeenDate.getTime()) / 1000);
-        // Robust 75s threshold prevents false "Offline" flickering during campus Wi-Fi jitter or 30s heartbeat
-        const online = ageSeconds <= 75;
+        // Robust 45s threshold prevents false "Offline" flickering during campus Wi-Fi jitter
+        const online = ageSeconds <= 45;
 
         return {
           stationId: station.id,
@@ -90,9 +90,7 @@ export async function GET(req: Request) {
         {
           status: 200,
           headers: {
-            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
+            'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=45',
           },
         }
       );
@@ -122,9 +120,7 @@ export async function GET(req: Request) {
         {
           status: 200,
           headers: {
-            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
+            'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=45',
           },
         }
       );
@@ -150,7 +146,7 @@ export async function GET(req: Request) {
     const lastSeen: string = rows[0].updated_at;
     const lastSeenDate = new Date(lastSeen.replace(' ', 'T') + 'Z');
     const ageSeconds = (Date.now() - lastSeenDate.getTime()) / 1000;
-    const daemonAlive = ageSeconds <= 75;
+    const daemonAlive = ageSeconds <= 45;
     const online = daemonAlive && hardwareOnline;
 
     return NextResponse.json(
@@ -165,9 +161,7 @@ export async function GET(req: Request) {
       {
         status: 200,
         headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0',
+          'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=45',
         },
       }
     );
@@ -178,9 +172,7 @@ export async function GET(req: Request) {
       {
         status: 200,
         headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0',
+          'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=45',
         },
       }
     );
