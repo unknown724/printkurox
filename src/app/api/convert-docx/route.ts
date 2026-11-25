@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { convertDocxToPdf } from '@/lib/docx-converter';
+import { enforcePublicRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    const limited = enforcePublicRateLimit(req, 'convert_docx', 15, 60);
+    if (limited) return limited;
+
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
 

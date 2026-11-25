@@ -128,7 +128,11 @@ export function HostelSelectorModal({
     if (isOpen) {
       fetchDynamicStations();
       fetchAllPricing();
-      const interval = setInterval(fetchDynamicStations, 20_000);
+      const interval = setInterval(() => {
+        if (typeof document === 'undefined' || !document.hidden) {
+          fetchDynamicStations();
+        }
+      }, 20_000);
       return () => clearInterval(interval);
     }
   }, [isOpen]);

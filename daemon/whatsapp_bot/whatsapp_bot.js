@@ -48,7 +48,7 @@ const { handleFacultyMessage, isGroupFacultyCommand, getFacultySearchCount } = r
 const { getBotControlConfig, canSendOfflineReply, handleOwnerBotControlCommand } = require('./bot_config_sync');
 const { handleAIChatMessage, activeDrafts, activeCoverDrafts, activeGameDrafts, readyToPrintDocs, saveCoverDraft, getCoverDraft, extractStudentQuery, isUserAdmin, recordAdaptiveCorrection, pendingDisambiguations, getUserProfile } = require('./ai_chat_module');
 const { formatForWhatsApp, generateApplicationPdf, generateApplicationDocx, generateAssignmentCoverPdf, generateAssignmentCoverDocx, extractPureApplicationText, generateHtmlGame } = require('./document_generator');
-const { handleServerAdminCommand, onBotConnectionOpen } = require('./server_controller_module');
+const { handleServerAdminCommand, onBotConnectionOpen, sendAdminAlert, startAdminAlertServer } = require('./server_controller_module');
 const { generatePreviewImage } = require('./pdf_preview_renderer');
 const { createAuthToken, validateAuthToken, startWebAuthServer, startCloudflaredTunnel, setOnAuthSuccess, getPublicAuthUrl } = require('./cinderac_web_auth');
 const { getCinderacSession, saveCinderacSession, clearCinderacSession, syncStudentData, matchCinderacCourseSelection } = require('./cinderac_sync_module');
@@ -1554,37 +1554,52 @@ async function sendDocumentVisualPreview({ sock, senderJid, senderName = 'Studen
 }
 
 /**
- * Monitor a pending Razorpay Payment Link every 3 seconds for 10 minutes
+ * Monitor a pending Razorpay Payment Link with adaptive backoff & 429 protection
+ * (4s for first 90s -> 10s up to 5m -> 20s up to 10m; backs off 30s on 429)
  */
 function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode, fileName }) {
   if (!razorpay || !paymentLinkId) return;
 
   if (activePollers.has(jobId)) {
-    clearInterval(activePollers.get(jobId));
+    clearTimeout(activePollers.get(jobId));
     activePollers.delete(jobId);
   }
 
   const startTime = Date.now();
   const maxDurationMs = 10 * 60 * 1000;
+  let stopped = false;
 
-  const interval = setInterval(async () => {
+  const scheduleNext = (overrideMs = null) => {
+    if (stopped) return;
+    const elapsed = Date.now() - startTime;
+    if (elapsed > maxDurationMs) {
+      activePollers.delete(jobId);
+      return;
+    }
+    const baseDelay = elapsed < 90_000 ? 4000 : elapsed < 300_000 ? 10_000 : 20_000;
+    const nextDelay = overrideMs ?? baseDelay;
+    const timer = setTimeout(pollOnce, nextDelay);
+    activePollers.set(jobId, timer);
+  };
+
+  const pollOnce = async () => {
     try {
       const session = userSessions.get(senderJid);
       if (!session || session.jobId !== jobId || session.stage === 'COMPLETED') {
-        clearInterval(interval);
+        stopped = true;
         activePollers.delete(jobId);
         return;
       }
 
       if (Date.now() - startTime > maxDurationMs) {
-        clearInterval(interval);
+        stopped = true;
         activePollers.delete(jobId);
         return;
       }
 
       const linkData = await razorpay.paymentLink.fetch(paymentLinkId);
       if (linkData && linkData.status === 'paid') {
-        clearInterval(interval);
+        stopped = true;
         activePollers.delete(jobId);
         session.stage = 'COMPLETED';
 
@@ -1629,11 +1644,30 @@ function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode,
           ],
         });
         console.log(`[WA-Bot] Payment detected for ${jobId} (${pickupCode}), confirmed to ${senderJid}`);
+        return;
       }
-    } catch (pollErr) {}
-  }, 3000);
+      scheduleNext();
+    } catch (pollErr) {
+      const statusCode = pollErr?.statusCode || pollErr?.error?.statusCode;
+      const errMsg = pollErr?.error?.description || pollErr?.message || '';
+      if (statusCode === 429 || /rate|too many/i.test(errMsg)) {
+        console.warn(`[WA-Bot] Razorpay 429 rate-limit during payment poll (${jobId}); backing off 30s.`);
+        void sendAdminAlert({
+          getSock: () => activeBotSock || sock,
+          alertKey: 'razorpay_429',
+          severity: 'warn',
+          title: 'Razorpay Rate Limit (429)',
+          body: `Razorpay API returned 429 during payment link check for job \`${jobId}\`.\nAuto-backing off 30s (backup webhook stays active).`,
+          logFn: appendBotLog,
+        });
+        scheduleNext(30_000);
+      } else {
+        scheduleNext();
+      }
+    }
+  };
 
-  activePollers.set(jobId, interval);
+  scheduleNext(4000);
 }
 
 /**
@@ -3417,10 +3451,11 @@ async function startBot() {
         logFn: appendBotLog,
       }).catch((err) => appendBotLog(`[Server Controller] Open hook error: ${err.message}`));
 
-      // Start Cinderac Web Auth Server and Register Push Callback (Once per process)
+      // Start Cinderac Web Auth Server, Internal Pi Alert Listener & Register Push Callback (Once per process)
       if (!global.__webAuthServerInitialized) {
         global.__webAuthServerInitialized = true;
         try {
+          startAdminAlertServer({ getSock: () => activeBotSock, logFn: appendBotLog });
           startWebAuthServer(7260);
           startCloudflaredTunnel(7260);
           setOnAuthSuccess(async (senderJid, phone, syncResult) => {

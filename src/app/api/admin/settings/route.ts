@@ -7,7 +7,14 @@ import {
   validateWhatsAppOwnerPassword,
   createWhatsAppOwnerToken,
   verifyWhatsAppOwnerToken,
+  recordAuditLog,
 } from '@/lib/admin-auth';
+import {
+  checkRateLimit,
+  recordFailedAttempt,
+  resetFailedAttempts,
+  getClientIp,
+} from '@/lib/rate-limit';
 import {
   getHostelChangeSetting,
   setHostelChangeSetting,
@@ -83,12 +90,30 @@ export async function POST(req: NextRequest) {
 
     // Unlock WhatsApp Bot Command Center section (secondary owner password)
     if (action === 'unlock_whatsapp_section') {
-      if (!validateWhatsAppOwnerPassword(String(waPassword || ''))) {
+      const rateKey = `wa_owner:${getClientIp(req)}`;
+      const rateCheck = await checkRateLimit(rateKey);
+      if (!rateCheck.allowed) {
         return NextResponse.json(
-          { error: 'Incorrect WhatsApp owner password.' },
-          { status: 403 }
+          { error: rateCheck.message },
+          { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSeconds || 900) } }
         );
       }
+
+      if (!validateWhatsAppOwnerPassword(String(waPassword || ''))) {
+        const failResult = await recordFailedAttempt(rateKey);
+        return NextResponse.json(
+          { error: failResult.locked ? failResult.message : `Incorrect WhatsApp owner password. ${failResult.message}` },
+          { status: failResult.locked ? 429 : 403 }
+        );
+      }
+
+      await resetFailedAttempts(rateKey);
+      void recordAuditLog({
+        actor_role: 'master_admin',
+        action_type: 'WA_OWNER_SECTION_UNLOCKED',
+        ip_address: getClientIp(req),
+        user_agent: req.headers.get('user-agent') || null,
+      });
 
       const [dossierAccess, cfg] = await Promise.all([
         getDossierAccessLists(),

@@ -277,7 +277,7 @@ export function FooterLegal() {
                     <p><strong className="text-slate-900 dark:text-white">Business Name:</strong> PrintKurox Smart Printing Kiosk</p>
                     <p><strong className="text-slate-900 dark:text-white">Operating Hours:</strong> 8:00 AM – 10:00 PM IST (Daily)</p>
                     <p><strong className="text-slate-900 dark:text-white">Support Email:</strong> <a href="mailto:support@printkurox.com" className="text-indigo-600 dark:text-indigo-400 hover:underline">support@printkurox.com</a></p>
-                    <p><strong className="text-slate-900 dark:text-white">Website:</strong> <a href="https://printkurox.vercel.app" target="_blank" rel="noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">https://printkurox.vercel.app</a></p>
+                    <p><strong className="text-slate-900 dark:text-white">Website:</strong> <a href="https://printkurox.pages.dev" target="_blank" rel="noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">https://printkurox.pages.dev</a></p>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     If you are standing at the kiosk and have an active issue with an ongoing print job, please notify the shop counter assistant immediately with your 3-character Pickup Code.

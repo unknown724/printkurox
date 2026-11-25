@@ -81,17 +81,38 @@ def attempt_portal_login(portal_url: str, username: str, password: str) -> tuple
     return False, f"Unexpected portal response: {body[:160]}"
 
 
-def run_once() -> None:
+_last_login_at = 0.0
+KEEPALIVE_REFRESH_SECONDS = 600.0
+
+
+def has_internet_access(timeout: float = 3.0) -> bool:
+    """Fast connectivity probe to avoid posting Cyberoam login.xml every 45s when already LIVE."""
+    try:
+        req = urllib.request.Request("http://clients3.google.com/generate_204", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 204
+    except Exception:
+        return False
+
+
+def run_once(force_login: bool = False) -> None:
+    global _last_login_at
     env = load_env_values()
     portal_url = env.get("CAMPUS_PORTAL_URL", "http://10.10.200.1:8090").rstrip("/")
     username = env.get("CAMPUS_WIFI_USER", "122148")
     password = env.get("CAMPUS_WIFI_PASS", "Tombinao123")
+
+    if not force_login and has_internet_access():
+        if time.monotonic() - _last_login_at < KEEPALIVE_REFRESH_SECONDS:
+            return
 
     if not is_portal_reachable(portal_url):
         print(f"[Portal] {portal_url} not reachable (likely on phone hotspot / non-Cyberoam network).", flush=True)
         return
 
     ok, msg = attempt_portal_login(portal_url, username, password)
+    if ok:
+        _last_login_at = time.monotonic()
     print(f"[Portal] {'OK' if ok else 'WARN'}: {msg}", flush=True)
 
 
@@ -102,7 +123,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.once:
-        run_once()
+        run_once(force_login=True)
         return 0
 
     print("[Portal] NERIST Cyberoam Portal Keepalive daemon started.", flush=True)

@@ -115,12 +115,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Failed to approve cash order or already paid' }, { status: 400 });
       }
 
-      // Instant local wake trigger to kiosk daemon (0ms queue polling delay)
-      fetch('http://127.0.0.1:7250/poll-now', {
-        method: 'POST',
-        signal: AbortSignal.timeout(300),
-      }).catch(() => {});
-
       return NextResponse.json({
         success: true,
         jobId: targetJobId,
@@ -306,12 +300,6 @@ export async function POST(req: NextRequest) {
         stationId,
       ]
     );
-
-    // Instant local wake trigger to kiosk daemon (0ms queue polling delay)
-    fetch('http://127.0.0.1:7250/poll-now', {
-      method: 'POST',
-      signal: AbortSignal.timeout(300),
-    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

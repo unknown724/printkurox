@@ -70,29 +70,50 @@ export interface PrinterTelemetryRecord {
   updated_at: string;
 }
 
-export async function queryD1<T = unknown>(sql: string, params: (string | number | null)[] = []): Promise<T[]> {
+async function postD1Query(sql: string, params: (string | number | null)[] = []) {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`;
+  const maxAttempts = 3;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${API_TOKEN}`,
-      'Content-Type': 'application/json',
-      'User-Agent': 'PrintKuroxServer/1.0',
-    },
-    body: JSON.stringify({
-      sql,
-      params,
-    }),
-    cache: 'no-store',
-  });
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_TOKEN}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'PrintKuroxServer/1.0',
+      },
+      body: JSON.stringify({
+        sql,
+        params,
+      }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Cloudflare D1 Query Failed (${response.status}): ${errorText}`);
+    if (response.status === 429 || (response.status >= 502 && response.status <= 504)) {
+      if (attempt < maxAttempts - 1) {
+        const retryAfterSec = Number(response.headers.get('retry-after') || '0');
+        const delayMs = retryAfterSec > 0
+          ? Math.min(5000, Math.max(250, retryAfterSec * 1000))
+          : Math.min(3000, 350 * (attempt + 1));
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Cloudflare D1 Query Failed (${response.status}): ${errorText}`);
+    }
+
+    return response.json();
   }
 
-  const data = await response.json();
+  throw new Error('Cloudflare D1 Query Failed after retries');
+}
+
+export async function queryD1<T = unknown>(sql: string, params: (string | number | null)[] = []): Promise<T[]> {
+  const data = await postD1Query(sql, params);
   if (!data.success) {
     throw new Error(`D1 Error: ${JSON.stringify(data.errors || data.messages)}`);
   }
@@ -102,28 +123,7 @@ export async function queryD1<T = unknown>(sql: string, params: (string | number
 }
 
 export async function executeD1(sql: string, params: (string | number | null)[] = []): Promise<boolean> {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${API_TOKEN}`,
-      'Content-Type': 'application/json',
-      'User-Agent': 'PrintKuroxServer/1.0',
-    },
-    body: JSON.stringify({
-      sql,
-      params,
-    }),
-    cache: 'no-store',
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Cloudflare D1 Execute Failed (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json();
+  const data = await postD1Query(sql, params);
   return data.success === true;
 }
 

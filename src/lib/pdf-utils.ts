@@ -547,8 +547,8 @@ export async function mergeFilesToPdf(
       const pageCfg2 = active2?.pageCfg;
       const scale1 = pageCfg1?.customScale !== undefined ? pageCfg1.customScale / 100 : customScaleMultiplier;
       const scale2 = pageCfg2?.customScale !== undefined ? pageCfg2.customScale / 100 : customScaleMultiplier;
-      const rot1 = (pageCfg1?.rotation || (pageCfg1?.orientation === 'landscape' ? 90 : 0)) % 360;
-      const rot2 = (pageCfg2?.rotation || (pageCfg2?.orientation === 'landscape' ? 90 : 0)) % 360;
+      const rot1 = (pageCfg1?.rotation || 0) % 360;
+      const rot2 = (pageCfg2?.rotation || 0) % 360;
 
       if (!isLandscapeSheet) {
         const slotW = sheetW - margin * 2;
@@ -650,7 +650,7 @@ export async function mergeFilesToPdf(
         const pageCfg = active.pageCfg;
         const pageScaleMultiplier =
           pageCfg?.customScale !== undefined ? pageCfg.customScale / 100 : customScaleMultiplier;
-        const pageRotation = (pageCfg?.rotation || (pageCfg?.orientation === 'landscape' ? 90 : 0)) % 360;
+        const pageRotation = (pageCfg?.rotation || 0) % 360;
 
         drawItemInBox(
           page,

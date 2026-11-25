@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUploadPresignedUrl } from '@/lib/cloudflare-r2';
+import { enforcePublicRateLimit } from '@/lib/rate-limit';
 import crypto from 'crypto';
 
 export const runtime = 'nodejs';
@@ -13,6 +14,9 @@ interface PresignItem {
 
 export async function POST(req: NextRequest) {
   try {
+    const limited = enforcePublicRateLimit(req, 'upload_presign', 30, 60);
+    if (limited) return limited;
+
     const body = await req.json();
     const files: PresignItem[] = body.files;
 

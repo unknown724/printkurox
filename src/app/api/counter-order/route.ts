@@ -7,12 +7,16 @@ import { parsePageRange, transformPdfForPrint, getPdfPageCount } from '@/lib/pdf
 import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { getStationConfig } from '@/lib/stations';
 import { getStationPricing, buildTierRatesFromConfig } from '@/lib/station-pricing';
+import { enforcePublicRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    const limited = enforcePublicRateLimit(req, 'counter_order', 20, 60);
+    if (limited) return limited;
+
     const body = await req.json();
     const {
       fileKey,

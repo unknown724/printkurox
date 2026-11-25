@@ -97,6 +97,7 @@ export function SimplePagePreview({
   const [cursor, setCursor] = useState(0);
   const [isMaximized, setIsMaximized] = useState(false);
   const [thumbs, setThumbs] = useState<Record<number, string>>({});
+  const [naturalOrients, setNaturalOrients] = useState<Record<number, 'portrait' | 'landscape'>>({});
   const [loadingPage, setLoadingPage] = useState(true);
   const [loadingAll, setLoadingAll] = useState(false);
 
@@ -109,6 +110,25 @@ export function SimplePagePreview({
   const cacheRef = useRef<Map<number, string>>(new Map());
   const pdfDocRef = useRef<PdfDocumentLike | null>(null);
   const sourceSigRef = useRef('');
+  const latestConfigsRef = useRef<PageConfig[]>(effectiveConfigs);
+
+  useEffect(() => {
+    latestConfigsRef.current = effectiveConfigs;
+  }, [effectiveConfigs]);
+
+  const recordNaturalOrient = (pageNumber: number, detected: 'portrait' | 'landscape') => {
+    setNaturalOrients((prev) => (prev[pageNumber] === detected ? prev : { ...prev, [pageNumber]: detected }));
+    if (onPageConfigsChange && pageConfigs.length > 0) {
+      const target = latestConfigsRef.current.find((p) => p.pageNumber === pageNumber);
+      if (target && target.naturalOrientation !== detected) {
+        onPageConfigsChange(
+          latestConfigsRef.current.map((p) =>
+            p.pageNumber === pageNumber ? { ...p, naturalOrientation: detected } : p
+          )
+        );
+      }
+    }
+  };
 
   const sourceSig = `${fileKey || ''}|${downloadUrl || ''}|${totalPages}|${
     rawFiles?.map((f) => `${f.name}:${f.size}`).join(',') || ''
@@ -133,7 +153,10 @@ export function SimplePagePreview({
         pdfDocRef.current.destroy().catch(() => {});
         pdfDocRef.current = null;
       }
-      queueMicrotask(() => setThumbs({}));
+      queueMicrotask(() => {
+        setThumbs({});
+        setNaturalOrients({});
+      });
     };
   }, [sourceSig]);
 
@@ -342,6 +365,18 @@ export function SimplePagePreview({
 
   const activePreviewUrl = thumbs[activePageNum] || null;
   const activeBw = isPageBw(activePageCfg);
+  const activeNaturalOrient =
+    naturalOrients[activePageNum] ||
+    activePageCfg?.naturalOrientation ||
+    activePageCfg?.orientation ||
+    'portrait';
+  const isActiveSheetLandscape =
+    orientation === 'landscape'
+      ? true
+      : orientation === 'portrait'
+      ? false
+      : activeNaturalOrient === 'landscape';
+  const sheetDimensionLabel = isActiveSheetLandscape ? '11.69×8.27"' : '8.27×11.69"';
 
   return (
     <>
@@ -356,8 +391,11 @@ export function SimplePagePreview({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border border-zinc-200 dark:border-white/15 bg-white/70 dark:bg-white/[0.06] text-zinc-600 dark:text-zinc-300 capitalize">
-              {orientation}
+            <span
+              className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border border-zinc-200 dark:border-white/15 bg-white/70 dark:bg-white/[0.06] text-zinc-600 dark:text-zinc-300 capitalize"
+              title={`Actual physical A4 sheet size: ${sheetDimensionLabel}`}
+            >
+              {orientation === 'auto' ? `Auto (${isActiveSheetLandscape ? 'Land' : 'Port'})` : orientation} · {sheetDimensionLabel}
             </span>
             <span
               className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
@@ -381,10 +419,10 @@ export function SimplePagePreview({
           </div>
         </div>
 
-        {/* Inline Preview Sheet Canvas */}
+        {/* Inline Preview Sheet Canvas (Exact A4 Portrait/Landscape + Safe Margin Simulation) */}
         <div
           onClick={() => setIsMaximized(true)}
-          className="relative w-full h-56 sm:h-64 rounded-xl border border-zinc-200/90 dark:border-white/10 bg-zinc-200/60 dark:bg-black/50 flex items-center justify-center overflow-hidden p-2 cursor-pointer group"
+          className="relative w-full h-56 sm:h-64 rounded-xl border border-zinc-200/90 dark:border-white/10 bg-zinc-200/60 dark:bg-black/50 flex items-center justify-center overflow-hidden p-2.5 cursor-pointer group"
           title="Click to maximize and manage pages"
         >
           {loadingPage && !activePreviewUrl ? (
@@ -394,19 +432,26 @@ export function SimplePagePreview({
             </div>
           ) : activePreviewUrl ? (
             <div
-              className={`h-full max-w-full flex items-center justify-center p-1 rounded-md bg-white shadow-md transition-all duration-200 group-hover:scale-[1.01] ${
-                orientation === 'landscape'
-                  ? 'aspect-[297/210] w-full max-h-44 sm:max-h-48'
-                  : orientation === 'portrait'
-                  ? 'aspect-[210/297]'
-                  : 'h-full'
+              className={`flex items-center justify-center p-1.5 sm:p-2 rounded-[3px] bg-white shadow-md border border-zinc-300/80 transition-all duration-200 group-hover:scale-[1.01] ${
+                isActiveSheetLandscape
+                  ? 'aspect-[297/210] h-[160px] sm:h-[188px] max-w-full w-auto'
+                  : 'aspect-[210/297] h-full max-w-full w-auto'
               }`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={activePreviewUrl}
                 alt={`Page ${activePageNum} preview`}
-                className={`max-h-full max-w-full object-contain rounded-sm ${
+                onLoad={(e) => {
+                  const img = e.currentTarget;
+                  if (img.naturalWidth && img.naturalHeight) {
+                    recordNaturalOrient(
+                      activePageNum,
+                      img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                    );
+                  }
+                }}
+                className={`max-h-full max-w-full object-contain rounded-[1px] ${
                   activeBw ? 'grayscale contrast-110' : ''
                 }`}
               />
@@ -520,16 +565,35 @@ export function SimplePagePreview({
                         </span>
                       </div>
 
-                      <div className="relative h-64 rounded-lg border border-zinc-200/80 dark:border-white/10 bg-zinc-100 dark:bg-black/50 flex items-center justify-center overflow-hidden p-1.5">
+                      <div className="relative h-64 rounded-lg border border-zinc-200/80 dark:border-white/10 bg-zinc-200/60 dark:bg-black/50 flex items-center justify-center overflow-hidden p-2">
                         {thumbUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={thumbUrl}
-                            alt={`Page ${cfg.pageNumber}`}
-                            className={`max-h-full max-w-full object-contain rounded bg-white shadow-sm transition-all ${
-                              isBw ? 'grayscale contrast-110' : ''
+                          <div
+                            className={`flex items-center justify-center p-1.5 rounded-[3px] bg-white shadow-sm border border-zinc-300/70 transition-all ${
+                              (orientation === 'landscape' ||
+                                (orientation === 'auto' &&
+                                  (naturalOrients[cfg.pageNumber] || cfg.naturalOrientation) === 'landscape'))
+                                ? 'aspect-[297/210] w-full max-h-44'
+                                : 'aspect-[210/297] h-full max-w-full w-auto'
                             } ${!cfg.included ? 'opacity-40' : ''}`}
-                          />
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={thumbUrl}
+                              alt={`Page ${cfg.pageNumber}`}
+                              onLoad={(e) => {
+                                const img = e.currentTarget;
+                                if (img.naturalWidth && img.naturalHeight) {
+                                  recordNaturalOrient(
+                                    cfg.pageNumber,
+                                    img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait'
+                                  );
+                                }
+                              }}
+                              className={`max-h-full max-w-full object-contain rounded-[1px] transition-all ${
+                                isBw ? 'grayscale contrast-110' : ''
+                              }`}
+                            />
+                          </div>
                         ) : (
                           <div className="flex flex-col items-center gap-1.5 text-zinc-400">
                             <Loader2 className="w-4 h-4 animate-spin text-amber-500" />

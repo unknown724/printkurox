@@ -264,13 +264,6 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    if (newStatus === 'PAID') {
-      fetch('http://127.0.0.1:7250/poll-now', {
-        method: 'POST',
-        signal: AbortSignal.timeout(300),
-      }).catch(() => {});
-    }
-
     return NextResponse.json({
       success: true,
       jobId,

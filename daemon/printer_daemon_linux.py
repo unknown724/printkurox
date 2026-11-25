@@ -12,6 +12,7 @@ Features:
 
 import os
 import sys
+import math
 import time
 import json
 import hmac
@@ -19,20 +20,28 @@ import shutil
 import hashlib
 import logging
 import requests
+from requests.adapters import HTTPAdapter
 import subprocess
 import threading
 import re
 import urllib.parse
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Base Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'station_config.json')
 DEVICE_IDENTITY_PATH = os.path.join(BASE_DIR, 'device_identity.json')
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
+SHM_TEMP_DIR = '/dev/shm/printkurox_prints'
+ACTIVE_SPOOL_DIR = SHM_TEMP_DIR if os.path.isdir('/dev/shm') else TEMP_DIR
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 
 os.makedirs(TEMP_DIR, exist_ok=True)
+try:
+    os.makedirs(ACTIVE_SPOOL_DIR, exist_ok=True)
+except Exception:
+    ACTIVE_SPOOL_DIR = TEMP_DIR
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 # Lightweight .env loader (ensures systemd / standalone runs pick up .env keys)
@@ -72,7 +81,7 @@ STATION_TOKEN = os.getenv('STATION_TOKEN', station_data.get('station_token', '')
 SERVER_URL = os.getenv('SERVER_URL', station_data.get('server_url', 'https://printkurox.pages.dev')).rstrip('/')
 CONFIGURED_PRINTER = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
-POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 6))))
+POLL_INTERVAL_SECONDS = float(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 1.5))))
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '30'))
 RETENTION_DAYS = int(os.getenv('ARCHIVE_RETENTION_DAYS', '30'))
 MIN_FREE_GB_GUARD = float(os.getenv('MIN_FREE_GB_GUARD', '8.0'))
@@ -86,32 +95,133 @@ R2_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY', '').strip()
 R2_ENDPOINT = os.getenv('R2_ENDPOINT', '').strip().rstrip('/')
 R2_BUCKET_NAME = os.getenv('R2_BUCKET_NAME', 'kiosk-uploads').strip()
 
+_pool_adapter = HTTPAdapter(pool_connections=6, pool_maxsize=6)
+
 _session = requests.Session()
+_session.mount('https://', _pool_adapter)
+_session.mount('http://', _pool_adapter)
 _session.headers.update({
     "X-Station-Id": STATION_ID,
     "X-Station-Token": STATION_TOKEN,
-    "User-Agent": f"PrintKurox-Linux-Daemon/3.0 ({STATION_ID})"
+    "User-Agent": f"PrintKurox-Linux-Daemon/3.1 ({STATION_ID})"
 })
 
 _d1_session = requests.Session()
+_d1_session.mount('https://', _pool_adapter)
 if CF_API_TOKEN:
     _d1_session.headers.update({
         "Authorization": f"Bearer {CF_API_TOKEN}",
         "Content-Type": "application/json",
-        "User-Agent": f"PrintKurox-Linux-Daemon/3.0 ({STATION_ID})"
+        "User-Agent": f"PrintKurox-Linux-Daemon/3.1 ({STATION_ID})"
     })
+
+_r2_session = requests.Session()
+_r2_session.mount('https://', _pool_adapter)
+_r2_session.headers.update({
+    "User-Agent": f"PrintKurox-R2-Client/3.1 ({STATION_ID})"
+})
+
+
+_d1_backoff_until = 0.0
+_wake_event = threading.Event()
+
+
+def trigger_immediate_poll():
+    """Wakes the main poll loop immediately (e.g., from local WhatsApp bot)."""
+    _wake_event.set()
+
+
+class _WakeRequestHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path.startswith('/poll-now'):
+            trigger_immediate_poll()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path.startswith('/health') or self.path.startswith('/poll-now'):
+            if self.path.startswith('/poll-now'):
+                trigger_immediate_poll()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_local_wake_server():
+    """Listens on 127.0.0.1:7250 so local WhatsApp bot wakes the Pi printer in 0ms."""
+    try:
+        ThreadingHTTPServer.allow_reuse_address = True
+        srv = ThreadingHTTPServer(('127.0.0.1', 7250), _WakeRequestHandler)
+        srv.daemon_threads = True
+        log("Local wake listener ready on http://127.0.0.1:7250/poll-now")
+        srv.serve_forever()
+    except OSError as e:
+        warn(f"Local wake listener notice (port 7250): {e}")
+
+
+def send_wa_admin_alert(alert_key, severity, title, body, cooldown_sec=1800):
+    """Sends a non-blocking alert to local WhatsApp bot bridge (127.0.0.1:7261 -> ADMIN_PHONE 9863013886)."""
+    def _post():
+        try:
+            requests.post(
+                "http://127.0.0.1:7261/internal/admin-alert",
+                headers={"X-Station-Token": STATION_TOKEN, "Content-Type": "application/json"},
+                json={
+                    "alertKey": alert_key,
+                    "severity": severity,
+                    "title": title,
+                    "body": body,
+                    "cooldownMs": int(cooldown_sec * 1000),
+                },
+                timeout=(1.0, 3.0),
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_post, daemon=True).start()
 
 
 def d1_query(sql, params=None, timeout=6.0):
-    """Execute a Cloudflare D1 REST query directly (0 Worker usage)."""
+    """Execute a Cloudflare D1 REST query directly (0 Worker usage) with 429 Retry-After backoff."""
+    global _d1_backoff_until
     if not (CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID):
         return None
+    if time.monotonic() < _d1_backoff_until:
+        return None
+
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/d1/database/{CF_D1_DB_ID}/query"
     r = _d1_session.post(url, json={"sql": sql, "params": params or []}, timeout=timeout)
     if r.status_code == 200:
         data = r.json()
         if data.get("success"):
             return data.get("result", [])
+    elif r.status_code == 429 or 502 <= r.status_code <= 504:
+        try:
+            retry_after = float(r.headers.get("Retry-After", "0") or 0)
+        except Exception:
+            retry_after = 0.0
+        wait_s = max(2.0, min(30.0, retry_after if retry_after > 0 else 5.0))
+        _d1_backoff_until = time.monotonic() + wait_s
+        warn(f"Cloudflare D1 HTTP {r.status_code}; pausing direct D1 queries for {wait_s:.1f}s")
+        if r.status_code == 429:
+            send_wa_admin_alert(
+                "cf_d1_429",
+                "warn",
+                "Cloudflare D1 Rate Limit (429)",
+                f"Station `{STATION_ID}` hit Cloudflare D1 HTTP 429.\nAuto-paused D1 polling for *{wait_s:.1f}s* to protect quota.",
+                cooldown_sec=900,
+            )
     return None
 
 
@@ -194,23 +304,130 @@ def get_cups_queue_count():
         return 0
 
 
-def resolve_target_printer():
-    """Resolves printer: matches configured name, or auto-picks first CUPS USB printer."""
+_cached_printer_name = None
+_cached_color_flags = {}
+_cached_duplex_support = {}
+
+
+def invalidate_printer_cache():
+    global _cached_printer_name
+    _cached_printer_name = None
+
+
+def ensure_cups_printer_enabled(printer_name):
+    """Re-enables a CUPS queue if it became paused/disabled after a USB unplug or power-off."""
+    if not printer_name:
+        return
+    try:
+        st = subprocess.run(['lpstat', '-p', printer_name], capture_output=True, text=True, timeout=3)
+        out_lower = (st.stdout or '').lower()
+        if 'disabled' in out_lower or 'paused' in out_lower or 'rejecting' in out_lower:
+            subprocess.run(['sudo', 'cupsaccept', printer_name], capture_output=True, timeout=3)
+            subprocess.run(['sudo', 'cupsenable', printer_name], capture_output=True, timeout=3)
+            log(f"Auto-resumed paused CUPS queue: {printer_name}")
+    except Exception:
+        pass
+
+
+def resolve_target_printer(force_refresh=False):
+    """Resolves printer: matches configured name, or auto-picks first CUPS USB printer (cached for speed)."""
+    global _cached_printer_name
+    if _cached_printer_name and not force_refresh:
+        return _cached_printer_name
+
     available = get_available_cups_printers()
     if not available:
         warn("No CUPS printers found! Check USB connection to printer.")
+        _cached_printer_name = None
         return None
 
+    selected = None
     if CONFIGURED_PRINTER:
         clean_target = re.sub(r'[^a-zA-Z0-9]', '', CONFIGURED_PRINTER.lower())
         for p in available:
             clean_p = re.sub(r'[^a-zA-Z0-9]', '', p.lower())
             if clean_target in clean_p or clean_p in clean_target:
-                return p
+                selected = p
+                break
 
-    selected = available[0]
-    log(f"Auto-selected CUPS printer: {selected}")
+    if not selected:
+        selected = available[0]
+        log(f"Auto-selected CUPS printer: {selected}")
+
+    _cached_printer_name = selected
+    ensure_cups_printer_enabled(selected)
     return selected
+
+
+def get_printer_color_flags(printer_name, color_mode):
+    """Detects whether the CUPS PPD uses Ink=MONO/COLOR (e.g. Epson ESC/P-R) or ColorModel=Grayscale/Color."""
+    cache_key = printer_name or "__default__"
+    if cache_key not in _cached_color_flags:
+        bw_flags = ['-o', 'ColorModel=Grayscale']
+        color_flags = ['-o', 'ColorModel=Color']
+        has_duplex = False
+        if printer_name:
+            try:
+                res = subprocess.run(
+                    ['lpoptions', '-p', printer_name, '-l'],
+                    capture_output=True, text=True, timeout=3
+                )
+                if res.returncode == 0 and res.stdout:
+                    if re.search(r'^Ink(?:/|\s*:)', res.stdout, re.MULTILINE):
+                        bw_flags = ['-o', 'Ink=MONO']
+                        color_flags = ['-o', 'Ink=COLOR']
+                    if re.search(r'^Duplex/.*DuplexNoTumble', res.stdout, re.MULTILINE):
+                        has_duplex = True
+            except Exception as e:
+                warn(f"PPD option lookup note for {printer_name}: {e}")
+        _cached_color_flags[cache_key] = (bw_flags, color_flags)
+        _cached_duplex_support[cache_key] = has_duplex
+
+    bw_flags, color_flags = _cached_color_flags[cache_key]
+    is_bw = str(color_mode or 'bw').strip().lower() in ('bw', 'mono', 'monochrome', 'grayscale', 'black & white')
+    return list(bw_flags if is_bw else color_flags)
+
+
+def printer_supports_duplex(printer_name):
+    """Checks cached PPD Duplex support (falls back to AUTO_DUPLEX config)."""
+    cache_key = printer_name or "__default__"
+    if cache_key not in _cached_duplex_support:
+        get_printer_color_flags(printer_name, 'bw')
+    return AUTO_DUPLEX or _cached_duplex_support.get(cache_key, False)
+
+
+def inspect_pdf_is_landscape(file_path):
+    """Inspects first PDF page geometry (width > height accounting for /Rotate) cleanly."""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(file_path)
+        if len(reader.pages) > 0:
+            p0 = reader.pages[0]
+            w = float(p0.mediabox.width)
+            h = float(p0.mediabox.height)
+            rot = int(p0.get('/Rotate', 0) or 0)
+            if rot in (90, 270):
+                w, h = h, w
+            return w > h
+    except Exception:
+        pass
+
+    # Pure-Python header fallback if pypdf is unavailable on Pi
+    try:
+        with open(file_path, 'rb') as f:
+            blob = f.read(65536)
+        mb = re.search(rb'/MediaBox\s*\[\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\]', blob)
+        if mb:
+            x1, y1, x2, y2 = (float(mb.group(i)) for i in range(1, 5))
+            w, h = abs(x2 - x1), abs(y2 - y1)
+            rot_m = re.search(rb'/Rotate\s+(\d+)', blob)
+            if rot_m and int(rot_m.group(1)) in (90, 270):
+                w, h = h, w
+            if w > 0 and h > 0:
+                return w > h
+    except Exception:
+        pass
+    return False
 
 
 def get_linux_system_telemetry():
@@ -392,7 +609,7 @@ def storage_cleanup_worker():
 
 
 def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto'):
-    """Prints a PDF file using native Linux CUPS lp command."""
+    """Prints a PDF file using native Linux CUPS lp command with true PPD color & orientation handling."""
     cmd = ['lp']
     if printer_name:
         cmd.extend(['-d', printer_name])
@@ -400,23 +617,32 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         cmd.extend(['-n', str(copies)])
     cmd.extend(['-o', 'fit-to-page'])
 
-    if orientation and orientation.lower() == 'landscape':
-        cmd.extend(['-o', 'landscape'])
-    elif orientation and orientation.lower() == 'portrait':
-        cmd.extend(['-o', 'portrait'])
+    pdf_is_landscape = inspect_pdf_is_landscape(file_path)
+    raw_orient = (orientation or 'auto').strip().lower()
+    target_orient = raw_orient if raw_orient in ('landscape', 'portrait') else ('landscape' if pdf_is_landscape else 'portrait')
 
-    if color_mode == 'bw':
-        cmd.extend(['-o', 'ColorModel=Grayscale'])
+    # Prevent CUPS pdftopdf double-rotation:
+    # - When website/pdf-utils already baked an A4 Landscape PDF (w > h), do NOT also pass -o landscape.
+    # - Only pass -o landscape if a portrait PDF (h >= w) needs to be rotated to landscape.
+    # - If Portrait was explicitly requested for a wide PDF, disable CUPS auto-rotate so it stays upright.
+    if target_orient == 'landscape':
+        if not pdf_is_landscape:
+            cmd.extend(['-o', 'landscape'])
     else:
-        cmd.extend(['-o', 'ColorModel=Color'])
+        if pdf_is_landscape:
+            cmd.extend(['-o', 'nopdfAutoRotate', '-o', 'portrait'])
 
-    if is_duplex and AUTO_DUPLEX:
+    cmd.extend(get_printer_color_flags(printer_name, color_mode))
+
+    if is_duplex and printer_supports_duplex(printer_name):
         cmd.extend(['-o', 'sides=two-sided-long-edge'])
     else:
         cmd.extend(['-o', 'sides=one-sided'])
 
     if page_range and str(page_range).lower() != 'all':
-        cmd.extend(['-o', f'page-ranges={page_range}'])
+        cleaned = re.sub(r'\s+', '', str(page_range))
+        if cleaned:
+            cmd.extend(['-o', f'page-ranges={cleaned}'])
 
     cmd.append(file_path)
     log(f"Executing CUPS print: {' '.join(cmd)}")
@@ -430,7 +656,7 @@ def poll_paid_jobs():
     norm_id = STATION_ID.lower().strip()
     is_main = norm_id in ('block_b', 'main', 'hostel_block_b_pare', 'pare')
     if is_main:
-        sql = """SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at, orientation
+        sql = """SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, duplex_sheets, single_sheets, status, station_id, created_at, orientation
                  FROM print_jobs
                  WHERE status = 'PAID' AND (
                    station_id = 'main' OR station_id = 'block_b' OR station_id = 'hostel_block_b_pare' OR station_id = 'pare' OR station_id IS NULL
@@ -438,7 +664,7 @@ def poll_paid_jobs():
                  ORDER BY created_at ASC LIMIT 5"""
         params = []
     else:
-        sql = """SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at, orientation
+        sql = """SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, duplex_sheets, single_sheets, status, station_id, created_at, orientation
                  FROM print_jobs
                  WHERE status = 'PAID' AND (station_id = ? OR station_id = ?)
                  ORDER BY created_at ASC LIMIT 5"""
@@ -513,7 +739,7 @@ def download_from_r2_direct(file_key, destination_path):
         'x-amz-content-sha256': payload_hash,
         'Authorization': f"AWS4-HMAC-SHA256 Credential={R2_ACCESS_KEY_ID}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
     }
-    resp = requests.get(url, headers=headers, stream=True, timeout=(5.0, 60.0))
+    resp = _r2_session.get(url, headers=headers, stream=True, timeout=(5.0, 60.0))
     resp.raise_for_status()
     with open(destination_path, 'wb') as f:
         for chunk in resp.iter_content(chunk_size=65536):
@@ -561,16 +787,91 @@ def update_job_status(job_id, status, pages_printed=None, sheets_used=None):
         warn(f"Direct D1 status notice: {e}")
 
 
+_last_printer_telemetry_sig = None
+_last_printer_telemetry_at = 0.0
+_heartbeat_cycle = 0
+_active_alert_flags = {"temp": False, "power": False, "disk": False, "ram": False}
+_last_seen_printers = None
+
+
+def evaluate_and_send_pi_health_alerts(pi_telem, printers):
+    """Monitors Pi thermals, undervoltage, storage, RAM/swap, and USB printer connect/disconnect."""
+    global _last_seen_printers
+
+    # 1. CPU Temperature
+    temp_c = pi_telem.get("cpu_temp_c")
+    if isinstance(temp_c, (int, float)):
+        if temp_c >= 80.0:
+            _active_alert_flags["temp"] = True
+            send_wa_admin_alert("pi_temp", "critical", "Critical Pi CPU Temperature", f"CPU temperature reached *{temp_c}°C* (throttling >= 80°C).\nCheck airflow / cooling!", cooldown_sec=1800)
+        elif temp_c >= 72.0:
+            _active_alert_flags["temp"] = True
+            send_wa_admin_alert("pi_temp", "warn", "High Pi CPU Temperature", f"CPU temperature elevated at *{temp_c}°C* (normal ~46°C).", cooldown_sec=1800)
+        elif _active_alert_flags["temp"] and temp_c < 65.0:
+            _active_alert_flags["temp"] = False
+            send_wa_admin_alert("pi_temp_recovery", "recovery", "Pi Temperature Normal", f"CPU cooled down to *{temp_c}°C*.", cooldown_sec=0)
+
+    # 2. Power / Active Undervoltage
+    if pi_telem.get("undervoltage_now") or pi_telem.get("throttled_now"):
+        _active_alert_flags["power"] = True
+        send_wa_admin_alert("pi_undervoltage", "warn", "Pi Undervoltage / CPU Throttling", "Raspberry Pi voltage dropped below 4.63V during load.\nCheck 5V power adapter/cable to keep full 1.4 GHz speed.", cooldown_sec=1800)
+    elif _active_alert_flags["power"]:
+        _active_alert_flags["power"] = False
+        send_wa_admin_alert("pi_undervoltage_recovery", "recovery", "Pi Power Restored", "5V supply voltage is healthy and throttling cleared.", cooldown_sec=0)
+
+    # 3. Storage Space
+    free_gb = pi_telem.get("disk_free_gb")
+    used_pct = pi_telem.get("disk_used_pct")
+    if isinstance(free_gb, (int, float)):
+        if free_gb < 2.0:
+            _active_alert_flags["disk"] = True
+            send_wa_admin_alert("pi_disk", "critical", "Critical Low Pi Storage", f"Only *{free_gb} GB* free ({used_pct}% used)! Running emergency archive prune.", cooldown_sec=1800)
+            threading.Thread(target=cleanup_usb_storage, daemon=True).start()
+        elif free_gb < 5.0 or (isinstance(used_pct, (int, float)) and used_pct >= 88.0):
+            _active_alert_flags["disk"] = True
+            send_wa_admin_alert("pi_disk", "warn", "Low Pi Storage Space", f"Storage running low: *{free_gb} GB* free ({used_pct}% used).", cooldown_sec=3600)
+        elif _active_alert_flags["disk"] and free_gb >= 6.0:
+            _active_alert_flags["disk"] = False
+            send_wa_admin_alert("pi_disk_recovery", "recovery", "Pi Storage Healthy", f"Disk cleanup freed space: *{free_gb} GB* available.", cooldown_sec=0)
+
+    # 4. RAM & Swap Pressure
+    ram_pct = pi_telem.get("ram_used_pct") or 0
+    swap_mb = pi_telem.get("swap_used_mb") or 0
+    if ram_pct >= 90.0 or swap_mb >= 1024:
+        _active_alert_flags["ram"] = True
+        send_wa_admin_alert("pi_ram", "warn", "High Pi Memory / Swap Usage", f"RAM used: *{ram_pct}%* ({pi_telem.get('ram_used_mb')}/{pi_telem.get('ram_total_mb')} MB) · Swap: *{swap_mb} MB*.", cooldown_sec=1800)
+    elif _active_alert_flags["ram"] and ram_pct < 75.0 and swap_mb < 512:
+        _active_alert_flags["ram"] = False
+        send_wa_admin_alert("pi_ram_recovery", "recovery", "Pi Memory Normal", f"RAM usage stabilized at *{ram_pct}%*.", cooldown_sec=0)
+
+    # 5. USB Printer Connect / Disconnect / Model Swap Recovery
+    cur_tuple = tuple(printers or [])
+    if _last_seen_printers is not None and cur_tuple != _last_seen_printers:
+        invalidate_printer_cache()
+        if len(cur_tuple) == 0 and len(_last_seen_printers) > 0:
+            send_wa_admin_alert("printer_usb", "warn", "USB Printer Disconnected", f"Previously active printer `{_last_seen_printers[0]}` was unplugged or powered off.\nRe-plug USB/power anytime to resume.", cooldown_sec=300)
+        elif len(cur_tuple) > 0:
+            ensure_cups_printer_enabled(cur_tuple[0])
+            action_word = "Reconnected" if len(_last_seen_printers) == 0 else "Switched"
+            send_wa_admin_alert("printer_usb_recovery", "recovery", f"USB Printer {action_word}", f"Active CUPS printer ready: `{cur_tuple[0]}`.", cooldown_sec=0)
+    _last_seen_printers = cur_tuple
+
+
 def write_heartbeat():
     """Sends hardware & Raspberry Pi telemetry directly to D1 first (0 Worker usage), with HTTP fallback."""
+    global _last_printer_telemetry_sig, _last_printer_telemetry_at, _heartbeat_cycle
+    _heartbeat_cycle += 1
     printers = get_available_cups_printers()
     is_printer_connected = 1 if len(printers) > 0 else 0
     printer_label = printers[0] if printers else "Printer Disconnected"
     status_text = f"Ready ({printers[0]})" if printers else "Printer Disconnected"
     spooler_jobs = get_cups_queue_count()
     pi_telem = get_linux_system_telemetry()
+    evaluate_and_send_pi_health_alerts(pi_telem, printers)
 
     if CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID:
+        if time.monotonic() < _d1_backoff_until:
+            return
         try:
             slot = 1 if STATION_ID in ('block_b', 'main', 'hostel_block_b_pare') else 2
             d1_query(
@@ -578,20 +879,28 @@ def write_heartbeat():
                 "ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now'), station_id = excluded.station_id",
                 [slot, STATION_ID],
             )
-            d1_query(
-                "UPDATE stations SET last_heartbeat = datetime('now'), status = 'online' WHERE id = ? OR id = 'hostel_' || ?",
-                [STATION_ID, STATION_ID],
-            )
-            if STATION_ID in ('block_b', 'main', 'hostel_block_b_pare'):
+            if _heartbeat_cycle % 2 == 1:
+                d1_query(
+                    "UPDATE stations SET last_heartbeat = datetime('now'), status = 'online' WHERE id = ? OR id = 'hostel_' || ?",
+                    [STATION_ID, STATION_ID],
+                )
+            telem_sig = (printer_label, is_printer_connected, status_text, spooler_jobs)
+            now_mono = time.monotonic()
+            if STATION_ID in ('block_b', 'main', 'hostel_block_b_pare') and (
+                telem_sig != _last_printer_telemetry_sig or (now_mono - _last_printer_telemetry_at) > 240
+            ):
                 d1_query(
                     "UPDATE printer_telemetry SET printer_name = ?, is_online = ?, status_text = ?, spooler_jobs = ?, updated_at = datetime('now') WHERE id = 1",
                     [printer_label, is_printer_connected, status_text, spooler_jobs],
                 )
-            d1_query(
-                "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now')) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
-                [f"pi_telemetry_{STATION_ID}", json.dumps(pi_telem)],
-            )
+                _last_printer_telemetry_sig = telem_sig
+                _last_printer_telemetry_at = now_mono
+            if _heartbeat_cycle % 2 == 0 or _heartbeat_cycle == 1:
+                d1_query(
+                    "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now')) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+                    [f"pi_telemetry_{STATION_ID}", json.dumps(pi_telem)],
+                )
             return
         except Exception as d1_err:
             warn(f"Direct D1 heartbeat notice: {d1_err}")
@@ -626,6 +935,17 @@ def heartbeat_worker():
         time.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
 
+def archive_printed_file_async(src_path, dst_path):
+    """Moves printed spool file from RAM/temp storage to USB archive asynchronously."""
+    def _worker():
+        try:
+            if os.path.exists(src_path):
+                shutil.move(src_path, dst_path)
+        except Exception as e:
+            warn(f"Archive move notice: {e}")
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def main():
     ensure_station_paired()
 
@@ -633,16 +953,19 @@ def main():
     log("PrintKurox Embedded Linux / Pi 3B+ Daemon Starting")
     log(f"Station ID:    {STATION_ID}")
     log(f"Direct D1/R2:  {'Enabled' if (CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID) else 'Proxy Fallback Only'}")
+    log(f"Spool Dir:     {ACTIVE_SPOOL_DIR}")
     log(f"Fallback URL:  {SERVER_URL}")
-    log(f"Adaptive Poll: {POLL_INTERVAL_SECONDS}s idle / 2s active")
+    log(f"Adaptive Poll: {POLL_INTERVAL_SECONDS}s idle / 0.4s active")
     log("======================================================")
 
     threading.Thread(target=heartbeat_worker, daemon=True).start()
     threading.Thread(target=storage_cleanup_worker, daemon=True).start()
+    threading.Thread(target=start_local_wake_server, daemon=True).start()
 
     last_poll_had_jobs = False
 
     while True:
+        _wake_event.clear()
         try:
             jobs = poll_paid_jobs()
 
@@ -657,14 +980,17 @@ def main():
                     continue
 
                 for job in jobs:
+                    t_start = time.monotonic()
                     job_id = job["id"]
                     pickup_code = job.get("pickup_code", "#0000")
                     file_name = job.get("file_name", "document.pdf")
                     file_key = job.get("file_key")
-                    total_pages = job.get("total_pages", 1)
+                    total_pages = int(job.get("total_pages") or 1)
                     is_duplex = bool(job.get("is_duplex"))
                     color_mode = job.get("color_mode", "bw")
-                    copies = job.get("copies", 1)
+                    copies = max(1, int(job.get("copies") or 1))
+                    duplex_sheets = int(job.get("duplex_sheets") or 0)
+                    single_sheets = int(job.get("single_sheets") or 0)
                     page_range = job.get("page_range", "All")
                     orientation = job.get("orientation", "auto")
 
@@ -675,18 +1001,20 @@ def main():
                         continue
 
                     clean_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name) or "doc.pdf"
-                    local_pdf = os.path.join(TEMP_DIR, f"{pickup_code}_{job_id[:6]}_{clean_name}")
+                    local_pdf = os.path.join(ACTIVE_SPOOL_DIR, f"{pickup_code}_{job_id[:6]}_{clean_name}")
+
+                    # Notify PRINTING asynchronously so R2 download & CUPS aren't blocked by D1 round-trip
+                    threading.Thread(target=update_job_status, args=(job_id, "PRINTING"), daemon=True).start()
 
                     try:
                         download_cloud_file(job_id, local_pdf, file_key=file_key)
-                        log(f"Downloaded document: {os.path.basename(local_pdf)}")
+                        log(f"Downloaded document in {time.monotonic() - t_start:.2f}s: {os.path.basename(local_pdf)}")
                     except Exception as dl_err:
                         error(f"Failed to download job {pickup_code}: {dl_err}")
                         update_job_status(job_id, "FAILED")
                         continue
 
                     try:
-                        update_job_status(job_id, "PRINTING")
                         print_pdf_cups(
                             printer_name=target_printer,
                             file_path=local_pdf,
@@ -696,13 +1024,25 @@ def main():
                             page_range=page_range,
                             orientation=orientation,
                         )
-                        update_job_status(job_id, "COMPLETED", pages_printed=total_pages, sheets_used=total_pages)
-                        log(f"Successfully printed Job {pickup_code} on {target_printer}!")
+                        pages_printed_total = total_pages * copies
+                        per_copy_sheets = (duplex_sheets + single_sheets) if (duplex_sheets + single_sheets) > 0 else (
+                            math.ceil(total_pages / 2) if is_duplex else total_pages
+                        )
+                        sheets_used_total = per_copy_sheets * copies
+
+                        log(f"Spool submitted for Job {pickup_code} in {time.monotonic() - t_start:.2f}s on {target_printer} ({pages_printed_total} pgs, {sheets_used_total} sheets)!")
+                        threading.Thread(
+                            target=update_job_status,
+                            args=(job_id, "COMPLETED"),
+                            kwargs={"pages_printed": pages_printed_total, "sheets_used": sheets_used_total},
+                            daemon=True,
+                        ).start()
 
                         archive_path = os.path.join(ARCHIVE_DIR, os.path.basename(local_pdf))
-                        os.replace(local_pdf, archive_path)
+                        archive_printed_file_async(local_pdf, archive_path)
                     except Exception as print_err:
                         error(f"CUPS printing failed for {pickup_code}: {print_err}")
+                        invalidate_printer_cache()
                         update_job_status(job_id, "FAILED")
             else:
                 last_poll_had_jobs = False
@@ -714,7 +1054,8 @@ def main():
             error(f"Unexpected error in daemon loop: {e}")
             time.sleep(2)
 
-        time.sleep(2 if last_poll_had_jobs else POLL_INTERVAL_SECONDS)
+        wait_time = 0.4 if last_poll_had_jobs else POLL_INTERVAL_SECONDS
+        _wake_event.wait(timeout=wait_time)
 
 
 if __name__ == '__main__':

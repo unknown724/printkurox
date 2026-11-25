@@ -22,8 +22,18 @@ CURRENT_USER=$(logname || echo $SUDO_USER || echo "root")
 echo "[1/4] Updating package lists..."
 apt-get update -y
 
-echo "[2/4] Installing CUPS, Python3, and Printer Drivers..."
-apt-get install -y cups cups-client python3 python3-pip python3-requests printer-driver-escpr hplip
+echo "[2/4] Installing CUPS, Python3, and Universal Printer Drivers..."
+apt-get install -y cups cups-client python3 python3-pip python3-requests printer-driver-escpr printer-driver-gutenprint printer-driver-brlaser hplip cups-filters || apt-get install -y cups cups-client python3 python3-pip python3-requests printer-driver-escpr hplip
+
+# Install Universal USB Printer Hotplug Auto-Provisioner
+if [ -f "$INSTALL_DIR/printkurox-printer-hotplug.sh" ]; then
+  install -m 755 "$INSTALL_DIR/printkurox-printer-hotplug.sh" /usr/local/bin/printkurox-printer-hotplug.sh
+  cat <<'EOF' > /etc/udev/rules.d/99-printkurox-printers.rules
+ACTION=="add", SUBSYSTEM=="usbmisc", KERNEL=="lp*", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/printkurox-printer-hotplug.sh"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="07", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/printkurox-printer-hotplug.sh"
+EOF
+  udevadm control --reload-rules || true
+fi
 
 echo "[3/4] Configuring CUPS permissions & Network Sharing..."
 # Add user to lpadmin group
@@ -111,6 +121,8 @@ Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$BOT_DIR
 Environment=NODE_OPTIONS=--max-old-space-size=384
+MemoryHigh=450M
+MemoryMax=580M
 ExecStart=$NODE_BIN $BOT_DIR/whatsapp_bot.js
 Restart=always
 RestartSec=5
