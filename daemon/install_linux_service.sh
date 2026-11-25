@@ -123,6 +123,7 @@ WorkingDirectory=$BOT_DIR
 Environment=NODE_OPTIONS=--max-old-space-size=384
 MemoryHigh=450M
 MemoryMax=580M
+TimeoutStopSec=5
 ExecStart=$NODE_BIN $BOT_DIR/whatsapp_bot.js
 Restart=always
 RestartSec=5
