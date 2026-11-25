@@ -412,6 +412,7 @@ export function CostSummary({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          checkoutMode: 'payment_link',
           fileKey,
           fileName,
           docPages: totalPages,
