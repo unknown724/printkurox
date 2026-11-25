@@ -150,10 +150,22 @@ export default function StationOperatorPortal() {
   }, [isAuthenticated, station.id]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     fetchJobs();
-    const interval = setInterval(fetchJobs, 3000);
-    return () => clearInterval(interval);
-  }, [fetchJobs]);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        fetchJobs();
+      }
+    }, 10_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchJobs();
+    };
+    window.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [fetchJobs, isAuthenticated]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

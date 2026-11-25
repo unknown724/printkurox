@@ -98,7 +98,12 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ success: true, stations });
+    return NextResponse.json(
+      { success: true, stations },
+      includeAll
+        ? { headers: { 'Cache-Control': 'no-store' } }
+        : { headers: { 'Cache-Control': 'public, s-maxage=20, stale-while-revalidate=60' } }
+    );
   } catch (err: any) {
     console.error('Failed to list stations:', err);
     return NextResponse.json({ error: 'Failed to fetch stations' }, { status: 500 });

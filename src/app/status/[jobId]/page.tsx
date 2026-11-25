@@ -57,10 +57,20 @@ export default function JobStatusPage({
   const hasCelebratedRef = React.useRef(false);
   const [copied, setCopied] = useState(false);
 
-  // Poll status every 2 seconds
+  // Adaptive polling: 4s for first 3 mins, 12s after, pauses when tab hidden, stops on terminal or 30m TTL
   useEffect(() => {
     let active = true;
-    let intervalId: NodeJS.Timeout | null = null;
+    let timerId: NodeJS.Timeout | null = null;
+    let isTerminal = false;
+    const startedAt = Date.now();
+
+    const scheduleNext = () => {
+      if (!active || isTerminal) return;
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > 30 * 60 * 1000) return; // Stop polling after 30-min job expiration
+      const delay = elapsed < 3 * 60 * 1000 ? 4000 : 12000;
+      timerId = setTimeout(tick, delay);
+    };
 
     const fetchStatus = async () => {
       try {
@@ -72,9 +82,8 @@ export default function JobStatusPage({
         if (!active) return;
         setJob(data);
 
-        // Stop polling when job reaches terminal state
         if (data.status === 'COMPLETED' || data.status === 'FAILED') {
-          if (intervalId) clearInterval(intervalId);
+          isTerminal = true;
         }
 
         // Trigger celebratory confetti once on completion or initial paid
@@ -95,12 +104,28 @@ export default function JobStatusPage({
       }
     };
 
-    fetchStatus();
-    intervalId = setInterval(fetchStatus, 2000);
+    const tick = async () => {
+      if (!active || isTerminal) return;
+      if (typeof document === 'undefined' || !document.hidden) {
+        await fetchStatus();
+      }
+      scheduleNext();
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && active && !isTerminal) {
+        if (timerId) clearTimeout(timerId);
+        tick();
+      }
+    };
+
+    tick();
+    window.addEventListener('visibilitychange', onVisible);
 
     return () => {
       active = false;
-      if (intervalId) clearInterval(intervalId);
+      if (timerId) clearTimeout(timerId);
+      window.removeEventListener('visibilitychange', onVisible);
     };
   }, [jobId]);
 

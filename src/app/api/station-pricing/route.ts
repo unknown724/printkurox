@@ -73,20 +73,34 @@ export async function GET(req: NextRequest) {
     if (stationId) {
       const config = await getStationPricing(stationId);
       const tierRates = buildTierRatesFromConfig(config);
-      return NextResponse.json({
-        success: true,
-        stationId,
-        config,
-        tierRates,
-      });
+      return NextResponse.json(
+        {
+          success: true,
+          stationId,
+          config,
+          tierRates,
+        },
+        {
+          headers: {
+            'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120',
+          },
+        }
+      );
     }
 
     // Return all stations pricing
     const allStations = await getAllStationsPricing();
-    return NextResponse.json({
-      success: true,
-      stations: allStations,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        stations: allStations,
+      },
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120',
+        },
+      }
+    );
   } catch (err: unknown) {
     console.error('Failed to get station pricing:', err);
     return NextResponse.json(
