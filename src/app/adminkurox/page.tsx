@@ -46,8 +46,10 @@ import { getClientDetailedDevice } from '@/lib/device-detection';
 import { broadcastHostelChangeSetting } from '@/lib/useHostelChangeSetting';
 import { STATIONS } from '@/lib/stations';
 import { StationPricingConfig, PRICING_GUARDRAILS } from '@/lib/station-pricing';
-import type { DossierAccessLists, PiSystemTelemetry } from '@/lib/settings';
+import type { DossierAccessLists, PiSystemTelemetry, WhatsAppBotControlConfig } from '@/lib/settings';
+import { DEFAULT_WHATSAPP_BOT_CONFIG } from '@/lib/settings';
 import { PiHealthAndDossierCard } from '@/components/admin/PiHealthAndDossierCard';
+import { WhatsAppBotCommandCenter } from '@/components/admin/WhatsAppBotCommandCenter';
 
 interface AdminDevice {
   device_id: string;
@@ -226,6 +228,9 @@ export default function AdminKuroxPage() {
     unlimited: [],
     banned: [],
   });
+  const [whatsappBotConfig, setWhatsappBotConfig] = useState<WhatsAppBotControlConfig>(
+    DEFAULT_WHATSAPP_BOT_CONFIG
+  );
 
   // Campus Hostel Stations Dynamic Pricing State
   const [stationsPricing, setStationsPricing] = useState<Record<string, StationPricingConfig>>({});
@@ -415,6 +420,9 @@ export default function AdminKuroxPage() {
         const adminData = await adminRes.json();
         if (adminData.dossierAccess) {
           setDossierAccess(adminData.dossierAccess);
+        }
+        if (adminData.whatsappBotConfig) {
+          setWhatsappBotConfig(adminData.whatsappBotConfig);
         }
       }
     } catch (err) {
@@ -1123,10 +1131,15 @@ export default function AdminKuroxPage() {
             </div>
           </div>
 
-          <PiHealthAndDossierCard
-            piTelemetry={stats?.piTelemetry}
+          <WhatsAppBotCommandCenter
+            config={whatsappBotConfig}
+            onConfigChange={setWhatsappBotConfig}
             dossierAccess={dossierAccess}
             onDossierAccessChange={setDossierAccess}
+          />
+
+          <PiHealthAndDossierCard
+            piTelemetry={stats?.piTelemetry}
             onRefreshStats={() => fetchStats(period)}
           />
 

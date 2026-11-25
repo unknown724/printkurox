@@ -5,6 +5,8 @@ import {
   setHostelChangeSetting,
   getDossierAccessLists,
   saveDossierAccessLists,
+  getWhatsAppBotConfig,
+  saveWhatsAppBotConfig,
   normalizePhone10,
 } from '@/lib/settings';
 
@@ -26,15 +28,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const [hostelChangeEnabled, dossierAccess] = await Promise.all([
+    const [hostelChangeEnabled, dossierAccess, whatsappBotConfig] = await Promise.all([
       getHostelChangeSetting(),
       getDossierAccessLists(),
+      getWhatsAppBotConfig(),
     ]);
 
     return NextResponse.json({
       success: true,
       hostelChangeEnabled,
       dossierAccess,
+      whatsappBotConfig,
     });
   } catch (err) {
     console.error('Error fetching admin settings:', err);
@@ -46,11 +50,26 @@ export async function POST(req: NextRequest) {
   try {
     const isAuth = await isAuthorizedAdmin(req);
     const body = await req.json().catch(() => ({}));
-    const { hostelChangeEnabled, pin, action, phone, note } = body;
+    const { hostelChangeEnabled, pin, action, phone, note, whatsappBotConfig } = body;
 
     const pinValid = pin && validateAdminPin(pin);
     if (!isAuth && !pinValid) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // WhatsApp Bot Master / Mode Toggles & Custom Auto-Replies
+    if (action === 'update_whatsapp_config') {
+      if (!whatsappBotConfig || typeof whatsappBotConfig !== 'object') {
+        return NextResponse.json({ error: 'Invalid whatsappBotConfig payload' }, { status: 400 });
+      }
+      const savedConfig = await saveWhatsAppBotConfig(whatsappBotConfig);
+      if (!savedConfig) {
+        return NextResponse.json({ error: 'Failed to save WhatsApp bot config' }, { status: 500 });
+      }
+      return NextResponse.json({
+        success: true,
+        whatsappBotConfig: savedConfig,
+      });
     }
 
     // Dossier VIP / Ban management actions

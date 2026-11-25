@@ -45,6 +45,7 @@ const crypto = require('crypto');
 const { convertDocxToPdf, findSoffice } = require('./docx_converter');
 const { handleStudentMessage } = require('./student_bot_module');
 const { handleFacultyMessage, isGroupFacultyCommand, getFacultySearchCount } = require('./faculty_bot_module');
+const { getBotControlConfig, canSendOfflineReply, handleOwnerBotControlCommand } = require('./bot_config_sync');
 const { handleAIChatMessage, activeDrafts, activeCoverDrafts, activeGameDrafts, readyToPrintDocs, saveCoverDraft, getCoverDraft, extractStudentQuery, isUserAdmin, recordAdaptiveCorrection, pendingDisambiguations, getUserProfile } = require('./ai_chat_module');
 const { formatForWhatsApp, generateApplicationPdf, generateApplicationDocx, generateAssignmentCoverPdf, generateAssignmentCoverDocx, extractPureApplicationText, generateHtmlGame } = require('./document_generator');
 const { handleServerAdminCommand, onBotConnectionOpen } = require('./server_controller_module');
@@ -3644,9 +3645,55 @@ async function startBot() {
         const lowerText = trimmedText.toLowerCase();
 
         // ======================================================================
-        // ADMIN COMMANDS (@ad, @preview, @send, #status, #wifilogin, #shutdown, etc.)
+        // ADMIN COMMANDS & LIVE MODULE CONTROL GATES
         // ======================================================================
-        const isAdmin = !isGroup && isSenderAdmin(senderJid, normalizedJid, isMessageToSelf, userActivityPhone);
+        const isOwnerPhone = isSenderAdmin(senderJid, normalizedJid, isMessageToSelf, userActivityPhone);
+        const isAdmin = !isGroup && isOwnerPhone;
+        const botCfg = getBotControlConfig();
+
+        if (!isOwnerPhone) {
+          const isPrintButton = Boolean(
+            buttonId && (
+              buttonId === 'btn_flow_printing' ||
+              buttonId === 'btn_print_via_whatsapp' ||
+              buttonId === 'btn_print_generated_doc' ||
+              buttonId.startsWith('btn_queue_') ||
+              buttonId.startsWith('step') ||
+              buttonId.startsWith('btn_proceed_') ||
+              buttonId.startsWith('btn_pay_online') ||
+              buttonId.startsWith('btn_pay_cash') ||
+              buttonId === 'rescan_chat_media' ||
+              buttonId === 'confirm_print' ||
+              buttonId === 'cancel_print'
+            )
+          );
+          const isPrintText =
+            /\b(i want to print|print a document|print pdf|rescan)\b/i.test(clean) ||
+            lowerText === 'print' ||
+            (!session && (clean === '1' || clean === 'printing services'));
+          const hasActivePrintSession = Boolean(session && session.stage && session.stage !== 'COMPLETED');
+          const isPrintIntent = !isGroup && (hasMediaPayload || isPrintButton || isPrintText || hasActivePrintSession);
+
+          // Master Bot Switch OFF: reply custom message ONLY when trying to print; stay completely silent on everything else
+          if (!botCfg.botEnabled) {
+            if (isPrintIntent && botCfg.masterOffBehavior !== 'silent') {
+              const replyKey = normalizedJid || senderJid;
+              if (canSendOfflineReply(replyKey, 'bot_off', botCfg.replyCooldownSec)) {
+                await sock.sendMessage(senderJid, { text: botCfg.messages.botOff }).catch(() => {});
+              }
+            }
+            continue;
+          }
+
+          // Printing Only OFF: reply custom message on print attempts; keep non-print modules working if enabled
+          if (!botCfg.printingEnabled && isPrintIntent) {
+            const replyKey = normalizedJid || senderJid;
+            if (canSendOfflineReply(replyKey, 'print_off', botCfg.replyCooldownSec)) {
+              await sock.sendMessage(senderJid, { text: botCfg.messages.printingOff }).catch(() => {});
+            }
+            continue;
+          }
+        }
         const adminReplyJid = isMessageToSelf
           ? (myJid || `91${myPhone}@s.whatsapp.net`)
           : senderJid;
@@ -3909,6 +3956,18 @@ async function startBot() {
 
         const isStudentTrigger = !isLoginCommand && (isStudentExplicit || isNaturalStudentQuery || isStudentMenuChoice || isUnlockOrPay);
 
+        // Owner Bot Remote Toggles (@bot on/off, @waprint on/off, @studentbot on/off, @facultybot on/off, @aibot on/off, @botstatus)
+        if (isAdmin && !isGroup) {
+          const botCtrlHandled = await handleOwnerBotControlCommand({
+            sock,
+            senderJid: adminReplyJid,
+            rawBody: trimmedText,
+            lowerBody: lowerText,
+            logFn: appendBotLog,
+          });
+          if (botCtrlHandled) continue;
+        }
+
         // Server Admin Controls (#status, #wifilogin, #wifi, #shutdown, #cancelshutdown, #update, admin buttons)
         if (isAdmin && !isGroup) {
           const adminHandled = await handleServerAdminCommand({
@@ -3922,6 +3981,15 @@ async function startBot() {
             logFn: appendBotLog,
           });
           if (adminHandled) continue;
+        }
+
+        // Student Search OFF gate (for non-owner; owner @unlock/@ban/@viplist and @student keep working)
+        const isOwnerDossierAdminCmd = isAdmin && /^[@!#]?(unlock|lock|revokepass|ban|unban|viplist|vip)\b/i.test(trimmedText);
+        if (!isGroup && !isOwnerPhone && !isOwnerDossierAdminCmd && !botCfg.studentSearchEnabled && isStudentTrigger) {
+          if (botCfg.nonPrintOffBehavior === 'reply' && canSendOfflineReply(normalizedJid || senderJid, 'student_off', botCfg.replyCooldownSec)) {
+            await sock.sendMessage(senderJid, { text: botCfg.messages.studentOff }).catch(() => {});
+          }
+          continue;
         }
 
         // Student & Confidential Dossier Commands (STRICTLY DM-only; disabled in groups)
@@ -3946,6 +4014,19 @@ async function startBot() {
           }
         }
 
+        // Faculty Search OFF gate (both DMs & Groups: silent for non-owner unless nonPrintOffBehavior==='reply')
+        const isFacultyIntent =
+          isGroupFacultyCommand(rawGroupText || trimmedText, buttonId) ||
+          /^[@!#]?(find|faculty)\b/i.test(trimmedText) ||
+          buttonId === 'btn_flow_faculty' ||
+          Boolean(buttonId && buttonId.startsWith('view_faculty_'));
+        if (!isOwnerPhone && !botCfg.facultySearchEnabled && isFacultyIntent) {
+          if (!isGroup && botCfg.nonPrintOffBehavior === 'reply' && canSendOfflineReply(normalizedJid || senderJid, 'faculty_off', botCfg.replyCooldownSec)) {
+            await sock.sendMessage(senderJid, { text: botCfg.messages.facultyOff }).catch(() => {});
+          }
+          continue;
+        }
+
         // Faculty Search (@find / !find / view_faculty_ disambiguation buttons) & Help (@help / !help) - works in BOTH DMs and Groups
         const facultyHandled = await handleFacultyMessage({
           sock,
@@ -3964,6 +4045,9 @@ async function startBot() {
         // Group Conversational AI (@ai <question>)
         if (isGroup) {
           if (isGroupAiTrigger) {
+            if (!isOwnerPhone && !botCfg.aiChatEnabled) {
+              continue;
+            }
             const aiGroupHandled = await handleAIChatMessage({
               sock,
               senderJid,
@@ -4143,6 +4227,9 @@ async function startBot() {
             continue;
           }
           if (buttonId === 'btn_flow_agent' || buttonId === 'btn_paywall_chat_agent') {
+            if (!isOwnerPhone && !botCfg.aiChatEnabled) {
+              continue;
+            }
             userLastOpenedStudio.set(senderJid, 'agent_hub');
             if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'agent_hub');
             const hr = new Date().getHours();
@@ -5805,6 +5892,9 @@ Department: Computer Science and Engineering`;
           }
 
           // Conversational AI: In DM, if user sent a question or chat and has no active print session, let AI answer!
+          if (!isOwnerPhone && !botCfg.aiChatEnabled) {
+            continue;
+          }
           const aiHandled = await handleAIChatMessage({
             sock,
             senderJid,

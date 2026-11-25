@@ -70,9 +70,39 @@ systemctl daemon-reload
 systemctl enable printkurox.service
 systemctl restart printkurox.service
 
+NODE_BIN=$(command -v node || echo "/usr/bin/node")
+BOT_DIR="$INSTALL_DIR/whatsapp_bot"
+if [ -f "$BOT_DIR/whatsapp_bot.js" ] && [ -x "$NODE_BIN" ]; then
+  BOT_SERVICE_FILE="/etc/systemd/system/printkurox-bot.service"
+  cat <<EOF > $BOT_SERVICE_FILE
+[Unit]
+Description=PrintKurox Unified WhatsApp Bot (+91 93629 80761)
+After=network-online.target printkurox.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$BOT_DIR
+Environment=NODE_OPTIONS=--max-old-space-size=384
+ExecStart=$NODE_BIN $BOT_DIR/whatsapp_bot.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable printkurox-bot.service
+  systemctl restart printkurox-bot.service
+fi
+
 echo "=========================================================="
-echo "  PrintKurox Hardware Service Installed & Started!        "
-echo "  Check status anytime: sudo systemctl status printkurox  "
-echo "  View live logs:       sudo journalctl -u printkurox -f  "
+echo "  PrintKurox Hardware & WhatsApp Services Started!       "
+echo "  Printer daemon status:  sudo systemctl status printkurox     "
+echo "  WhatsApp bot status:    sudo systemctl status printkurox-bot "
+echo "  View live logs:         sudo journalctl -u printkurox-bot -f "
 echo "=========================================================="
 

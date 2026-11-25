@@ -17,6 +17,51 @@ export interface DossierAccessLists {
   banned: DossierPhoneEntry[];
 }
 
+export interface WhatsAppBotControlConfig {
+  botEnabled: boolean;
+  printingEnabled: boolean;
+  studentSearchEnabled: boolean;
+  facultySearchEnabled: boolean;
+  aiChatEnabled: boolean;
+  /** Default: 'reply_print_only' (reply only to print attempts when master is off; silent for everything else) */
+  masterOffBehavior: 'reply_print_only' | 'silent';
+  /** Per-module behavior when individually turned off while master is ON */
+  nonPrintOffBehavior: 'silent' | 'reply';
+  replyCooldownSec: number;
+  messages: {
+    botOff: string;
+    printingOff: string;
+    studentOff: string;
+    facultyOff: string;
+    aiOff: string;
+  };
+  updatedAt: string;
+}
+
+export const DEFAULT_WHATSAPP_BOT_CONFIG: WhatsAppBotControlConfig = {
+  botEnabled: true,
+  printingEnabled: true,
+  studentSearchEnabled: true,
+  facultySearchEnabled: true,
+  aiChatEnabled: true,
+  masterOffBehavior: 'reply_print_only',
+  nonPrintOffBehavior: 'silent',
+  replyCooldownSec: 60,
+  messages: {
+    botOff:
+      '🖨️ *PrintKurox WhatsApp Bot is currently OFF* for maintenance.\n\nPlease use our web kiosk at https://printkurox.pages.dev or try again shortly.',
+    printingOff:
+      '🖨️ *WhatsApp Printing is currently paused.* Please print directly via https://printkurox.pages.dev or check back soon.',
+    studentOff:
+      '🎓 Student directory lookup is currently paused by the administrator.',
+    facultyOff:
+      '🏫 Faculty directory lookup is currently paused by the administrator.',
+    aiOff:
+      '🤖 AI assistant is currently paused by the administrator.',
+  },
+  updatedAt: '',
+};
+
 export interface PiSystemTelemetry {
   device_model?: string;
   station_id?: string;
@@ -126,6 +171,80 @@ export async function getDossierAccessLists(): Promise<DossierAccessLists> {
 
 export async function saveDossierAccessLists(lists: DossierAccessLists): Promise<boolean> {
   return await setAppSetting('dossier_access_lists', JSON.stringify(lists));
+}
+
+export function normalizeWhatsAppBotConfig(
+  raw?: Partial<WhatsAppBotControlConfig> | null
+): WhatsAppBotControlConfig {
+  const def = DEFAULT_WHATSAPP_BOT_CONFIG;
+  const msgs = raw?.messages || ({} as Partial<WhatsAppBotControlConfig['messages']>);
+  return {
+    botEnabled: raw?.botEnabled !== undefined ? Boolean(raw.botEnabled) : def.botEnabled,
+    printingEnabled: raw?.printingEnabled !== undefined ? Boolean(raw.printingEnabled) : def.printingEnabled,
+    studentSearchEnabled:
+      raw?.studentSearchEnabled !== undefined ? Boolean(raw.studentSearchEnabled) : def.studentSearchEnabled,
+    facultySearchEnabled:
+      raw?.facultySearchEnabled !== undefined ? Boolean(raw.facultySearchEnabled) : def.facultySearchEnabled,
+    aiChatEnabled: raw?.aiChatEnabled !== undefined ? Boolean(raw.aiChatEnabled) : def.aiChatEnabled,
+    masterOffBehavior:
+      raw?.masterOffBehavior === 'silent' ? 'silent' : 'reply_print_only',
+    nonPrintOffBehavior:
+      raw?.nonPrintOffBehavior === 'reply' ? 'reply' : 'silent',
+    replyCooldownSec:
+      typeof raw?.replyCooldownSec === 'number' && raw.replyCooldownSec >= 10 && raw.replyCooldownSec <= 3600
+        ? Math.round(raw.replyCooldownSec)
+        : def.replyCooldownSec,
+    messages: {
+      botOff:
+        typeof msgs.botOff === 'string' && msgs.botOff.trim()
+          ? msgs.botOff.trim().slice(0, 800)
+          : def.messages.botOff,
+      printingOff:
+        typeof msgs.printingOff === 'string' && msgs.printingOff.trim()
+          ? msgs.printingOff.trim().slice(0, 800)
+          : def.messages.printingOff,
+      studentOff:
+        typeof msgs.studentOff === 'string' && msgs.studentOff.trim()
+          ? msgs.studentOff.trim().slice(0, 500)
+          : def.messages.studentOff,
+      facultyOff:
+        typeof msgs.facultyOff === 'string' && msgs.facultyOff.trim()
+          ? msgs.facultyOff.trim().slice(0, 500)
+          : def.messages.facultyOff,
+      aiOff:
+        typeof msgs.aiOff === 'string' && msgs.aiOff.trim()
+          ? msgs.aiOff.trim().slice(0, 500)
+          : def.messages.aiOff,
+    },
+    updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : '',
+  };
+}
+
+export async function getWhatsAppBotConfig(): Promise<WhatsAppBotControlConfig> {
+  const raw = await getAppSetting('whatsapp_bot_config');
+  if (!raw) return DEFAULT_WHATSAPP_BOT_CONFIG;
+  try {
+    return normalizeWhatsAppBotConfig(JSON.parse(raw) as Partial<WhatsAppBotControlConfig>);
+  } catch {
+    return DEFAULT_WHATSAPP_BOT_CONFIG;
+  }
+}
+
+export async function saveWhatsAppBotConfig(
+  cfg: Partial<WhatsAppBotControlConfig>
+): Promise<WhatsAppBotControlConfig | null> {
+  const current = await getWhatsAppBotConfig();
+  const next = normalizeWhatsAppBotConfig({
+    ...current,
+    ...cfg,
+    messages: {
+      ...current.messages,
+      ...(cfg.messages || {}),
+    },
+    updatedAt: new Date().toISOString(),
+  });
+  const ok = await setAppSetting('whatsapp_bot_config', JSON.stringify(next));
+  return ok ? next : null;
 }
 
 export async function getPiTelemetry(stationId = 'block_b'): Promise<PiSystemTelemetry | null> {
