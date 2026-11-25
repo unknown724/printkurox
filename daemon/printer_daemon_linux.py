@@ -33,15 +33,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'station_config.json')
 DEVICE_IDENTITY_PATH = os.path.join(BASE_DIR, 'device_identity.json')
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
-SHM_TEMP_DIR = '/dev/shm/printkurox_prints'
-ACTIVE_SPOOL_DIR = SHM_TEMP_DIR if os.path.isdir('/dev/shm') else TEMP_DIR
+ACTIVE_SPOOL_DIR = TEMP_DIR
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 
 os.makedirs(TEMP_DIR, exist_ok=True)
-try:
-    os.makedirs(ACTIVE_SPOOL_DIR, exist_ok=True)
-except Exception:
-    ACTIVE_SPOOL_DIR = TEMP_DIR
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 # Lightweight .env loader (ensures systemd / standalone runs pick up .env keys)
@@ -750,6 +745,9 @@ def download_from_r2_direct(file_key, destination_path):
 
 def download_cloud_file(job_id, destination_path, file_key=None):
     """Downloads document directly from Cloudflare R2 first, falling back to server proxy."""
+    parent = os.path.dirname(destination_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     if file_key:
         try:
             if download_from_r2_direct(file_key, destination_path):
