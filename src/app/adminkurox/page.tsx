@@ -46,6 +46,8 @@ import { getClientDetailedDevice } from '@/lib/device-detection';
 import { broadcastHostelChangeSetting } from '@/lib/useHostelChangeSetting';
 import { STATIONS } from '@/lib/stations';
 import { StationPricingConfig, PRICING_GUARDRAILS } from '@/lib/station-pricing';
+import type { DossierAccessLists, PiSystemTelemetry } from '@/lib/settings';
+import { PiHealthAndDossierCard } from '@/components/admin/PiHealthAndDossierCard';
 
 interface AdminDevice {
   device_id: string;
@@ -174,6 +176,7 @@ interface PeriodBreakdown {
 interface AdminStatsResponse {
   supplies: SuppliesData;
   telemetry: TelemetryData;
+  piTelemetry?: PiSystemTelemetry | null;
   lifetimeMachine?: LifetimeMachineData;
   allTime: MetricSummary;
   period: MetricSummary & { selected: string };
@@ -219,6 +222,10 @@ export default function AdminKuroxPage() {
   const [hostelChangeEnabled, setHostelChangeEnabled] = useState<boolean>(false);
   const [togglingHostelChange, setTogglingHostelChange] = useState<boolean>(false);
   const [hostelChangeSuccessMsg, setHostelChangeSuccessMsg] = useState<string | null>(null);
+  const [dossierAccess, setDossierAccess] = useState<DossierAccessLists>({
+    unlimited: [],
+    banned: [],
+  });
 
   // Campus Hostel Stations Dynamic Pricing State
   const [stationsPricing, setStationsPricing] = useState<Record<string, StationPricingConfig>>({});
@@ -396,10 +403,19 @@ export default function AdminKuroxPage() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch('/api/settings', { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
+      const [publicRes, adminRes] = await Promise.all([
+        fetch('/api/settings', { cache: 'no-store' }),
+        fetch('/api/admin/settings', { cache: 'no-store' }),
+      ]);
+      if (publicRes.ok) {
+        const data = await publicRes.json();
         setHostelChangeEnabled(Boolean(data.hostelChangeEnabled));
+      }
+      if (adminRes.ok) {
+        const adminData = await adminRes.json();
+        if (adminData.dossierAccess) {
+          setDossierAccess(adminData.dossierAccess);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch app settings:', err);
@@ -1106,6 +1122,13 @@ export default function AdminKuroxPage() {
               </div>
             </div>
           </div>
+
+          <PiHealthAndDossierCard
+            piTelemetry={stats?.piTelemetry}
+            dossierAccess={dossierAccess}
+            onDossierAccessChange={setDossierAccess}
+            onRefreshStats={() => fetchStats(period)}
+          />
 
           {/* CAMPUS HOSTEL STATIONS, PRICING & RAZORPAY ROUTE SPLIT CONSOLE */}
           <div className="rounded-2xl p-5 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] space-y-5 shadow-2xs">

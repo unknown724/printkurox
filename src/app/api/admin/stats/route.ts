@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { queryD1, PrinterSuppliesRecord, PrinterTelemetryRecord } from '@/lib/cloudflare-d1';
 import { verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
+import { getPiTelemetry } from '@/lib/settings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -338,6 +339,8 @@ export async function GET(req: NextRequest) {
       model: supplies.printer_model || 'Epson EcoTank L3212',
     };
 
+    const piTelemetry = await getPiTelemetry('block_b');
+
     return NextResponse.json({
       success: true,
       supplies: {
@@ -347,6 +350,7 @@ export async function GET(req: NextRequest) {
         paperPercent,
       },
       telemetry,
+      piTelemetry,
       lifetimeMachine,
       allTime: {
         ...allTime,

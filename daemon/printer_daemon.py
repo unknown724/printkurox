@@ -124,8 +124,8 @@ if not STATION_TOKEN:
 PRINTER_NAME = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))  # Leave blank for default Windows printer
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 SUMATRA_PATH = os.getenv('SUMATRA_PATH', r'C:\Program Files\SumatraPDF\SumatraPDF.exe')
-POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 2))))
-HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '6'))
+POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 3))))
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '20'))
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '90')) # Retains local print archive for 90 days on laptop
@@ -186,8 +186,96 @@ _hb_session.headers.update({
 CF_ACCOUNT_ID = os.getenv('CLOUDFLARE_ACCOUNT_ID', '')
 CF_API_TOKEN = os.getenv('CLOUDFLARE_API_TOKEN', '')
 CF_D1_DB_ID = os.getenv('CLOUDFLARE_D1_DATABASE_ID', '')
+R2_ACCESS_KEY_ID = os.getenv('R2_ACCESS_KEY_ID', '')
+R2_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY', '')
+R2_ENDPOINT = os.getenv('R2_ENDPOINT', '').rstrip('/')
+R2_BUCKET_NAME = os.getenv('R2_BUCKET_NAME', '')
 
 _wake_event = threading.Event()
+
+def poll_paid_jobs_direct_d1():
+    """Direct Cloudflare D1 poll (primary path when CF credentials exist; saves Vercel CDN quota)."""
+    if not (CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID):
+        return None
+    d1_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/d1/database/{CF_D1_DB_ID}/query"
+    norm_id = STATION_ID.lower().strip()
+    is_main = norm_id in ('block_b', 'main', 'hostel_block_b_pare', 'pare')
+    if is_main:
+        sql = """SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at, orientation, page_configs
+                 FROM print_jobs
+                 WHERE status = 'PAID' AND (
+                   station_id = 'main' OR station_id = 'block_b' OR station_id = 'hostel_block_b_pare' OR station_id = 'pare' OR station_id IS NULL
+                 )
+                 ORDER BY created_at ASC LIMIT 5"""
+        params = []
+    else:
+        sql = """SELECT id, pickup_code, file_name, file_key, total_pages, page_range, color_mode, is_duplex, copies, status, station_id, created_at, orientation, page_configs
+                 FROM print_jobs
+                 WHERE status = 'PAID' AND (station_id = ? OR station_id = ?)
+                 ORDER BY created_at ASC LIMIT 5"""
+        params = [STATION_ID, f"hostel_{STATION_ID}"]
+    try:
+        r = requests.post(
+            d1_url,
+            headers={"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"},
+            json={"sql": sql, "params": params},
+            timeout=6.0
+        )
+        if r.status_code == 200:
+            data = r.json()
+            results = data.get("result", [])
+            if results and data.get("success"):
+                return results[0].get("results", []) or []
+    except Exception as d1_err:
+        log(f"Direct D1 poll notice: {d1_err}", "WARN")
+    return None
+
+def download_from_r2_direct(file_key, dest_path):
+    """Direct Cloudflare R2 download via pure-Python AWS SigV4 when Vercel proxy is unreachable."""
+    if not (R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY and R2_ENDPOINT and R2_BUCKET_NAME and file_key):
+        return False
+    import hmac as _hmac, hashlib as _hashlib
+    parsed = urllib.parse.urlparse(R2_ENDPOINT)
+    host = parsed.netloc
+    clean_key = file_key.lstrip('/')
+    encoded_key = urllib.parse.quote(clean_key, safe='/')
+    canonical_uri = f"/{R2_BUCKET_NAME}/{encoded_key}"
+    url = f"{R2_ENDPOINT}{canonical_uri}"
+
+    now_utc = datetime.now(timezone.utc)
+    amz_date = now_utc.strftime('%Y%m%dT%H%M%SZ')
+    date_stamp = now_utc.strftime('%Y%m%d')
+    payload_hash = _hashlib.sha256(b'').hexdigest()
+
+    canonical_headers = f"host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = f"GET\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+
+    algorithm = 'AWS4-HMAC-SHA256'
+    credential_scope = f"{date_stamp}/auto/s3/aws4_request"
+    string_to_sign = f"{algorithm}\n{amz_date}\n{credential_scope}\n{_hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()}"
+
+    def _sign(k, m):
+        return _hmac.new(k, m.encode('utf-8'), _hashlib.sha256).digest()
+
+    k_date = _sign(('AWS4' + R2_SECRET_ACCESS_KEY).encode('utf-8'), date_stamp)
+    k_region = _sign(k_date, 'auto')
+    k_service = _sign(k_region, 's3')
+    signing_key = _sign(k_service, 'aws4_request')
+    signature = _hmac.new(signing_key, string_to_sign.encode('utf-8'), _hashlib.sha256).hexdigest()
+
+    headers = {
+        'x-amz-date': amz_date,
+        'x-amz-content-sha256': payload_hash,
+        'Authorization': f"{algorithm} Credential={R2_ACCESS_KEY_ID}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    }
+    resp = requests.get(url, headers=headers, stream=True, timeout=(5.0, 60.0))
+    resp.raise_for_status()
+    with open(dest_path, 'wb') as f:
+        for chunk in resp.iter_content(chunk_size=65536):
+            if chunk:
+                f.write(chunk)
+    return True
 
 def update_job_status(job_id, status, pages_printed=None, sheets_used=None):
     """Updates job status and supplies depletion via server proxy with direct D1 fallback."""
@@ -266,13 +354,21 @@ def claim_paid_job(job_id):
 
     return False
 
-def download_cloud_file(job_id, dest_path):
+def download_cloud_file(job_id, dest_path, file_key=None):
     """
-    Downloads print document securely via the server proxy.
-    The laptop never accesses Cloudflare R2 directly!
+    Downloads print document directly from Cloudflare R2 first (saves Vercel quota
+    & avoids proxy timeouts), falling back to the server proxy if R2 is unconfigured.
     """
+    if file_key and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY and R2_ENDPOINT and R2_BUCKET_NAME:
+        try:
+            if download_from_r2_direct(file_key, dest_path):
+                log("Downloaded document directly from Cloudflare R2!", "SUCCESS")
+                return True
+        except Exception as r2_err:
+            log(f"Direct R2 download notice ({r2_err}). Trying server proxy...", "WARN")
+
     url = f"{SERVER_URL}/api/daemon/job-file?jobId={job_id}"
-    resp = _job_session.get(url, stream=True, timeout=(5.0, 60.0))
+    resp = _job_session.get(url, stream=True, timeout=(4.0, 25.0))
     resp.raise_for_status()
     with open(dest_path, 'wb') as f:
         for chunk in resp.iter_content(chunk_size=65536):
@@ -1620,7 +1716,7 @@ def get_live_tunnel_url():
     return _last_discovered_tunnel
 
 def write_heartbeat():
-    """Upsert daemon heartbeat and printer telemetry with live hardware metrics via server proxy, with direct D1 fallback."""
+    """Upsert daemon heartbeat and printer telemetry directly to Cloudflare D1 first (0 Vercel CDN usage), with Vercel proxy fallback."""
     telem = get_windows_printer_telemetry()
     tunnel_url = get_live_tunnel_url()
     body = {"telemetry": telem}
@@ -1628,30 +1724,21 @@ def write_heartbeat():
         body["converter_url"] = tunnel_url
 
     success = False
-    try:
-        url = f"{SERVER_URL}/api/daemon/heartbeat"
-        resp = _hb_session.post(url, json=body, timeout=(3.0, 8.0))
-        if resp.status_code == 200:
-            success = True
-            log(f"Heartbeat synced [{STATION_ID}] ({telem['name']}: {telem['status_text']}) | Tunnel: {tunnel_url or 'None'}", "INFO")
-        elif resp.status_code == 401:
-            log(f"Heartbeat warning: Station token unauthorized for [{STATION_ID}]", "WARN")
-    except Exception as hb_err:
-        log(f"Heartbeat notice: {hb_err}", "WARN")
 
-    # Direct Cloudflare D1 Fallback (guarantees printer status NEVER shows offline during Vercel cold starts or redeployments)
-    if not success and CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID:
+    # 1. Primary Path: Direct Cloudflare D1 (Zero Vercel CDN requests, <200ms)
+    if CF_ACCOUNT_ID and CF_API_TOKEN and CF_D1_DB_ID:
         try:
             d1_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/d1/database/{CF_D1_DB_ID}/query"
             headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
-            
-            # Atomic query to ensure heartbeat and status stay online
+
             sql = (
                 "INSERT INTO daemon_heartbeat (id, updated_at, station_id) "
                 "VALUES (?, datetime('now'), ?) "
                 "ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now'), station_id = excluded.station_id;"
             )
-            requests.post(d1_url, headers=headers, json={"sql": sql, "params": [STATION_SLOT, STATION_ID]}, timeout=5.0)
+            r_hb = requests.post(d1_url, headers=headers, json={"sql": sql, "params": [STATION_SLOT, STATION_ID]}, timeout=5.0)
+            if r_hb.status_code == 200 and r_hb.json().get("success"):
+                success = True
 
             sql_station = "UPDATE stations SET last_heartbeat = datetime('now'), status = 'online' WHERE id = ?;"
             requests.post(d1_url, headers=headers, json={"sql": sql_station, "params": [STATION_ID]}, timeout=5.0)
@@ -1673,9 +1760,23 @@ def write_heartbeat():
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now');"
                 )
                 requests.post(d1_url, headers=headers, json={"sql": sql_tunnel, "params": [tunnel_url]}, timeout=5.0)
-            log(f"Direct D1 Heartbeat fallback synced [{STATION_ID}]", "SUCCESS")
+            if success:
+                log(f"Direct D1 Heartbeat synced [{STATION_ID}] ({telem['name']}: {telem['status_text']})", "INFO")
         except Exception as d1_err:
-            log(f"Direct D1 Heartbeat fallback notice: {d1_err}", "WARN")
+            log(f"Direct D1 Heartbeat notice: {d1_err}", "WARN")
+
+    # 2. Fallback Path: Server Proxy (only if Direct D1 failed or unconfigured)
+    if not success:
+        try:
+            url = f"{SERVER_URL}/api/daemon/heartbeat"
+            resp = _hb_session.post(url, json=body, timeout=(3.0, 8.0))
+            if resp.status_code == 200:
+                success = True
+                log(f"Proxy Heartbeat synced [{STATION_ID}] ({telem['name']}: {telem['status_text']}) | Tunnel: {tunnel_url or 'None'}", "INFO")
+            elif resp.status_code == 401:
+                log(f"Heartbeat warning: Station token unauthorized for [{STATION_ID}]", "WARN")
+        except Exception as hb_err:
+            log(f"Heartbeat fallback notice: {hb_err}", "WARN")
 
 # =============================================================================
 # MAIN DAEMON LOOP
@@ -1728,6 +1829,8 @@ def main():
     hb_thread = threading.Thread(target=heartbeat_worker, daemon=True)
     hb_thread.start()
 
+    _proxy_backoff_until = 0.0
+
     while True:
         try:
             # Hot reload if script file is edited on disk
@@ -1738,22 +1841,26 @@ def main():
             except Exception:
                 pass
 
-            # Poll for PAID jobs strictly via the Zero-Trust server proxy
-            try:
-                poll_resp = _job_session.post(f"{SERVER_URL}/api/daemon/poll", timeout=(3.0, 10.0))
-                if poll_resp.status_code == 200:
-                    poll_data = poll_resp.json()
-                    jobs = poll_data.get("jobs", [])
-                elif poll_resp.status_code == 401:
-                    log(f"Access Denied: Station token is invalid or revoked for [{STATION_ID}]. Polling paused.", "ERROR")
-                    time.sleep(5)
-                    continue
-                else:
-                    jobs = []
-            except requests.exceptions.RequestException as poll_err:
-                log(f"Server proxy connection warning: {poll_err}. Retrying in 2s...", "WARN")
-                time.sleep(2)
-                continue
+            # Primary Poll: Direct Cloudflare D1 (Zero Vercel CDN usage, bypasses hostel proxy timeouts)
+            jobs = poll_paid_jobs_direct_d1()
+
+            # Fallback Poll: Server Proxy only if Direct D1 failed or credentials are missing
+            if jobs is None:
+                jobs = []
+                if time.time() >= _proxy_backoff_until:
+                    try:
+                        poll_resp = _job_session.post(f"{SERVER_URL}/api/daemon/poll", timeout=(3.0, 8.0))
+                        if poll_resp.status_code == 200:
+                            poll_data = poll_resp.json()
+                            jobs = poll_data.get("jobs", [])
+                        elif poll_resp.status_code == 401:
+                            log(f"Access Denied: Station token unauthorized for [{STATION_ID}]. Backing off proxy 60s.", "WARN")
+                            _proxy_backoff_until = time.time() + 60.0
+                        else:
+                            _proxy_backoff_until = time.time() + 30.0
+                    except requests.exceptions.RequestException as poll_err:
+                        log(f"Server proxy connection warning: {poll_err}. Backing off 60s.", "WARN")
+                        _proxy_backoff_until = time.time() + 60.0
 
             if jobs:
                 log(f"Found {len(jobs)} pending paid job(s) in queue!", "ALERT")
@@ -1787,8 +1894,8 @@ def main():
 
                     download_success = False
                     try:
-                        log(f"Downloading document securely via server proxy...")
-                        download_cloud_file(job_id, local_path)
+                        log(f"Downloading document securely...")
+                        download_cloud_file(job_id, local_path, file_key=file_key)
                         if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
                             log(f"Downloaded {os.path.basename(local_path)} successfully", "SUCCESS")
                             download_success = True

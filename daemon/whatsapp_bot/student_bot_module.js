@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const { fetchDossier } = require('./dossier');
 const { initStudentIndex, getStudentByRoll, getStudentByPhone, regToDetailsMap, phoneToRegsMap } = require('./student_index');
+const { rankCandidates } = require('./smart_search_engine');
 
 const ADMIN_PHONE = (process.env.ADMIN_PHONE || '9863013886').replace(/[^0-9]/g, '').slice(-10);
 const ADMIN_PHONES = new Set([
@@ -31,10 +33,195 @@ function isAdminUser(userPhone, senderJid) {
     return false;
 }
 const QUOTA_FILE = path.join(__dirname, 'user_quotas.json');
+const VIP_ACCESS_FILE = path.join(__dirname, 'vip_access_state.json');
 const DAILY_FREE_LIMIT = 3; // 3 free dossier unlocks per day (anti-abuse cap)
 const SUPPORT_PACK_PRICE = 5;
 const SUPPORT_PACK_CREDITS = 5;
 const SUPPORTER_MONTHLY_PRICE = 49;
+
+// Permanent Dossier VIP & Ban Lists (Synced directly with Cloudflare D1 every 10 min; 0 Worker hits)
+let vipAccessCache = {
+    unlimitedPhones: [],
+    bannedPhones: [],
+    updatedAt: '',
+    lastSyncAt: 0
+};
+let _vipSyncInFlight = null;
+
+function normalizePhone10(raw) {
+    const digits = String(raw || '').replace(/[^0-9]/g, '');
+    if (!digits) return '';
+    const last10 = digits.slice(-10);
+    return last10.length === 10 ? last10 : '';
+}
+
+function normalizePhoneEntryList(rawList) {
+    if (!Array.isArray(rawList)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const item of rawList) {
+        const rawPhone = typeof item === 'string' ? item : item?.phone;
+        const phone = normalizePhone10(rawPhone);
+        if (!phone || seen.has(phone)) continue;
+        seen.add(phone);
+        out.push({
+            phone,
+            note: typeof item === 'object' && item?.note ? String(item.note).slice(0, 80) : '',
+            addedAt: typeof item === 'object' && item?.addedAt ? String(item.addedAt) : new Date().toISOString()
+        });
+    }
+    return out;
+}
+
+function loadLocalVipCache() {
+    try {
+        if (fs.existsSync(VIP_ACCESS_FILE)) {
+            const parsed = JSON.parse(fs.readFileSync(VIP_ACCESS_FILE, 'utf8'));
+            vipAccessCache = {
+                unlimitedPhones: normalizePhoneEntryList(parsed.unlimited ?? parsed.unlimitedPhones),
+                bannedPhones: normalizePhoneEntryList(parsed.banned ?? parsed.bannedPhones),
+                updatedAt: String(parsed.updatedAt || ''),
+                lastSyncAt: Number(parsed.lastSyncAt || 0)
+            };
+        }
+    } catch (e) {
+        console.warn('[Student Module] Could not read vip_access_state.json:', e.message);
+    }
+}
+loadLocalVipCache();
+
+function saveLocalVipCache(state) {
+    vipAccessCache = {
+        unlimitedPhones: normalizePhoneEntryList(state.unlimitedPhones),
+        bannedPhones: normalizePhoneEntryList(state.bannedPhones),
+        updatedAt: String(state.updatedAt || new Date().toISOString()),
+        lastSyncAt: Date.now()
+    };
+    try {
+        fs.writeFileSync(VIP_ACCESS_FILE, JSON.stringify(vipAccessCache, null, 2), 'utf8');
+    } catch (e) {
+        console.warn('[Student Module] Could not write vip_access_state.json:', e.message);
+    }
+    return vipAccessCache;
+}
+
+function cfD1Query(sql, params = []) {
+    return new Promise((resolve) => {
+        const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+        const databaseId = process.env.CLOUDFLARE_D1_DATABASE_ID;
+        const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+        if (!accountId || !databaseId || !apiToken) {
+            return resolve({ ok: false, error: 'Missing Cloudflare D1 credentials' });
+        }
+
+        const payload = JSON.stringify({ sql, params });
+        const req = https.request({
+            hostname: 'api.cloudflare.com',
+            path: `/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`,
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiToken}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            },
+            timeout: 10000
+        }, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                try {
+                    const data = JSON.parse(body);
+                    if (data && data.success && Array.isArray(data.result) && data.result[0]) {
+                        return resolve({ ok: true, rows: data.result[0].results || [] });
+                    }
+                    return resolve({ ok: false, error: data?.errors?.[0]?.message || 'D1 query failed' });
+                } catch (err) {
+                    return resolve({ ok: false, error: err.message });
+                }
+            });
+        });
+        req.on('error', (err) => resolve({ ok: false, error: err.message }));
+        req.on('timeout', () => {
+            try { req.destroy(); } catch (e) {}
+            resolve({ ok: false, error: 'D1 query timed out' });
+        });
+        req.write(payload);
+        req.end();
+    });
+}
+
+async function syncVipStateFromD1(force = false) {
+    if (!force && Date.now() - (vipAccessCache.lastSyncAt || 0) < 60 * 1000) {
+        return vipAccessCache;
+    }
+    if (_vipSyncInFlight) return _vipSyncInFlight;
+
+    _vipSyncInFlight = (async () => {
+        try {
+            const res = await cfD1Query(
+                "SELECT value, updated_at FROM app_settings WHERE key = 'dossier_access_lists' LIMIT 1"
+            );
+            if (res.ok && res.rows && res.rows.length > 0) {
+                const rawVal = res.rows[0].value;
+                const parsed = typeof rawVal === 'string' ? JSON.parse(rawVal) : (rawVal || {});
+                saveLocalVipCache({
+                    unlimitedPhones: parsed.unlimited ?? parsed.unlimitedPhones ?? [],
+                    bannedPhones: parsed.banned ?? parsed.bannedPhones ?? [],
+                    updatedAt: parsed.updatedAt || res.rows[0].updated_at || new Date().toISOString()
+                });
+            }
+        } catch (e) {
+            console.warn('[Student Module] D1 VIP sync skipped:', e.message);
+        } finally {
+            _vipSyncInFlight = null;
+        }
+        return vipAccessCache;
+    })();
+    return _vipSyncInFlight;
+}
+
+async function pushVipStateToD1(nextState) {
+    const cleanState = saveLocalVipCache({
+        unlimitedPhones: nextState.unlimitedPhones,
+        bannedPhones: nextState.bannedPhones,
+        updatedAt: new Date().toISOString()
+    });
+    const serialized = JSON.stringify({
+        unlimited: cleanState.unlimitedPhones,
+        banned: cleanState.bannedPhones
+    });
+    const res = await cfD1Query(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES ('dossier_access_lists', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+        [serialized]
+    );
+    return { savedD1: Boolean(res.ok), error: res.error, state: cleanState };
+}
+
+function listContainsPhone(entries, userPhone, senderJid) {
+    if (!entries || entries.length === 0) return false;
+    const clean = normalizePhone10(userPhone);
+    const jidLower = String(senderJid || '').toLowerCase();
+    for (const item of entries) {
+        if (!item?.phone) continue;
+        if (clean && item.phone === clean) return true;
+        if (jidLower && jidLower.includes(item.phone)) return true;
+    }
+    return false;
+}
+
+function isBannedUser(userPhone, senderJid) {
+    if (isAdminUser(userPhone, senderJid)) return false;
+    return listContainsPhone(vipAccessCache.bannedPhones, userPhone, senderJid);
+}
+
+function isPermanentVip(userPhone, senderJid) {
+    if (isBannedUser(userPhone, senderJid)) return false;
+    return listContainsPhone(vipAccessCache.unlimitedPhones, userPhone, senderJid);
+}
+
+// Non-blocking boot sync + 10-minute background refresh (144 tiny D1 reads/day, 0 Worker hits)
+setTimeout(() => { syncVipStateFromD1(true).catch(() => {}); }, 2500).unref();
+setInterval(() => { syncVipStateFromD1(true).catch(() => {}); }, 10 * 60 * 1000).unref();
 
 let studentsList = [];
 const studentCleanIdMap = new Map();
@@ -164,8 +351,14 @@ function updateUserQuota(userPhone, updater) {
 }
 
 function checkAccess(userPhone, senderJid) {
+    if (isBannedUser(userPhone, senderJid)) {
+        return { granted: false, type: 'banned', unlimited: false };
+    }
     if (isAdminUser(userPhone, senderJid)) {
         return { granted: true, type: 'admin', unlimited: true };
+    }
+    if (isPermanentVip(userPhone, senderJid)) {
+        return { granted: true, type: 'permanent_vip', unlimited: true };
     }
     const cleanPhone = (userPhone || '').slice(-10);
     const quota = getUserQuota(cleanPhone);
@@ -191,10 +384,10 @@ function checkAccess(userPhone, senderJid) {
 }
 
 function consumeAccess(userPhone, senderJid) {
-    if (isAdminUser(userPhone, senderJid)) return;
+    if (isAdminUser(userPhone, senderJid) || isPermanentVip(userPhone, senderJid) || isBannedUser(userPhone, senderJid)) return;
     const cleanPhone = (userPhone || '').slice(-10);
     const access = checkAccess(cleanPhone, senderJid);
-    if (access.type === 'monthly_pass' || access.type === 'admin') return;
+    if (access.type === 'monthly_pass' || access.type === 'admin' || access.type === 'permanent_vip' || access.type === 'banned') return;
 
     updateUserQuota(cleanPhone, (q) => {
         if (access.type === 'paid_credit') {
@@ -216,11 +409,14 @@ function cleanHonorifics(str) {
 
 function searchStudents(rawQuery) {
     if (!rawQuery || !rawQuery.trim()) return [];
-    const q = rawQuery.trim().toLowerCase();
+    // Clean conversational query wrappers (e.g. "search for student named Richard Konsam" -> "Richard Konsam")
+    let cleanRaw = rawQuery.replace(/\b(search\s+for|search|find|who\s+is|tell\s+me\s+about|details\s+of|profile\s+of|student|named|called)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (!cleanRaw) cleanRaw = rawQuery.trim();
+    const q = cleanRaw.toLowerCase();
     const cleanQ = cleanHonorifics(q);
 
     // 1. Direct Roll / Reg No Match
-    const byRoll = getStudentByRoll(rawQuery.trim());
+    const byRoll = getStudentByRoll(cleanRaw);
     if (byRoll) return [byRoll];
 
     // 2. Alphanumeric match in user_id or roll_no (e.g. 120/011, 120011, D/22/AE/002, D22AE002)
@@ -250,7 +446,11 @@ function searchStudents(rawQuery) {
         if (multiMatches.length > 0) return multiMatches;
     }
 
-    // 5. Branch / Department Match
+    // 5. ML / Hybrid Fuzzy Ranking (handles typos, phonetic variations, swapped names)
+    const fuzzyMatches = rankCandidates(cleanQ, studentsList, (s) => s.full_name, 0.72, 5);
+    if (fuzzyMatches.length > 0) return fuzzyMatches;
+
+    // 6. Branch / Department Match
     return studentsList.filter((s) => {
         const dept = (s.department_name || s.degree_name || '').toLowerCase();
         return dept.includes(q);
@@ -347,20 +547,22 @@ function resolveCorrectSemester(topRecord, dossier, regRecord) {
         }
     }
 
-    const sessStr = regRecord?.session || dossier?.session || '';
-    const sessMatch = String(sessStr).match(/(\d{4})-(\d{4})\s*(Jul|Jan)/i);
-    if (slipSem && sessMatch) {
-        const slipYear = parseInt(sessMatch[1], 10);
-        const slipSeason = sessMatch[3].toLowerCase();
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth(); // 0-indexed: 6-11 is Jul-Dec
-        const currentSeason = currentMonth >= 6 ? 'jul' : 'jan';
-        let diffSems = (currentYear - slipYear) * 2;
-        if (slipSeason === 'jan' && currentSeason === 'jul') diffSems += 1;
-        else if (slipSeason === 'jul' && currentSeason === 'jan') diffSems -= 1;
-        const projectedSem = slipSem + diffSems;
-        if (projectedSem > (candidateSem || 0)) {
+    // Only project if candidateSem was not already established from verified database
+    if (!candidateSem) {
+        const sessStr = regRecord?.session || dossier?.session || '';
+        const sessMatch = String(sessStr).match(/(\d{4})-(\d{4})\s*(Jul|Jan)/i);
+        if (slipSem && sessMatch) {
+            // Note: Academic session "2025-2026 Jan-May" takes place in calendar year 2026 (the second year)
+            const slipSeason = sessMatch[3].toLowerCase();
+            const slipYear = slipSeason === 'jan' ? parseInt(sessMatch[2], 10) : parseInt(sessMatch[1], 10);
+            const now = new Date();
+            const currentYear = now.getFullYear();
+            const currentMonth = now.getMonth(); // 0-indexed: 6-11 is Jul-Dec
+            const currentSeason = currentMonth >= 6 ? 'jul' : 'jan';
+            let diffSems = (currentYear - slipYear) * 2;
+            if (slipSeason === 'jan' && currentSeason === 'jul') diffSems += 1;
+            else if (slipSeason === 'jul' && currentSeason === 'jan') diffSems -= 1;
+            const projectedSem = slipSem + diffSems;
             candidateSem = projectedSem;
         }
     }
@@ -369,6 +571,7 @@ function resolveCorrectSemester(topRecord, dossier, regRecord) {
     let maxSem = 8;
     if (prog.includes('m.tech') || prog.includes('m.sc') || prog.includes('mba') || prog.includes('master')) maxSem = 4;
     else if (prog.includes('diploma')) maxSem = 6;
+    else if (prog.includes('base') || prog.includes('certificate')) maxSem = 4;
     else if (prog.includes('phd')) maxSem = 10;
 
     if (candidateSem && candidateSem > maxSem) {
@@ -444,10 +647,15 @@ async function deliverUnlockedDossier({ sock, senderJid, targetRoll, targetName,
 
         if (topRecord) {
             const isAlumni = topRecord.status === 'Alumni / Left' || effDossier.status === 'Alumni / Left';
-            const semDisplay = isAlumni ? 'Alumni / Ex-Student' : `Sem ${topRecord.semester || currentSem}`;
+            const statusDisplay = isAlumni
+                ? (topRecord.program_year || 'Alumni / Ex-Student')
+                : `${topRecord.program_year ? topRecord.program_year + ' · ' : ''}Semester ${topRecord.semester || currentSem} (Active)`;
+            const gazetteInfo = topRecord.result_semester
+                ? ` (Sem ${topRecord.result_semester} Result · Jan–May 2026)`
+                : '';
             dossierText += `🏛️ *Dept:* ${topRecord.department_name || topRecord.degree_name || 'NERIST'}\n` +
-                           `🎓 *Program:* ${topRecord.program_name || 'Degree'} (${semDisplay})\n` +
-                           `📊 *CGPA:* ${topRecord.cgpa || 'N/A'}\n` +
+                           `🎓 *Academic Status:* ${statusDisplay}\n` +
+                           `📊 *Gazette CGPA:* ${topRecord.cgpa || 'N/A'}${gazetteInfo}\n` +
                            (topRecord.state ? `📍 *State:* ${topRecord.state}\n` : '');
         }
 
@@ -464,6 +672,8 @@ async function deliverUnlockedDossier({ sock, senderJid, targetRoll, targetName,
         const accessSnapshot = checkAccess(userPhone, senderJid);
         if (isAdmin) {
             dossierText += `\n👑 *Access Level:* Administrator (Unlimited Searches & Decryptions Active)\n`;
+        } else if (accessSnapshot.type === 'permanent_vip') {
+            dossierText += `\n_👑 Permanent VIP Access Active (Unlimited ∞ Dossiers)_\n`;
         } else if (accessSnapshot.type === 'monthly_pass') {
             dossierText += `\n_🛡️ Server Supporter Pass Active (${accessSnapshot.daysLeft} days left)_\n`;
         } else if (accessSnapshot.type === 'paid_credit') {
@@ -571,7 +781,7 @@ async function createAndPollPaymentLink({
                                 `✅ *Contribution Confirmed:* ₹${SUPPORTER_MONTHLY_PRICE}\n` +
                                 `🚀 *Tier:* Server Supporter (30 Days Unlimited, Anti-Abuse Exempt)\n` +
                                 `📅 *Valid Until:* ${expiryDate}\n\n` +
-                                `🙏 _Thank you for helping keep the 24/7 campus server & internet alive!_`
+                                `🙏 _Thank you for helping maintain the campus server!_`
                         });
                     } else {
                         updateUserQuota(clean10Phone, (q) => {
@@ -616,8 +826,97 @@ async function createAndPollPaymentLink({
 // Send Anti-Abuse Limit & Optional Server Support Card when quota is exhausted
 async function sendPaywallOptions({ sock, getSock = null, senderJid, targetRoll, targetName, userPhone, senderName, sendInteractiveButtons, razorpay }) {
     const cleanRollToken = (targetRoll || '').replace(/[^a-zA-Z0-9]/g, '_');
+    if (targetRoll) studentCleanIdMap.set(cleanRollToken, targetRoll);
 
-    // Pre-generate direct 1-Tap UPI Links for seamless instant support via Google Pay / PhonePe
+    const resetInfo = getDailyQuotaResetInfo();
+
+    // Look up student record & registration cache for blurred/redacted preview teaser
+    const matches = targetRoll ? searchStudents(targetRoll) : [];
+    const top = matches.length > 0 ? matches[0] : null;
+    const regRec = (targetRoll && regToDetailsMap) ? regToDetailsMap.get(targetRoll) : null;
+    const rawPhone = regRec?.mobile || regRec?.phone || top?.mobile || '';
+    const cleanPh = String(rawPhone).replace(/[^0-9]/g, '');
+    const maskedPhone = cleanPh.length >= 10 ? `${cleanPh.slice(0, 5)} •••••` : '[Verified · Encrypted]';
+    const maskedDob = regRec?.dob ? regRec.dob.replace(/\d{4}/, '••••') : '[Verified · Encrypted]';
+    const hasParentsMobile = !!(regRec?.parentMobile || regRec?.parentsMobile);
+    const hasAddress = !!(regRec?.address || top?.pincode);
+    const displayName = targetName || top?.full_name || 'NERIST Student';
+    const deptDisplay = top?.department_name || top?.degree_name || 'NERIST';
+    const semDisplay = top?.semester ? `Semester ${top.semester}` : 'Degree';
+
+    const paywallText =
+        `🔒 *CONFIDENTIAL RECORD LOCATED (BLURRED / LOCKED)*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 *Target:* ${displayName}\n` +
+        `📋 *Reg. No:* \`${targetRoll}\`\n` +
+        `🏛️ *Dept:* ${deptDisplay} (${semDisplay})\n` +
+        `📸 *Student Photo:* [Verified & Staged for Unlock]\n` +
+        `📞 *Contact:* \`${maskedPhone}\`\n` +
+        `🎂 *DOB:* \`${maskedDob}\`\n` +
+        `👨 *Guardian / Parents:* [Verified · ${hasParentsMobile ? 'Contact Available' : 'Confidential'}]\n` +
+        `🏠 *Address / PIN:* [Verified · ${hasAddress ? 'Available' : 'Confidential'}]\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🛡️ *ANTI-ABUSE LIMIT REACHED (${DAILY_FREE_LIMIT}/${DAILY_FREE_LIMIT} Today)*\n\n` +
+        `To protect student privacy and prevent automated bulk scraping, full dossier lookups are capped at *${DAILY_FREE_LIMIT} free records per day*.\n\n` +
+        `✅ *Basic \`@student\` search* stays *100% free & unlimited*.\n` +
+        `⏳ Your 3 free credits auto-renew at *12:00 AM midnight IST* (in ${resetInfo.countdownStr}).\n\n` +
+        `Need to unlock *${displayName}*'s complete profile right now?\n\n` +
+        `⚡ *1. +${SUPPORT_PACK_CREDITS} Extra Bypass Credits — ₹${SUPPORT_PACK_PRICE}*\n` +
+        `• ₹1 per unlock · Credits *never expire*\n` +
+        `• Full confidential profile, parent contact & high-res photo\n\n` +
+        `🛡️ *2. Server Supporter (30 Days) — ₹${SUPPORTER_MONTHLY_PRICE} / month*\n` +
+        `• Unlimited lookups (anti-abuse exempt)\n` +
+        `• Helps maintain the server`;
+
+    const buttons = [
+        {
+            id: `btn_paywall_subscribe_${cleanRollToken}`,
+            text: '🛡️ Subscribe & Credits'
+        },
+        {
+            id: 'info_limit_policy',
+            text: '❓ Why This Limit?'
+        },
+        {
+            id: 'btn_paywall_chat_agent',
+            text: '🤖 Chat ur Agent Kurox'
+        }
+    ];
+
+    if (sendInteractiveButtons) {
+        await sendInteractiveButtons({
+            sock,
+            jid: senderJid,
+            title: '🛡️ Daily Anti-Abuse Cap Reached',
+            body: paywallText,
+            footer: 'Anti-Abuse Protection · Optional Server Support',
+            buttons
+        });
+    } else {
+        await sock.sendMessage(senderJid, {
+            text: paywallText +
+                `\n\n_Reply "5" for +5 Credits (₹5) or "49" for Monthly Supporter (₹49)._\n_Reply "agent" to chat with Agent Kurox._`
+        });
+    }
+}
+
+// Dedicated Sub-Card when student taps "🛡️ Subscribe & Credits"
+async function sendSubscriptionOptionsCard({
+    sock,
+    getSock = null,
+    senderJid,
+    userPhone,
+    senderName,
+    targetRoll,
+    razorpay,
+    sendInteractiveButtons
+}) {
+    if (!targetRoll && userLastStudent.has(senderJid)) {
+        targetRoll = userLastStudent.get(senderJid);
+    }
+    const cleanRollToken = (targetRoll || '').replace(/[^a-zA-Z0-9]/g, '_');
+    if (targetRoll) studentCleanIdMap.set(cleanRollToken, targetRoll);
+
     let singleLink = null;
     let monthlyLink = null;
     if (razorpay) {
@@ -633,7 +932,7 @@ async function sendPaywallOptions({ sock, getSock = null, senderJid, targetRoll,
                     amountInRs: SUPPORT_PACK_PRICE,
                     isMonthly: false,
                     targetRoll,
-                    targetName
+                    targetName: ''
                 }),
                 createAndPollPaymentLink({
                     razorpay,
@@ -645,7 +944,7 @@ async function sendPaywallOptions({ sock, getSock = null, senderJid, targetRoll,
                     amountInRs: SUPPORTER_MONTHLY_PRICE,
                     isMonthly: true,
                     targetRoll,
-                    targetName
+                    targetName: ''
                 })
             ]);
             if (results[0].status === 'fulfilled') singleLink = results[0].value;
@@ -655,30 +954,28 @@ async function sendPaywallOptions({ sock, getSock = null, senderJid, targetRoll,
         }
     }
 
-    let linkAddendum = '';
-    if (singleLink?.short_url || monthlyLink?.short_url) {
-        linkAddendum =
-            `\n\n🔗 *Optional Support Links (Instant UPI):*\n` +
-            (singleLink?.short_url ? `• *₹${SUPPORT_PACK_PRICE} (+${SUPPORT_PACK_CREDITS} Credits):* ${singleLink.short_url}\n` : '') +
-            (monthlyLink?.short_url ? `• *₹${SUPPORTER_MONTHLY_PRICE} (30-Day Supporter):* ${monthlyLink.short_url}\n` : '') +
-            `_Auto-activates immediately upon UPI confirmation._`;
-    }
+    const matches = targetRoll ? searchStudents(targetRoll) : [];
+    const top = matches.length > 0 ? matches[0] : null;
+    const displayName = top?.full_name || targetRoll || 'NERIST Student';
 
-    const resetInfo = getDailyQuotaResetInfo();
-    const paywallText =
-        `🛡️ *ANTI-ABUSE LIMIT REACHED (${DAILY_FREE_LIMIT}/${DAILY_FREE_LIMIT} Today)*\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `👤 *Student:* ${targetName || 'NERIST Student'} (${targetRoll})\n\n` +
-        `To protect student privacy and prevent bulk data scraping or server overload, full dossier lookups are capped at *${DAILY_FREE_LIMIT} free records per day*.\n\n` +
-        `✅ *Basic \`@student\` search* stays *100% free & unlimited*.\n` +
-        `⏳ Your 3 free credits auto-renew at *12:00 AM midnight IST* (in ${resetInfo.countdownStr}).\n\n` +
-        `Need extra lookups right now or want to help keep the 24/7 server running?\n\n` +
+    const subCardText =
+        `💳 *CHOOSE A SERVER SUPPORT OPTION*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        (targetRoll ? `👤 *Target Record:* ${displayName} (\`${targetRoll}\`)\n\n` : '') +
         `⚡ *1. +${SUPPORT_PACK_CREDITS} Extra Bypass Credits — ₹${SUPPORT_PACK_PRICE}*\n` +
-        `• ₹1 per unlock · Credits *never expire*\n` +
-        `• Full confidential profile + photo\n\n` +
-        `🛡️ *2. Server Supporter (30 Days) — ₹${SUPPORTER_MONTHLY_PRICE} / month*\n` +
-        `• Unlimited lookups (anti-abuse exempt)\n` +
-        `• Helps cover 24/7 server, power & internet`;
+        `• Only ₹1 per unlock · Credits *never expire*\n` +
+        `• Full confidential profile, parent contact & high-res photo\n\n` +
+        `🛡️ *2. 30-Day Server Supporter — ₹${SUPPORTER_MONTHLY_PRICE} / month*\n` +
+        `• Unlimited dossier lookups (anti-abuse exempt)\n` +
+        `• Helps maintain the server\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        (singleLink?.short_url || monthlyLink?.short_url
+            ? `🔗 *Instant UPI Checkout Links:*\n` +
+              (singleLink?.short_url ? `• *₹${SUPPORT_PACK_PRICE} (+5 Credits):* ${singleLink.short_url}\n` : '') +
+              (monthlyLink?.short_url ? `• *₹${SUPPORTER_MONTHLY_PRICE} (Monthly):* ${monthlyLink.short_url}\n` : '') +
+              `_Auto-unlocks immediately upon UPI confirmation._\n\n`
+            : '') +
+        `_Tap an option below to proceed via Instant UPI:_`;
 
     const buttons = [];
     if (singleLink?.short_url) {
@@ -706,21 +1003,69 @@ async function sendPaywallOptions({ sock, getSock = null, senderJid, targetRoll,
     }
 
     buttons.push({
-        id: 'info_limit_policy',
-        text: '❓ Why This Limit?'
+        id: 'btn_paywall_chat_agent',
+        text: '🤖 Chat ur Agent Kurox'
     });
 
     if (sendInteractiveButtons) {
         await sendInteractiveButtons({
             sock,
             jid: senderJid,
-            title: '🛡️ Daily Anti-Abuse Cap Reached',
-            body: paywallText,
-            footer: 'Anti-Abuse Protection · Optional Server Support',
+            title: '🛡️ Server Support & Bypass Credits',
+            body: subCardText,
+            footer: 'Instant UPI · Automatic Instant Activation',
             buttons
         });
     } else {
-        await sock.sendMessage(senderJid, { text: paywallText + linkAddendum });
+        await sock.sendMessage(senderJid, { text: subCardText });
+    }
+}
+
+// Introduction & Academic Hub when student taps "🤖 Chat ur Agent Kurox"
+async function sendAgentKuroxIntroCard({ sock, senderJid, senderName, sendInteractiveButtons }) {
+    const hr = new Date().getHours();
+    const timeGreeting = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+    const cleanName = (senderName && /^[a-zA-Z\s]{2,25}$/.test(senderName.trim())) ? `, ${senderName.trim()}` : '';
+
+    const introText =
+        `*${timeGreeting}${cleanName}!* ☀️\n\n` +
+        `🤖 *Meet Agent Kurox — Your Campus AI Companion*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Hey there! I am *Agent Kurox*, an intelligent, versatile campus AI assistant designed specifically for NERISTians.\n\n` +
+        `Beyond directory lookups, I can assist and automate almost anything for your academic journey:\n\n` +
+        `📄 *1-Click Assignment Front Covers*\n` +
+        `• Formatted to official NERIST specifications with institute crest, border & auto-filled details\n` +
+        `• Download instantly as ready-to-print vector PDF or editable Word (.docx)\n\n` +
+        `📝 *Academic Application Studio*\n` +
+        `• Instant formal drafting for Hostel Leave, Bonafide certificates, NOC, and Permissions\n` +
+        `• Formatted to official administrative standards with zero fluff\n\n` +
+        `🎮 *Playable Offline Mini-Games*\n` +
+        `• Snake, 2048, Tic-Tac-Toe, and Ludo\n` +
+        `• Download as .html and play directly in your mobile browser with zero internet\n\n` +
+        `📊 *Live Cinderac Portal Integration*\n` +
+        `• Live course attendance tracking with 75% bunk/buffer calculator\n` +
+        `• Full semester SGPA/CGPA trend graphs & official examination admit cards\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `_Tap an option below to start, or type any academic question to chat with me!_`;
+
+    const buttons = [
+        { id: 'btn_flow_cover', text: '📄 1-Click Cover' },
+        { id: 'btn_flow_application', text: '📝 Write Application' },
+        { id: 'btn_flow_game', text: '🎮 Play Games' },
+        { id: 'btn_flow_attendance', text: '📊 Live Attendance' }
+    ];
+
+    if (sendInteractiveButtons) {
+        await sendInteractiveButtons({
+            sock,
+            jid: senderJid,
+            title: 'Agent Kurox · Campus AI Companion',
+            body: introText,
+            footer: 'Agent Kurox · Built for NERISTians',
+            buttons
+        });
+    } else {
+        await sock.sendMessage(senderJid, { text: introText });
     }
 }
 
@@ -785,6 +1130,12 @@ async function handleRazorpayPayment({ sock, getSock = null, senderJid, userPhon
 // MAIN MESSAGE HANDLER
 async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerBody, buttonId, senderJid, sendInteractiveButtons, razorpay, userPhone: passedPhone }) {
     if (!rawBody && !buttonId) return false;
+
+    // HARD GUARD: Never intercept Cinderac authentication or login commands
+    const cleanRaw = (rawBody || '').trim();
+    if (/^(?:login|logout|@cinderac|cinderac)\b/i.test(cleanRaw)) {
+        return false;
+    }
     let userPhone = passedPhone || (senderJid || '').split('@')[0].replace(/[^0-9]/g, '').slice(-10);
     if (isAdminUser(userPhone, senderJid)) {
         userPhone = '9863013886';
@@ -813,13 +1164,120 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
                      `🆔 *Reg No:* \`${m.user_id}\`\n` +
                      (m.rollNo ? `🔢 *Roll No:* \`${m.rollNo}\`\n` : '') +
                      `🏛️ *Dept:* ${m.department_name || m.degree_name || 'NERIST'}\n` +
-                     `🎓 *Program:* ${m.program_name || 'Degree'} (Sem ${m.semester || 'N/A'})\n` +
+                     `🎓 *Program:* ${m.program_name || 'Degree'} (${m.status === 'Alumni / Left' ? (m.program_year || 'Alumni') : `Sem ${m.semester || 'N/A'}`})\n` +
                      (m.fatherName ? `👨 *Father:* ${m.fatherName}\n` : '') +
                      (m.motherName ? `👩 *Mother:* ${m.motherName}\n` : '') +
                      `📞 *Matched:* ${m.matchedPhone} (${m.matchType})\n` +
                      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
         }
         await sock.sendMessage(senderJid, { text: reply.trim() });
+        return true;
+    }
+
+    // 1b. OWNER DOSSIER VIP & BAN CONTROLS (@unlock, @lock, @ban, @unban, @viplist)
+    if (/^[@!#]?(unlock|lock|revokepass|ban|unban|viplist|vip)\b/i.test(cleanRaw)) {
+        if (!isAdminUser(userPhone, senderJid)) {
+            await sock.sendMessage(senderJid, { text: '🚫 *Access Denied:* VIP & Ban management is restricted to administrators only.' });
+            return true;
+        }
+
+        await syncVipStateFromD1(true);
+        const cmdMatch = cleanRaw.match(/^[@!#]?(unlock|lock|revokepass|ban|unban|viplist|vip)\s*(.*)$/i);
+        const action = (cmdMatch?.[1] || '').toLowerCase();
+        const argStr = (cmdMatch?.[2] || '').trim();
+
+        if (action === 'viplist' || action === 'vip') {
+            const vips = vipAccessCache.unlimitedPhones || [];
+            const banned = vipAccessCache.bannedPhones || [];
+            let listMsg = `👑 *PERMANENT DOSSIER ACCESS CONTROL*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            listMsg += `✅ *Permanent VIP Unlimited (∞):* ${vips.length}\n`;
+            if (vips.length === 0) {
+                listMsg += `_None added yet._\n`;
+            } else {
+                listMsg += vips.map((v, i) => `${i + 1}. \`+91${v.phone}\`${v.note ? ` — ${v.note}` : ''}`).join('\n') + '\n';
+            }
+            listMsg += `\n⛔ *Banned Numbers:* ${banned.length}\n`;
+            if (banned.length === 0) {
+                listMsg += `_None banned._\n`;
+            } else {
+                listMsg += banned.map((b, i) => `${i + 1}. \`+91${b.phone}\`${b.note ? ` — ${b.note}` : ''}`).join('\n') + '\n';
+            }
+            listMsg += `\n*Commands:*\n• \`@unlock <10-digit> [note]\` — Lifetime ∞ Dossier\n• \`@lock <10-digit>\` — Remove Lifetime VIP\n• \`@ban <10-digit> [reason]\` — Ban from Dossier\n• \`@unban <10-digit>\` — Lift Ban`;
+            await sock.sendMessage(senderJid, { text: listMsg });
+            return true;
+        }
+
+        const phoneMatch = argStr.match(/(\+?\d[\d\s\-]{8,15}\d)/);
+        const targetPhone = normalizePhone10(phoneMatch ? phoneMatch[1] : '');
+        const noteText = phoneMatch ? argStr.replace(phoneMatch[1], '').trim() : '';
+
+        if (!targetPhone) {
+            await sock.sendMessage(senderJid, {
+                text: `📱 *Usage:* \`@${action} <10-digit WhatsApp number> [optional note]\`\nExample: \`@${action} 9876543210 Roommate\``
+            });
+            return true;
+        }
+
+        let nextVip = [...vipAccessCache.unlimitedPhones];
+        let nextBanned = [...vipAccessCache.bannedPhones];
+
+        if (action === 'unlock') {
+            nextBanned = nextBanned.filter(x => x.phone !== targetPhone);
+            nextVip = [{ phone: targetPhone, note: noteText || 'Owner WhatsApp Unlock', addedAt: new Date().toISOString() }, ...nextVip.filter(x => x.phone !== targetPhone)];
+            const pushed = await pushVipStateToD1({ unlimitedPhones: nextVip, bannedPhones: nextBanned });
+            await sock.sendMessage(senderJid, {
+                text: `👑 *PERMANENT VIP UNLOCKED (∞)*\n` +
+                      `📱 *Number:* \`+91${targetPhone}\`\n` +
+                      (noteText ? `📝 *Note:* ${noteText}\n` : '') +
+                      `♾️ *Quota:* Unlimited Dossiers Forever\n` +
+                      `☁️ *D1 Sync:* ${pushed.savedD1 ? 'Synced (Admin + Bot)' : `Local saved (D1 pending: ${pushed.error})`}\n\n` +
+                      `_To revoke or ban anytime, send \`@ban ${targetPhone}\` or \`@lock ${targetPhone}\`._`
+            });
+            return true;
+        }
+
+        if (action === 'lock' || action === 'revokepass') {
+            nextVip = nextVip.filter(x => x.phone !== targetPhone);
+            const pushed = await pushVipStateToD1({ unlimitedPhones: nextVip, bannedPhones: nextBanned });
+            await sock.sendMessage(senderJid, {
+                text: `🔒 *PERMANENT VIP REMOVED*\n` +
+                      `📱 *Number:* \`+91${targetPhone}\` reverted to standard daily cap (3/day).\n` +
+                      `☁️ *D1 Sync:* ${pushed.savedD1 ? 'Synced' : 'Local saved'}`
+            });
+            return true;
+        }
+
+        if (action === 'ban') {
+            nextVip = nextVip.filter(x => x.phone !== targetPhone);
+            nextBanned = [{ phone: targetPhone, note: noteText || 'Banned by Owner', addedAt: new Date().toISOString() }, ...nextBanned.filter(x => x.phone !== targetPhone)];
+            const pushed = await pushVipStateToD1({ unlimitedPhones: nextVip, bannedPhones: nextBanned });
+            await sock.sendMessage(senderJid, {
+                text: `⛔ *NUMBER BANNED FROM DOSSIER*\n` +
+                      `📱 *Number:* \`+91${targetPhone}\`\n` +
+                      (noteText ? `📝 *Reason:* ${noteText}\n` : '') +
+                      `🛡️ VIP revoked (if active) & dossier lookups blocked.\n` +
+                      `☁️ *D1 Sync:* ${pushed.savedD1 ? 'Synced' : 'Local saved'}`
+            });
+            return true;
+        }
+
+        if (action === 'unban') {
+            nextBanned = nextBanned.filter(x => x.phone !== targetPhone);
+            const pushed = await pushVipStateToD1({ unlimitedPhones: nextVip, bannedPhones: nextBanned });
+            await sock.sendMessage(senderJid, {
+                text: `✅ *DOSSIER BAN LIFTED*\n` +
+                      `📱 *Number:* \`+91${targetPhone}\` can use standard student lookups again.\n` +
+                      `☁️ *D1 Sync:* ${pushed.savedD1 ? 'Synced' : 'Local saved'}`
+            });
+            return true;
+        }
+    }
+
+    // 1c. BANNED USER ENFORCEMENT (blocks student dossier lookups, preserves PDF printing)
+    if (isBannedUser(userPhone, senderJid)) {
+        await sock.sendMessage(senderJid, {
+            text: '⛔ *Access Restricted:* Your WhatsApp number has been restricted from student directory & dossier lookups by the administrator.\n\n_Automated document printing remains available._'
+        });
         return true;
     }
 
@@ -858,18 +1316,34 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
         const resetInfo = getDailyQuotaResetInfo();
         const policyText =
             `🛡️ *WHY IS THERE A ${DAILY_FREE_LIMIT}/DAY DOSSIER LIMIT?*\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
             `1️⃣ *Anti-Abuse & Student Privacy:*\n` +
-            `Full dossiers contain personal phone numbers, parent contacts, DOB, and Aadhaar details. Without a daily cap, bots or spammers could scrape the entire campus directory.\n\n` +
+            `Full dossiers contain personal phone numbers, parent contacts, DOB, and details. Without a daily cap, bots or spammers could scrape the entire campus directory.\n\n` +
             `2️⃣ *100% Free Every Day:*\n` +
             `• Basic \`@student\` search (name, roll, dept, sem, CGPA) is *unlimited & free*.\n` +
             `• You get *${DAILY_FREE_LIMIT} free dossier unlocks daily*, resetting automatically at *12:00 AM IST* (in ${resetInfo.countdownStr}).\n\n` +
             `3️⃣ *Optional Server Support (₹${SUPPORT_PACK_PRICE} / ₹${SUPPORTER_MONTHLY_PRICE}):*\n` +
-            `Keeping the 24/7 server, proxy, electricity, and WhatsApp relay running has real costs. If you wait until midnight, you never need to pay ₹1. If you need extra lookups immediately or want full power:\n` +
+            `Maintaining the 24/7 server and database has real costs. If you wait until midnight, you never need to pay ₹1. If you need extra lookups immediately or want full access:\n` +
             `• *₹${SUPPORT_PACK_PRICE}* → *+${SUPPORT_PACK_CREDITS} Extra Credits* (₹1/unlock, never expire)\n` +
             `• *₹${SUPPORTER_MONTHLY_PRICE}* → *30-Day Server Supporter* (unlimited, anti-abuse exempt)`;
 
-        await sock.sendMessage(senderJid, { text: policyText });
+        if (sendInteractiveButtons) {
+            const lastRoll = userLastStudent.get(senderJid) || '';
+            const cleanToken = lastRoll ? lastRoll.replace(/[^a-zA-Z0-9]/g, '_') : 'default';
+            await sendInteractiveButtons({
+                sock,
+                jid: senderJid,
+                title: '🛡️ Anti-Abuse & Privacy Policy',
+                body: policyText,
+                footer: 'Student Privacy Protection',
+                buttons: [
+                    { id: `btn_paywall_subscribe_${cleanToken}`, text: '🛡️ Subscribe & Credits' },
+                    { id: 'btn_paywall_chat_agent', text: '🤖 Chat ur Agent Kurox' }
+                ]
+            });
+        } else {
+            await sock.sendMessage(senderJid, { text: policyText });
+        }
         return true;
     }
 
@@ -882,8 +1356,12 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
             `🛡️ *YOUR ANTI-ABUSE QUOTA STATUS*\n` +
             `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
 
-        if (access.type === 'admin') {
+        if (access.type === 'banned') {
+            quotaMsg += `⛔ *Status:* Restricted from Dossier Access\n`;
+        } else if (access.type === 'admin') {
             quotaMsg += `👑 *Status:* Admin Unlimited Access\n`;
+        } else if (access.type === 'permanent_vip') {
+            quotaMsg += `👑 *Status:* Permanent VIP Unlimited Access (∞ Lifetime)\n`;
         } else if (access.type === 'monthly_pass') {
             quotaMsg += `🛡️ *Server Supporter Pass:* Active (${access.daysLeft} days left)\n`;
         } else {
@@ -894,6 +1372,34 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
         }
         quotaMsg += `\n_Basic \`@student\` search is always 100% free & unlimited._`;
         await sock.sendMessage(senderJid, { text: quotaMsg });
+        return true;
+    }
+
+    // 2d. SUBSCRIPTION & CREDITS SUB-MENU (btn_paywall_subscribe_...)
+    if (buttonId && buttonId.startsWith('btn_paywall_subscribe_')) {
+        const cleanToken = buttonId.replace('btn_paywall_subscribe_', '');
+        const targetRoll = studentCleanIdMap.get(cleanToken) || cleanToken.replace(/_/g, '/');
+        await sendSubscriptionOptionsCard({
+            sock,
+            getSock,
+            senderJid,
+            userPhone,
+            senderName,
+            targetRoll,
+            razorpay,
+            sendInteractiveButtons
+        });
+        return true;
+    }
+
+    // 2e. CHAT WITH AGENT KUROX HUB (btn_paywall_chat_agent)
+    if (buttonId === 'btn_paywall_chat_agent' || buttonId === 'btn_flow_agent' || lowerBody === 'chat ur agent kurox') {
+        await sendAgentKuroxIntroCard({
+            sock,
+            senderJid,
+            senderName,
+            sendInteractiveButtons
+        });
         return true;
     }
 
@@ -967,7 +1473,7 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
         const cleanToken = buttonId.replace('unlock_', '');
         dossierQuery = studentCleanIdMap.get(cleanToken) || cleanToken.replace(/_/g, '/');
     } else if (lowerBody.startsWith('@dossier') || lowerBody.startsWith('!dossier') || lowerBody.startsWith('dossier ')) {
-        dossierQuery = rawBody.replace(/^[@!#]?dossiers*/i, '').trim();
+        dossierQuery = rawBody.replace(/^[@!#]?dossier\s*/i, '').trim();
     } else if (lowerBody === 'unlock' || lowerBody === 'unlock dossier' || (lowerBody === '1' && userLastStudent.has(senderJid))) {
         dossierQuery = userLastStudent.get(senderJid) || '';
     }
@@ -1016,9 +1522,18 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
         studentQuery = studentCleanIdMap.get(altClean) || altClean.replace(/_/g, '/');
     } else {
         const cleaned = rawBody.trim();
-        const m = cleaned.match(/^[@!#]?(?:find\s+student|student\s+search|search\s+student|student)\s+(.+)$/i);
+        // Robust pattern matching for natural queries:
+        // "@student ...", "student ...", "find student ...", "search for student ...", "search student ...", "who is student ...", "who is ..."
+        const m = cleaned.match(/^[@!#]?(?:search\s+for\s+student|find\s+student|student\s+search|search\s+student|who\s+is\s+student|who\s+is|student)\s+(.+)$/i);
         if (m && m[1]) {
-            studentQuery = m[1].trim();
+            studentQuery = m[1].replace(/^(?:named|called|profile\s+of|details\s+of)\s+/i, '').trim();
+        } else {
+            const rollMatch = cleaned.match(/(?:\b|\/)([0-9]{2,3}[\/_][0-9]{2,4})\b/i) || cleaned.match(/\b([A-Za-z]\/[0-9]{2}\/[A-Za-z]{2}\/[0-9]{2,4})\b/i);
+            if (rollMatch) {
+                studentQuery = rollMatch[1];
+            } else {
+                studentQuery = cleaned.replace(/^(?:named|called)\s+/i, '').trim();
+            }
         }
     }
 
@@ -1036,8 +1551,8 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
                             (top.roll_no ? `🔢 *Class Roll:* \`${top.roll_no}\`\n` : '') +
                             `🏛️ *Dept:* ${top.department_name || top.degree_name || 'NERIST'}\n` +
                             (top.status === 'Alumni / Left'
-                                ? `🎓 *Status:* Alumni / Ex-Student`
-                                : `🎓 *Semester:* Semester ${top.semester} (Odd Sem)`);
+                                ? `🎓 *Status:* ${top.program_year || 'Alumni / Ex-Student'}`
+                                : `🎓 *Academic Status:* ${top.program_year ? top.program_year + ' · ' : ''}Semester ${top.semester} (Active)`);
 
             const cleanRollToken = rollNo.replace(/[^a-zA-Z0-9]/g, '_');
             const actionButtons = [
@@ -1089,5 +1604,8 @@ async function handleStudentMessage({ sock, getSock = null, msg, rawBody, lowerB
 
 module.exports = {
     handleStudentMessage,
-    searchStudents
+    searchStudents,
+    sendPaywallOptions,
+    sendSubscriptionOptionsCard,
+    sendAgentKuroxIntroCard
 };

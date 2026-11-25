@@ -20,7 +20,7 @@
  * 7. Real-time synchronization with Cloudflare D1 & Kiosk Printer Daemon.
  */
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -45,8 +45,15 @@ const crypto = require('crypto');
 const { convertDocxToPdf, findSoffice } = require('./docx_converter');
 const { handleStudentMessage } = require('./student_bot_module');
 const { handleFacultyMessage, isGroupFacultyCommand, getFacultySearchCount } = require('./faculty_bot_module');
+const { handleAIChatMessage, activeDrafts, activeCoverDrafts, activeGameDrafts, readyToPrintDocs, saveCoverDraft, getCoverDraft, extractStudentQuery, isUserAdmin, recordAdaptiveCorrection, pendingDisambiguations, getUserProfile } = require('./ai_chat_module');
+const { formatForWhatsApp, generateApplicationPdf, generateApplicationDocx, generateAssignmentCoverPdf, generateAssignmentCoverDocx, extractPureApplicationText, generateHtmlGame } = require('./document_generator');
 const { handleServerAdminCommand, onBotConnectionOpen } = require('./server_controller_module');
 const { generatePreviewImage } = require('./pdf_preview_renderer');
+const { createAuthToken, validateAuthToken, startWebAuthServer, startCloudflaredTunnel, setOnAuthSuccess, getPublicAuthUrl } = require('./cinderac_web_auth');
+const { getCinderacSession, saveCinderacSession, clearCinderacSession, syncStudentData, matchCinderacCourseSelection } = require('./cinderac_sync_module');
+
+// Active studio tracker for numeric 1/2/3 selection (senderJid -> 'cover' | 'game' | 'app')
+const userLastOpenedStudio = new Map();
 
 // Dedicated diagnostic event log (avoids file-offset collision with stdout redirection on whatsapp_bot.log)
 const BOT_LOG_FILE = path.join(__dirname, 'whatsapp_bot_events.log');
@@ -60,12 +67,57 @@ function appendBotLog(msg) {
   } catch (e) {}
 }
 
+// USB/SD Storage Cap Protection: keep bot logs capped & prune temp print artifacts older than 2 hours
+function runBotStorageCleanup() {
+  const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB cap per log file
+  const KEEP_TAIL_BYTES = 200 * 1024;
+  for (const logName of ['whatsapp_bot.log', 'bot_live.log', 'bot_stdout_live.log', 'bot_stderr_live.log', 'whatsapp_bot_events.log.old']) {
+    try {
+      const logPath = path.join(__dirname, logName);
+      if (!fs.existsSync(logPath)) continue;
+      const st = fs.statSync(logPath);
+      if (st.size > MAX_LOG_BYTES) {
+        if (logName.endsWith('.old')) {
+          fs.unlinkSync(logPath);
+        } else {
+          const fd = fs.openSync(logPath, 'r+');
+          try {
+            const buf = Buffer.alloc(KEEP_TAIL_BYTES);
+            fs.readSync(fd, buf, 0, KEEP_TAIL_BYTES, st.size - KEEP_TAIL_BYTES);
+            fs.ftruncateSync(fd, 0);
+            fs.writeSync(fd, Buffer.from('\n--- [Log trimmed by PrintKurox storage guard] ---\n'));
+            fs.writeSync(fd, buf, 0, KEEP_TAIL_BYTES);
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  const cutoffMs = Date.now() - 2 * 60 * 60 * 1000;
+  for (const tempDir of [path.join(__dirname, '..', 'temp_prints'), path.join(__dirname, 'temp_prints'), path.join(__dirname, 'temp_media')]) {
+    try {
+      if (!fs.existsSync(tempDir)) continue;
+      for (const entry of fs.readdirSync(tempDir)) {
+        const fp = path.join(tempDir, entry);
+        try {
+          const st = fs.statSync(fp);
+          if (st.isFile() && st.mtimeMs < cutoffMs) fs.unlinkSync(fp);
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+}
+setTimeout(runBotStorageCleanup, 10000).unref();
+setInterval(runBotStorageCleanup, 30 * 60 * 1000).unref();
+
 // Configuration from .env
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'kiosk-uploads';
-const PUBLIC_KIOSK_URL = process.env.PUBLIC_KIOSK_URL || 'https://printkurox.vercel.app';
+const PUBLIC_KIOSK_URL = process.env.PUBLIC_KIOSK_URL || 'https://printkurox.pages.dev';
 const BOT_NAME = process.env.BOT_NAME || 'PrintKurox AutoPrint';
 
 // Campus Stations Registry
@@ -158,6 +210,22 @@ const STEP1_BUTTONS_BULK = [
   { id: 'btn_color', text: '2️⃣ Color (₹5/p - Offer)' },
 ];
 
+const STEP1_BUTTONS_PROMO_STANDARD = [
+  { id: 'btn_bw', text: '1️⃣ Black & White (₹3/p - Promo)' },
+  { id: 'btn_color', text: '2️⃣ Color (₹5/p - Promo)' },
+];
+
+const STEP1_BUTTONS_PROMO_BULK = [
+  { id: 'btn_bw', text: '1️⃣ Black & White (₹2.50/p - Promo)' },
+  { id: 'btn_color', text: '2️⃣ Color (₹4/p - Promo)' },
+];
+
+// Active secret promo code definition from official PrintKurox repo (src/lib/pricing.ts)
+const VALID_PROMO_CODE = 'PARE2026';
+function isValidPromoCode(code) {
+  return typeof code === 'string' && code.trim().toUpperCase() === VALID_PROMO_CODE;
+}
+
 const STEP1_BUTTONS = STEP1_BUTTONS_STANDARD;
 
 const STEP3_COPIES_BUTTONS = [
@@ -245,6 +313,48 @@ function getMessageTimestampSec(msg) {
 
 // Active Payment Link Pollers (jobId -> Interval)
 const activePollers = new Map();
+
+// Sliding window buffer of recent chat media attachments (last 5 minutes for Rescan & deduplication)
+const recentChatMedia = new Map();
+const RESCAN_WINDOW_MS = 5 * 60 * 1000; // 5-minute rolling window for chat attachment recovery
+
+// Cancellation tracking to cleanly discard in-flight or delayed burst packets
+const cancelledTimestamps = new Map();
+
+/**
+ * Universal Print Session Purge Helper:
+ * Completely clears userSessions, pending burst incomingFileBuffers, and recentChatMedia.
+ * Records a cancellation timestamp so any late-arriving packets or in-flight downloads are dropped.
+ */
+function purgeUserPrintSession(senderJid, normalizedJid) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const now = Date.now();
+  if (norm) {
+    cancelledTimestamps.set(norm, now);
+    if (incomingFileBuffers.has(norm)) {
+      const entry = incomingFileBuffers.get(norm);
+      if (entry && entry.timer) clearTimeout(entry.timer);
+      incomingFileBuffers.delete(norm);
+    }
+    recentChatMedia.delete(norm);
+  }
+  if (senderJid) {
+    cancelledTimestamps.set(senderJid, now);
+  }
+
+  const session = (senderJid && userSessions.get(senderJid)) || (norm && userSessions.get(norm));
+  if (session) {
+    if (session.jobId && activePollers.has(session.jobId)) {
+      clearInterval(activePollers.get(session.jobId));
+      activePollers.delete(session.jobId);
+    }
+    if (session.queuedFiles) session.queuedFiles = [];
+  }
+  if (senderJid) userSessions.delete(senderJid);
+  if (norm) userSessions.delete(norm);
+
+  console.log(`[WA-Bot] 🧹 Purged all print session data, file buffers, and media history for ${norm || senderJid}`);
+}
 
 console.log('============================================================');
 console.log(`       ${BOT_NAME} — Conversational Ingestion & Payment Daemon`);
@@ -515,6 +625,7 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
 
   const targetJid = jid;
   const cleanTitle = title ? title.replace(/^\*+|\*+$/g, '').trim() : '';
+  const formattedBody = formatForWhatsApp(body);
 
   const nativeButtons = (buttons || []).map((btn) => {
     if (btn.url) {
@@ -524,6 +635,16 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
           display_text: btn.text,
           url: btn.url,
           merchant_url: btn.url,
+        }),
+      };
+    }
+    if (btn.copyCode) {
+      return {
+        name: 'cta_copy',
+        buttonParamsJson: JSON.stringify({
+          display_text: btn.text || '📋 Copy',
+          id: btn.id || `copy_${Date.now()}`,
+          copy_code: String(btn.copyCode),
         }),
       };
     }
@@ -552,7 +673,7 @@ async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintK
                 hasMediaAttachment: false,
               }),
               body: proto.Message.InteractiveMessage.Body.fromObject({
-                text: body,
+                text: formattedBody,
               }),
               footer: proto.Message.InteractiveMessage.Footer.fromObject({
                 text: footer || 'PrintKurox AutoPrint',
@@ -954,21 +1075,51 @@ async function executeCampaignBroadcast({ sock, adminJid, campaign }) {
   await sock.sendMessage(targetReplyJid, { text: reportText });
 }
 
-async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeMb) {
+async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeMb, session) {
+  if (!session) {
+    session = userSessions.get(senderJid) || userSessions.get(jidNormalizedUser(senderJid));
+  }
   const isBulk = totalPages >= 10;
+  const isPromo = !!(session && session.promoApplied);
   const title = `*PrintKurox* · Color Selection`;
+
+  let offerNotice = '';
+  let buttonsToUse = STEP1_BUTTONS_STANDARD;
+
+  if (isPromo) {
+    if (isBulk) {
+      offerNotice =
+        `🎉 *Special Promotional Bulk Tariff Active!*\n` +
+        `⚡ *B&W:* ₹2.50/page · 🎨 *Color:* ₹4/page\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      buttonsToUse = STEP1_BUTTONS_PROMO_BULK;
+    } else {
+      offerNotice =
+        `🎉 *Promotional Discount Active!*\n` +
+        `⚡ *B&W:* ₹3/page · 🎨 *Color:* ₹5/page\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      buttonsToUse = STEP1_BUTTONS_PROMO_STANDARD;
+    }
+  } else if (isBulk) {
+    offerNotice =
+      `🎉 *Special Volume Offer Applied (10+ pages)!*\n` +
+      `⚡ *B&W:* ₹3/page · 🎨 *Color:* ₹5/page\n` +
+      `_(Applies to single pages only)_\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    buttonsToUse = STEP1_BUTTONS_BULK;
+  } else {
+    offerNotice =
+      `💡 *Tip:* 10+ pages unlock B&W for ₹3/p & Color for ₹5/p (single page)!\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    buttonsToUse = STEP1_BUTTONS_STANDARD;
+  }
+
   const body =
     `📄 *File:* ${fileName}\n` +
     `📊 *Pages:* ${totalPages} ${totalPages === 1 ? 'page' : 'pages'} (${fileSizeMb} MB)\n` +
     `📍 *Station:* ${defaultStation.name} (${defaultStation.room})\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    (isBulk
-      ? `🎉 *Special Volume Offer Applied (10+ pages)!*\n` +
-        `⚡ *B&W:* ₹3/page · 🎨 *Color:* ₹5/page\n` +
-        `_(Applies to single pages only)_\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
-      : `💡 *Tip:* 10+ pages unlock B&W for ₹3/p & Color for ₹5/p (single page)!\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`) +
+    offerNotice +
     `Select print color below:`;
 
   await sendInteractiveButtons({
@@ -977,7 +1128,7 @@ async function sendStep1Buttons(sock, senderJid, fileName, totalPages, fileSizeM
     title,
     body,
     footer: 'PrintKurox AutoPrint',
-    buttons: isBulk ? STEP1_BUTTONS_BULK : STEP1_BUTTONS_STANDARD,
+    buttons: buttonsToUse,
   });
 }
 
@@ -1060,11 +1211,24 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
   const totalCopies = Math.max(1, parseInt(session.copies || 1, 10));
   const totalPrintedPages = activePagesCount * totalCopies;
   const isBulk = totalPrintedPages >= 10;
+  const isPromo = !!session.promoApplied;
   const standardRate = session.colorMode === 'color' ? 7 : 4;
-  const ratePerPage = session.colorMode === 'color' ? (isBulk ? 5 : 7) : (isBulk ? 3 : 4);
-  const totalAmount = Math.max(1, totalPrintedPages * ratePerPage);
-  const totalSavings = isBulk ? (standardRate - ratePerPage) * totalPrintedPages : 0;
+
+  let ratePerPage;
+  if (isPromo) {
+    // Official PrintKurox promo tariffs: <10 pgs: B&W ₹3.00, Color ₹5.00 | 10+ pgs: B&W ₹2.50, Color ₹4.00
+    ratePerPage = session.colorMode === 'color' ? (isBulk ? 4 : 5) : (isBulk ? 2.5 : 3);
+  } else {
+    // Standard tariffs: <10 pgs: B&W ₹4.00, Color ₹7.00 | 10+ pgs: B&W ₹3.00, Color ₹5.00
+    ratePerPage = session.colorMode === 'color' ? (isBulk ? 5 : 7) : (isBulk ? 3 : 4);
+  }
+
+  const rawAmount = totalPrintedPages * ratePerPage;
+  const totalAmount = Math.max(1, Math.round(rawAmount * 100) / 100);
+  const normalStandardCost = totalPrintedPages * standardRate;
+  const totalSavings = (isPromo || isBulk) ? Math.max(0, Math.round((normalStandardCost - totalAmount) * 100) / 100) : 0;
   session.totalPrice = totalAmount;
+  session.ratePerPage = ratePerPage;
 
   // Natural orientation: follows uploaded file's geometry directly
   const isLandscape = session.isLandscapeDefault;
@@ -1213,17 +1377,22 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
     });
   }
 
+  const offerLabel = isPromo
+    ? (isBulk ? ' · Promo Bulk Tariff' : ' · Promo Tariff')
+    : (isBulk ? ' · Special Offer' : '');
+
   const summaryBody =
     `📄 *Document:* ${session.fileName}\n` +
-    `🖨️ *Print Mode:* ${printTypeLabel} (₹${ratePerPage}/p${isBulk ? ' · Special Offer' : ''})\n` +
+    `🖨️ *Print Mode:* ${printTypeLabel} (₹${ratePerPage}/p${offerLabel})\n` +
     `📑 *Pages:* ${session.pageRangeStr || 'All'} (${activePagesCount} of ${session.totalPages})\n` +
     `🔢 *Copies:* ${totalCopies} ${totalCopies === 1 ? 'copy' : 'copies'}${totalCopies > 1 ? ` (${totalPrintedPages} total pages printed)` : ''}\n` +
     `📐 *Orientation:* ${orientLabel} (Natural)\n` +
     `📍 *Release Station:* ${currentStation.name} (${currentStation.room})\n` +
+    (isPromo ? `🎟️ *Promo Applied:* Special Student Discount Active ✅\n` : '') +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `💰 *Total Amount:* *₹${totalAmount}*` +
-    (isBulk ? ` _(🎉 Saved ₹${totalSavings}!)_` : '') + `\n` +
-    (isBulk ? `⚡ _Applied ₹${ratePerPage}/p volume offer (${totalPrintedPages} total pages printed)_\n` : '') +
+    (totalSavings > 0 ? ` _(🎉 Saved ₹${totalSavings}!)_` : '') + `\n` +
+    ((isPromo || isBulk) ? `⚡ _Applied ₹${ratePerPage}/p ${isPromo ? 'promo' : 'volume'} rate (${totalPrintedPages} total pages printed)_\n` : '') +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     (paymentLinkUrl ? `👉 *1-TAP PAYMENT LINK (UPI / GPay / PhonePe):*\n🔗 ${paymentLinkUrl}\n\n` : '') +
     `_Tap link above or button below to pay. Prints automatically once paid!_\n` +
@@ -1441,8 +1610,10 @@ function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode,
           `2. Enter code *${pickupCode}* on the touch screen.\n` +
           `3. Your pages will print automatically.\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `💡 *Did you know?*\n` +
-          `You can look up classmate phone numbers, roll numbers, and branch records directly on this bot!\n\n` +
+          `💡 *Campus Services on this Bot:*\n` +
+          `• 🎓 Classmate Directory: reply \`@student <name>\` (e.g. \`@student dev\`)\n` +
+          `• 👨‍🏫 Faculty Contacts: reply \`@find <faculty>\` (e.g. \`@find devachandra\`)\n` +
+          `• 🤖 Campus AI: Ask any question directly to chat with Agent Kurox!\n\n` +
           `_Need help? Call operator: +91 ${STATION_CONTACT}_`;
 
         await sendInteractiveButtons({
@@ -1516,8 +1687,10 @@ async function handleCashOrder({ sock, senderJid, session }) {
     `2. Pay *₹${session.totalPrice}* cash and quote code *${session.pickupCode}*.\n` +
     `3. Your document will print instantly.\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `💡 *Did you know?*\n` +
-    `You can look up classmate phone numbers, roll numbers, and branch records directly on this bot!`;
+    `💡 *Campus Services on this Bot:*\n` +
+    `• 🎓 Classmate Directory: reply \`@student <name>\` (e.g. \`@student dev\`)\n` +
+    `• 👨‍🏫 Faculty Contacts: reply \`@find <faculty>\` (e.g. \`@find devachandra\`)\n` +
+    `• 🤖 Campus AI: Ask any question directly to chat with Agent Kurox!`;
 
   await sendInteractiveButtons({
     sock,
@@ -1635,23 +1808,44 @@ async function sendQueueStagingCard({ sock, senderJid, session, justAddedFileNam
 
   const title = `*PrintKurox* · Print Queue (${count} ${count === 1 ? 'File' : 'Files'})`;
   const isBulk = totalPages >= 10;
+  const isPromo = !!session.promoApplied;
+
+  let tariffNotice = '';
+  if (isPromo) {
+    tariffNotice = isBulk
+      ? `🎉 *Promo Bulk Tariff Active!* B&W ₹2.50/p · Color ₹4/p\n`
+      : `🎟️ *Promo Discount Active!* B&W ₹3/p · Color ₹5/p (10+ pgs: B&W ₹2.50/p)\n`;
+  } else if (isBulk) {
+    tariffNotice = `🎉 *Special Offer Unlocked (10+ pages)!* B&W ₹3/p · Color ₹5/p (Single page only)\n`;
+  } else {
+    tariffNotice = `💡 *Tip:* Add ${10 - totalPages} more page(s) to unlock B&W ₹3/p & Color ₹5/p!\n`;
+  }
+
+  let multiFileNotice = '';
+  if (count >= 2) {
+    multiFileNotice =
+      `\n💡 *Multi-File Upload Notice:*\n` +
+      `Receiving multiple files is limited due to WhatsApp policy.\n` +
+      `• Files with a reaction emoji (📄/🖼️) are safely added to your queue.\n` +
+      `• If any file is missing, please resend the file that does not have a reaction emoji, or send your pages merged inside a single PDF.\n`;
+  }
+
   const body =
     `${addedNotice}` +
     `📚 *Current Print Queue:*\n` +
     `${fileListLines}` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `📊 *Total:* *${totalPages}* ${totalPages === 1 ? 'page' : 'pages'} (${totalSizeMb} MB)\n` +
-    (isBulk
-      ? `🎉 *Special Offer Unlocked (10+ pages)!* B&W ₹3/p · Color ₹5/p (Single page only)\n`
-      : `💡 *Tip:* Add ${10 - totalPages} more page(s) to unlock B&W ₹3/p & Color ₹5/p!\n`) +
+    tariffNotice +
     `📍 *Station:* ${currentStation.name} (${currentStation.room})\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    multiFileNotice +
     `*Ready to print, or do you have more files to add?*\n` +
     `_Reply *proceed* to continue, *add* for more files, or *cancel* to quit._`;
 
   const buttons = [
     { id: 'btn_queue_continue', text: `✅ Proceed to Print (${count} ${count === 1 ? 'File' : 'Files'})` },
-    { id: 'btn_queue_add_more', text: '➕ Add More Files' },
+    { id: 'btn_queue_rescan', text: '🔄 Rescan Recent Files' },
     { id: 'btn_queue_clear', text: '❌ Cancel Print' },
   ];
 
@@ -1663,6 +1857,561 @@ async function sendQueueStagingCard({ sock, senderJid, session, justAddedFileNam
     footer: 'PrintKurox AutoPrint · Multi-File Queue',
     buttons,
   });
+}
+
+/**
+ * Dispatch Change Settings & Promo Card
+ * Displayed when user taps "Change Settings" on the payment card.
+ * Preserves colorMode, copies, and page settings, offering promo code input or instant checkout.
+ */
+async function sendChangeSettingsCard({ sock, senderJid, session }) {
+  if (!session) return;
+  const fileName = session.fileName || session.queuedFiles?.[0]?.fileName || 'Document';
+  const colorModeStr = session.colorMode === 'color' ? '🎨 Color' : '⚫ Black & White';
+  const copiesStr = session.copies ? `${session.copies} ${session.copies === 1 ? 'copy' : 'copies'}` : '1 copy';
+  const pagesStr = session.pageRangeStr || 'All';
+  const currentStation = session.station || defaultStation;
+
+  const title = '*PrintKurox* · Settings & Promo';
+  const promoStatusStr = session.promoApplied
+    ? `🎟️ *Promo Status:* Applied ✅ (B&W ₹3.00/p, Color ₹5.00/p [<10 pgs] · B&W ₹2.50/p, Color ₹4.00/p [10+ pgs])\n`
+    : `🎟️ *Promo Status:* Standard Tariffs Active\n`;
+
+  const body =
+    `⚙️ *Preserved Print Settings:*\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📄 *File:* ${fileName}\n` +
+    `🖨️ *Mode:* ${colorModeStr}\n` +
+    `🔢 *Copies:* ${copiesStr}\n` +
+    `📑 *Pages:* ${pagesStr}\n` +
+    `📍 *Station:* ${currentStation.name} (${currentStation.room})\n` +
+    `${promoStatusStr}` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `*Choose an action below:*\n` +
+    `• Tap *Proceed to Print* to continue to checkout\n` +
+    `• Tap *Apply Promo Code* to enter promo code\n` +
+    `• Or reply *color*, *bw*, or copies number (e.g. *2*) to change\n` +
+    `• Reply *cancel* to quit`;
+
+  const promoBtnText = session.promoApplied ? '🎟️ Promo Applied ✅' : '🎟️ Apply Promo Code';
+  const buttons = [
+    { id: 'btn_proceed_payment', text: '✅ Proceed to Print' },
+    { id: 'btn_queue_promo', text: promoBtnText },
+    { id: 'btn_queue_clear', text: '❌ Cancel Print' },
+  ];
+
+  await sendInteractiveButtons({
+    sock,
+    jid: senderJid,
+    title,
+    body,
+    footer: 'PrintKurox AutoPrint · Settings & Discounts',
+    buttons,
+  });
+}
+
+/**
+ * Rescans recent chat media attachments from the last 5 minutes.
+ * Recovers any missed/delayed files without creating duplicates.
+ */
+async function handleRescanRecentFiles({ sock, senderJid, normalizedJid, session, senderName = 'Student' }) {
+  if (!session) {
+    session = {
+      stage: 'QUEUE_STAGING',
+      senderJid,
+      senderName,
+      station: defaultStation,
+      timestamp: Date.now(),
+      queuedFiles: [],
+    };
+    userSessions.set(senderJid, session);
+    userSessions.set(normalizedJid, session);
+  }
+
+  const now = Date.now();
+  const cancelledAt = cancelledTimestamps.get(normalizedJid) || 0;
+  const mediaHistory = recentChatMedia.get(normalizedJid) || [];
+  const validRecent = mediaHistory.filter(item => (now - item.timestamp) < RESCAN_WINDOW_MS && item.timestamp > cancelledAt);
+
+  // Identify media messages not already in session.queuedFiles
+  const existingMsgIds = new Set((session.queuedFiles || []).map(f => f.msgId).filter(Boolean));
+  const missingItems = validRecent.filter(item => !existingMsgIds.has(item.msgId));
+
+  if (missingItems.length === 0) {
+    const count = (session.queuedFiles || []).length;
+    const totalPages = (session.queuedFiles || []).reduce((acc, f) => acc + (f.pages || 1), 0);
+    await sock.sendMessage(senderJid, {
+      text:
+        `✅ *Queue Verified (${count} ${count === 1 ? 'File' : 'Files'})*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `All files delivered by WhatsApp in the last 5 minutes are currently in your queue (${totalPages} ${totalPages === 1 ? 'page' : 'pages'} total).\n\n` +
+        `📌 *Sent more files that didn't appear?*\n` +
+        `Receiving multiple files is limited due to WhatsApp policy.\n` +
+        `• Look at your messages above: resend any file that lacks a reaction emoji (📄/🖼️).\n` +
+        `• Or send your pages merged inside a single PDF for guaranteed 100% receipt.\n\n` +
+        `_Tap Proceed to Print when ready!_`,
+    });
+    await sendQueueStagingCard({ sock, senderJid, session });
+    return;
+  }
+
+  await sock.sendMessage(senderJid, {
+    text: `🔄 *Rescanning Recent Files...*\nChecking ${missingItems.length} recent chat attachment(s) for missing files...`,
+  });
+
+  const recoveredNames = [];
+  for (const item of missingItems) {
+    const { mediaObj, mediaType, rawMsg, fileName, mimeType, msgId, msgKey } = item;
+
+    // Strict duplicate check before downloading
+    if (session.queuedFiles.some(f => f.msgId === msgId)) continue;
+
+    if (msgKey) {
+      sock.sendMessage(senderJid, { react: { text: '⏳', key: msgKey } }).catch(() => {});
+    }
+
+    let buffer = null;
+    try {
+      buffer = await downloadMediaWithRetry(mediaObj, mediaType, rawMsg, sock, 2);
+    } catch (e) {
+      console.warn(`[Rescan] Download failed for ${fileName}:`, e.message);
+    }
+
+    if (!buffer || buffer.length === 0) {
+      if (msgKey) {
+        sock.sendMessage(senderJid, { react: { text: '❌', key: msgKey } }).catch(() => {});
+      }
+      continue;
+    }
+
+    let pages = 1;
+    let isLandscape = false;
+    const isPdfItem = (buffer.length >= 4 && buffer.slice(0, 4).toString() === '%PDF') || (fileName && fileName.toLowerCase().endsWith('.pdf')) || (mimeType && mimeType.includes('pdf'));
+    if (isPdfItem) {
+      try {
+        const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
+        pdfDoc.isEncrypted = false;
+        pages = pdfDoc.getPageCount();
+        const firstPage = pdfDoc.getPages()[0];
+        if (firstPage) {
+          const { width, height } = firstPage.getSize();
+          isLandscape = width > height;
+        }
+      } catch (err) {
+        pages = 1;
+      }
+    } else {
+      pages = 1;
+      isLandscape = detectImageLandscape(buffer);
+    }
+
+    const sizeMb = (buffer.length / (1024 * 1024)).toFixed(2);
+    const fileHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    // Strict deduplication check: Prevent duplicate files using msgId or buffer sha256 hash
+    const duplicateExists = session.queuedFiles.some(f =>
+      (msgId && f.msgId === msgId) ||
+      (f.hash && f.hash === fileHash)
+    );
+
+    if (!duplicateExists) {
+      session.queuedFiles.push({
+        msgId,
+        fileName,
+        buffer,
+        mimeType,
+        pages,
+        isLandscape,
+        sizeMb,
+        hash: fileHash,
+        isPdf: isPdfItem,
+        isImg: !isPdfItem,
+      });
+      recoveredNames.push(fileName);
+      item.status = 'downloaded';
+
+      if (msgKey) {
+        sock.sendMessage(senderJid, { react: { text: isPdfItem ? '📄' : '🖼️', key: msgKey } }).catch(() => {});
+      }
+    }
+  }
+
+  if (recoveredNames.length > 0) {
+    await sock.sendMessage(senderJid, {
+      text:
+        `✅ *Recovered ${recoveredNames.length} Missed File(s)!*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `Added:\n` +
+        recoveredNames.map((n) => `• 📄 _${n}_`).join('\n') +
+        `\n\nTotal in print queue: *${session.queuedFiles.length} file(s)*.`,
+    });
+  } else if (missingItems.length > 0) {
+    await sock.sendMessage(senderJid, {
+      text:
+        `⚠️ *Could Not Recover Attachments*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `Checked ${missingItems.length} recent attachment(s), but their media files could not be retrieved from WhatsApp servers (media expired or connection timed out).\n\n` +
+        `Please resend those photos or documents directly to this chat!`,
+    });
+  }
+
+  session.timestamp = Date.now();
+  session.stage = 'QUEUE_STAGING';
+  await sendQueueStagingCard({
+    sock,
+    senderJid,
+    session,
+    justAddedFileNames: recoveredNames,
+  });
+}
+
+/**
+ * Action Helper: Generate Official Application PDF from active draft
+ */
+async function handleGenerateApplicationPdfAction({ sock, senderJid, normalizedJid, senderName }) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const draft = (norm && activeDrafts.get(norm)) || (senderJid && activeDrafts.get(senderJid));
+  if (!draft || !draft.text) {
+    await sock.sendMessage(senderJid, {
+      text: `⚠️ *No active application draft found!*\n\nSimply tell me what application you'd like to write (e.g., _"Write hostel leave application for 3 days"_), and I'll create a fresh draft for your review.`
+    });
+    return;
+  }
+
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+  try {
+    const studentNameClean = (draft.studentName && draft.studentName !== 'NERIST Student') ? draft.studentName : ((senderName && /^[a-zA-Z\s]{2,30}$/.test(senderName.trim())) ? senderName.trim() : 'NERIST Student');
+    const pdfBuffer = await generateApplicationPdf({
+      draftText: draft.text,
+      studentName: studentNameClean,
+      rollNo: draft.rollNo || '',
+      stationName: STATION_NAME
+    });
+
+    const fileSuffix = Date.now().toString().slice(-4);
+    const fileName = `NERIST_Application_${fileSuffix}.pdf`;
+
+    // Deliver the compiled vector PDF document (no kiosk print upsell button)
+    await sock.sendMessage(senderJid, {
+      document: pdfBuffer,
+      mimetype: 'application/pdf',
+      fileName,
+      caption: `📄 *Official Academic Application PDF Generated!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Formatted to institutional standards with header & signature block.\n📥 Download the PDF above to submit or print!`
+    });
+  } catch (err) {
+    console.error('[WA-Bot] ❌ Error in handleGenerateApplicationPdfAction:', err);
+    await sock.sendMessage(senderJid, {
+      text: `❌ *Error generating PDF:*\n${err.message}\nPlease try again or copy the draft text above.`
+    });
+  }
+}
+
+/**
+ * Action Helper: Generate Editable Microsoft Word (.docx) Application from active draft
+ */
+async function handleGenerateApplicationDocxAction({ sock, senderJid, normalizedJid, senderName }) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const draft = (norm && activeDrafts.get(norm)) || (senderJid && activeDrafts.get(senderJid));
+  if (!draft || !draft.text) {
+    await sock.sendMessage(senderJid, {
+      text: `⚠️ *No active application draft found!*\n\nSimply tell me what application you'd like to write (e.g., _"Write hostel leave application for 3 days"_), and I'll create a fresh draft for your review.`
+    });
+    return;
+  }
+
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+  try {
+    const studentNameClean = (draft.studentName && draft.studentName !== 'NERIST Student') ? draft.studentName : ((senderName && /^[a-zA-Z\s]{2,30}$/.test(senderName.trim())) ? senderName.trim() : 'NERIST Student');
+    const docxBuffer = await generateApplicationDocx({
+      draftText: draft.text,
+      studentName: studentNameClean,
+      rollNo: draft.rollNo || '',
+    });
+
+    const fileSuffix = Date.now().toString().slice(-4);
+    const fileName = `NERIST_Application_${fileSuffix}.docx`;
+
+    // Deliver the compiled Word document
+    await sock.sendMessage(senderJid, {
+      document: docxBuffer,
+      mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      fileName,
+      caption: `📝 *Official Application Word Document (.docx) Generated!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Formatted to institutional standards.\n📥 Tap above to download and edit in Microsoft Word, Google Docs, or WPS Office!`
+    });
+  } catch (err) {
+    console.error('[WA-Bot] ❌ Error in handleGenerateApplicationDocxAction:', err);
+    await sock.sendMessage(senderJid, {
+      text: `❌ *Error generating Word document:*\n${err.message}\nPlease try again or copy the draft text above.`
+    });
+  }
+}
+
+/**
+ * Action Helper: Generate Official Assignment Front Cover PDF
+ */
+async function handleGenerateAssignmentCoverPdfAction({ sock, senderJid, normalizedJid, senderName }) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const userPhone = await resolveUserPhone(sock, senderJid);
+  const cover = (typeof getCoverDraft === 'function' ? getCoverDraft(senderJid, norm, userPhone) : null) ||
+                (norm && activeCoverDrafts.get(norm)) ||
+                (senderJid && activeCoverDrafts.get(senderJid));
+  if (!cover) {
+    await sock.sendMessage(senderJid, {
+      text: `⚠️ *No active assignment cover details found!*\n\nSimply tell me your assignment details (e.g., _"Generate cover for CE24016 Structural Dynamics to Dr. Tori Basar"_ or _"add Richard Konsam details"_), and I'll create your official cover page immediately!`
+    });
+    return;
+  }
+
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+  try {
+    const studentNameClean = (cover.studentName && cover.studentName !== 'NERIST Student') ? cover.studentName : ((senderName && /^[a-zA-Z\s]{2,30}$/.test(senderName.trim())) ? senderName.trim() : 'NERIST Student');
+    const pdfBuffer = await generateAssignmentCoverPdf({
+      subjectName: cover.subjectName || 'STRUCTURAL DYNAMICS',
+      subjectCode: cover.subjectCode || 'CE24016',
+      assignmentTitle: cover.assignmentTitle || 'ASSIGNMENT',
+      studentName: studentNameClean,
+      rollNo: cover.rollNo || '',
+      registrationNumber: cover.registrationNumber || cover.regNo || '',
+      department: cover.department || '',
+      yearSemester: cover.yearSemester || '',
+      isCinderacVerified: Boolean(cover.isCinderacVerified),
+      teacherName: cover.teacherName || 'DR. TORI BASAR',
+      teacherDesignation: cover.teacherDesignation || 'Assistant Professor',
+    });
+
+    const fileSuffix = Date.now().toString().slice(-4);
+    const fileName = `NERIST_Cover_${(cover.subjectCode || 'Assignment').replace(/\s+/g, '_')}_${fileSuffix}.pdf`;
+
+    await sock.sendMessage(senderJid, {
+      document: pdfBuffer,
+      mimetype: 'application/pdf',
+      fileName,
+      caption: `📄 *Official NERIST Assignment Front Cover (PDF) Generated!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Formatted to official standard with academic single border & red NERIST crest.\n📥 Tap to download and print!`
+    });
+  } catch (err) {
+    console.error('[WA-Bot] ❌ Error in handleGenerateAssignmentCoverPdfAction:', err);
+    await sock.sendMessage(senderJid, {
+      text: `❌ *Error generating Cover PDF:*\n${err.message}\nPlease try again.`
+    });
+  }
+}
+
+/**
+ * Action Helper: Generate Official Assignment Front Cover Word DOCX
+ */
+async function handleGenerateAssignmentCoverDocxAction({ sock, senderJid, normalizedJid, senderName }) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const userPhone = await resolveUserPhone(sock, senderJid);
+  const cover = (typeof getCoverDraft === 'function' ? getCoverDraft(senderJid, norm, userPhone) : null) ||
+                (norm && activeCoverDrafts.get(norm)) ||
+                (senderJid && activeCoverDrafts.get(senderJid));
+  if (!cover) {
+    await sock.sendMessage(senderJid, {
+      text: `⚠️ *No active assignment cover details found!*\n\nSimply tell me your assignment details (e.g., _"Generate cover for CE24016 Structural Dynamics to Dr. Tori Basar"_ or _"add Richard Konsam details"_), and I'll create your official cover page immediately!`
+    });
+    return;
+  }
+
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+  try {
+    const studentNameClean = (cover.studentName && cover.studentName !== 'NERIST Student') ? cover.studentName : ((senderName && /^[a-zA-Z\s]{2,30}$/.test(senderName.trim())) ? senderName.trim() : 'NERIST Student');
+    const docxBuffer = await generateAssignmentCoverDocx({
+      subjectName: cover.subjectName || 'STRUCTURAL DYNAMICS',
+      subjectCode: cover.subjectCode || 'CE24016',
+      assignmentTitle: cover.assignmentTitle || 'ASSIGNMENT',
+      studentName: studentNameClean,
+      rollNo: cover.rollNo || '',
+      registrationNumber: cover.registrationNumber || cover.regNo || '',
+      department: cover.department || '',
+      yearSemester: cover.yearSemester || '',
+      isCinderacVerified: Boolean(cover.isCinderacVerified),
+      teacherName: cover.teacherName || 'DR. TORI BASAR',
+      teacherDesignation: cover.teacherDesignation || 'Assistant Professor',
+    });
+
+    const fileSuffix = Date.now().toString().slice(-4);
+    const fileName = `NERIST_Cover_${(cover.subjectCode || 'Assignment').replace(/\s+/g, '_')}_${fileSuffix}.docx`;
+
+    await sock.sendMessage(senderJid, {
+      document: docxBuffer,
+      mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      fileName,
+      caption: `📝 *Official NERIST Assignment Front Cover (.docx) Generated!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Formatted to official standard with academic single border & embedded crest.\n📥 Tap to open and edit in Microsoft Word, Google Docs, or WPS Office!`
+    });
+  } catch (err) {
+    console.error('[WA-Bot] ❌ Error in handleGenerateAssignmentCoverDocxAction:', err);
+    await sock.sendMessage(senderJid, {
+      text: `❌ *Error generating Cover Word document:*\n${err.message}\nPlease try again.`
+    });
+  }
+}
+
+/**
+ * Action Helper: Generate 1-Click Assignment Front Cover from Synced Cinderac Course
+ */
+async function handleGenerateCinderacCoverAction({ sock, senderJid, normalizedJid, senderName, userPhone, courseIndex = 0 }) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const session = getCinderacSession(senderJid, userPhone);
+  if (!session || !session.courses || session.courses.length === 0) {
+    await sock.sendMessage(senderJid, {
+      text: '⚠️ *No registered courses found!*\nPlease link your Cinderac portal first by replying:\n`login <RegId> <Password>`\n\n💡 _Example:_\n`login 121/016 Password123`'
+    });
+    return;
+  }
+
+  const selectedCourse = session.courses[courseIndex] || session.courses[0];
+  const prof = session.profile || {};
+
+  // Resolve faculty designation from faculty.json
+  let teacherTitle = selectedCourse.faculty;
+  let teacherDesig = 'Assistant Professor';
+  try {
+    const rawFac = JSON.parse(fs.readFileSync(path.join(__dirname, 'faculty.json'), 'utf8'));
+    const facClean = selectedCourse.faculty.toLowerCase().trim();
+    const facMatch = rawFac.find(f => {
+      const fn = (f.name || '').toLowerCase();
+      return fn.includes(facClean) || facClean.includes(fn);
+    });
+    if (facMatch) {
+      if (facMatch.name && !teacherTitle.toUpperCase().startsWith('DR.') && /dr\b/i.test(facMatch.name)) {
+        teacherTitle = `DR. ${selectedCourse.faculty}`;
+      }
+      if (facMatch.designation) {
+        teacherDesig = facMatch.designation;
+      }
+    }
+  } catch (e) {}
+
+  const coverObj = {
+    subjectName: selectedCourse.name,
+    subjectCode: selectedCourse.code,
+    assignmentTitle: 'ASSIGNMENT',
+    studentName: prof.fullName || senderName || 'NERIST Student',
+    rollNo: prof.rollNo || '',
+    registrationNumber: prof.regId || '',
+    department: prof.departmentName || 'ELECTRONICS AND COMMUNICATION ENGINEERING',
+    yearSemester: prof.semester ? `B.Tech Semester ${prof.semester}` : '',
+    isCinderacVerified: true,
+    teacherName: teacherTitle,
+    teacherDesignation: teacherDesig,
+    academicSession: '2026-2027 Jul-Dec',
+    timestamp: Date.now()
+  };
+
+  saveCoverDraft(senderJid, norm, userPhone, coverObj);
+
+  await sock.sendMessage(senderJid, {
+    text:
+      `📄 *Generating Official Assignment Cover (Cinderac 1-Click)*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `• *Subject:* ${coverObj.subjectCode}  ${coverObj.subjectName}\n` +
+      `• *Faculty:* ${coverObj.teacherName} (${coverObj.teacherDesignation})\n` +
+      `• *Student:* ${coverObj.studentName}\n` +
+      `• *Roll No:* ${coverObj.rollNo}\n` +
+      `• *Registration No:* ${coverObj.registrationNumber}\n` +
+      `• *Department:* ${coverObj.department}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `⏳ Compiling official PDF and Word document...`
+  });
+
+  await handleGenerateAssignmentCoverPdfAction({ sock, senderJid, normalizedJid: norm, senderName });
+  await handleGenerateAssignmentCoverDocxAction({ sock, senderJid, normalizedJid: norm, senderName });
+
+  userLastOpenedStudio.set(senderJid, 'cinderac_cover');
+  if (norm) userLastOpenedStudio.set(norm, 'cinderac_cover');
+
+  await sendInteractiveButtons({
+    sock,
+    jid: senderJid,
+    title: '🖨️ Document Ready for Printing',
+    body:
+      `Your official assignment front cover for *${coverObj.subjectCode}* has been compiled successfully!\n\n` +
+      `• Student: *${coverObj.studentName}*\n` +
+      `• Roll No: *${coverObj.rollNo}* · Reg: *${coverObj.registrationNumber}*\n` +
+      `• Faculty: *${coverObj.teacherName}*\n\n` +
+      `Choose an action below:`,
+    footer: 'Agent Kurox · Campus Printing Kiosk',
+    buttons: [
+      { id: 'btn_print_generated_doc', text: '🖨️ 1-Tap Print' },
+      { id: 'btn_flow_cover', text: '📚 Pick Another Course' },
+      { id: 'btn_cover_edit', text: '✏️ Edit Details' }
+    ]
+  });
+}
+
+/**
+ * Action Helper: 1-Tap Load Generated Document into Print Queue
+ */
+async function handlePrintGeneratedDocAction({ sock, senderJid, normalizedJid, senderName }) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const readyDoc = (norm && readyToPrintDocs.get(norm)) || (senderJid && readyToPrintDocs.get(senderJid));
+  if (!readyDoc || !readyDoc.buffer) {
+    await sock.sendMessage(senderJid, {
+      text: `⚠️ *No ready document found to print!*\n\nPlease ask me to draft an application first or forward any PDF/photo you want to print.`
+    });
+    return;
+  }
+
+  // Clear previous print session
+  purgeUserPrintSession(senderJid, norm);
+
+  // Initialize fresh print session with the generated PDF
+  const session = {
+    stage: 'QUEUE_STAGING',
+    senderJid,
+    normalizedJid: norm,
+    senderName: readyDoc.senderName || senderName,
+    timestamp: Date.now(),
+    station: defaultStation,
+    queuedFiles: [{
+      fileName: readyDoc.fileName || 'NERIST_Application.pdf',
+      buffer: readyDoc.buffer,
+      isPdf: true,
+      pages: 1,
+      mimeType: 'application/pdf',
+      orientation: 'portrait',
+      receivedAt: Date.now()
+    }]
+  };
+  if (senderJid) userSessions.set(senderJid, session);
+  if (norm) userSessions.set(norm, session);
+
+  await sock.sendMessage(senderJid, {
+    text: `⚡ *Loading Application into Print Queue!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nRouting *${readyDoc.fileName}* to ${STATION_NAME} kiosk...`
+  });
+
+  await continueWithQueuedFiles({ sock, senderJid, session, senderName: readyDoc.senderName || senderName });
+}
+
+/**
+ * Action Helper: Generate Interactive HTML Game or Web Page
+ */
+async function handleGenerateHtmlGameAction({ sock, senderJid, normalizedJid, senderName }) {
+  const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+  const draft = (norm && activeGameDrafts.get(norm)) || (senderJid && activeGameDrafts.get(senderJid));
+  const gameType = draft?.gameType || 'snake';
+
+  sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+  try {
+    let htmlStr = draft?.htmlContent;
+    if (!htmlStr) {
+      htmlStr = generateHtmlGame(gameType, { studentName: senderName });
+    }
+    const htmlBuffer = Buffer.from(htmlStr, 'utf-8');
+    const fileName = `${gameType}_nerist.html`;
+
+    await sock.sendMessage(senderJid, {
+      document: htmlBuffer,
+      mimetype: 'text/html',
+      fileName,
+      caption: `🎮 *Interactive HTML File Generated!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🕹️ *Title:* ${gameType.toUpperCase()}\n📱 Tap the file above to open directly in your mobile browser (Chrome/Safari)!\n\n_100% offline — runs without internet._`
+    });
+  } catch (err) {
+    console.error('[WA-Bot] ❌ Error in handleGenerateHtmlGameAction:', err);
+    await sock.sendMessage(senderJid, {
+      text: `❌ *Error generating HTML file:*\n${err.message}`
+    });
+  }
 }
 
 /**
@@ -1951,10 +2700,11 @@ function extractMediaFromMessage(rawMessage) {
       };
     }
     if (curr.imageMessage) {
+      const randTag = crypto.randomBytes(3).toString('hex');
       return {
         mediaObj: curr.imageMessage,
         mediaType: 'image',
-        fileName: curr.imageMessage.fileName || `photo_${Date.now().toString().slice(-4)}.jpg`,
+        fileName: curr.imageMessage.fileName || `photo_${Date.now().toString().slice(-4)}_${randTag}.jpg`,
         mimeType: curr.imageMessage.mimetype || 'image/jpeg',
       };
     }
@@ -1980,7 +2730,7 @@ function extractMediaFromMessage(rawMessage) {
   return null;
 }
 
-// Concurrency semaphore for WhatsApp media downloads (allows up to 4 concurrent downloads)
+// Concurrency semaphore for WhatsApp media downloads (allows up to 4 concurrent downloads to prevent socket starvation)
 let activeMediaDownloads = 0;
 const mediaDownloadQueue = [];
 
@@ -2015,7 +2765,7 @@ async function downloadMediaWithRetry(mediaObj, mediaType, rawMsg, sock, maxAtte
       // 1. Primary: Direct protocol stream extraction via downloadContentFromMessage
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         try {
           const stream = await downloadContentFromMessage(mediaObj, mediaType, {
             options: { signal: controller.signal },
@@ -2068,14 +2818,32 @@ async function downloadMediaWithRetry(mediaObj, mediaType, rawMsg, sock, maxAtte
 async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName }) {
   const entry = incomingFileBuffers.get(normalizedJid);
   if (!entry || entry.files.length === 0) return;
-  const files = [...entry.files];
-  incomingFileBuffers.delete(normalizedJid);
+  // Atomically splice available files so concurrent in-flight downloads continue undisturbed
+  const files = entry.files.splice(0, entry.files.length);
+  if ((entry.activeDownloads || 0) === 0) {
+    incomingFileBuffers.delete(normalizedJid);
+  }
 
   let session = userSessions.get(senderJid) || userSessions.get(normalizedJid);
 
-  // Intentional addition window: 3 minutes (180,000ms)
-  // If user sends files within 3 minutes of previous files, add them to the batch!
-  const isRecentBatch = session && (Date.now() - (session.timestamp || 0) < 180000) && session.stage !== 'COMPLETED' && session.stage !== 'AWAITING_PAYMENT';
+  // If user cancelled, discard any stale session
+  const cancelledAt = cancelledTimestamps.get(normalizedJid) || 0;
+  if (cancelledAt && session && (session.timestamp || 0) <= cancelledAt) {
+    session = null;
+  }
+
+  // If user was previously in configuration stages (AWAITING_COLOR_MODE / AWAITING_PAGE_SELECTION / AWAITING_COPIES),
+  // receiving new files seamlessly reverts stage back to QUEUE_STAGING and appends to the queue so all files are printed together
+  if (session && (session.stage === 'AWAITING_COLOR_MODE' || session.stage === 'AWAITING_PAGE_SELECTION' || session.stage === 'AWAITING_COPIES' || session.stage === 'AWAITING_SUMMARY_CONFIRMATION')) {
+    session.stage = 'QUEUE_STAGING';
+    session.fileKey = null;
+    session.fileName = null;
+    session.fileBuffer = null;
+    session.isMergedBatch = false;
+  }
+
+  // Intentional addition window: 5 minutes (300,000ms) as requested by user
+  const isRecentBatch = session && (Date.now() - (session.timestamp || 0) < 300000) && session.stage !== 'COMPLETED' && session.stage !== 'AWAITING_PAYMENT';
   const shouldRetainQueue = isRecentBatch;
 
   if (!session || !shouldRetainQueue || isSessionExpired(session) || session.stage === 'COMPLETED') {
@@ -2120,6 +2888,20 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
       break;
     }
 
+    const sizeMb = (file.buffer.length / (1024 * 1024)).toFixed(2);
+    const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+
+    // Strict Deduplication Check: Prevent duplicate files using msgId or buffer sha256 hash
+    const isDuplicate = session.queuedFiles.some(existing => {
+      if (file.msgId && existing.msgId && existing.msgId === file.msgId) return true;
+      if (existing.hash && existing.hash === fileHash) return true;
+      return false;
+    });
+    if (isDuplicate) {
+      console.log(`[WA-Bot] ⏭️ Skipping duplicate file "${file.fileName}" (msgId: ${file.msgId || 'none'})`);
+      continue;
+    }
+
     let pages = 1;
     let isLandscape = false;
 
@@ -2154,15 +2936,15 @@ async function processBufferedFiles({ sock, senderJid, normalizedJid, senderName
       isLandscape = detectImageLandscape(file.buffer);
     }
 
-    const sizeMb = (file.buffer.length / (1024 * 1024)).toFixed(2);
-
     session.queuedFiles.push({
+      msgId: file.msgId,
       fileName: file.fileName,
       buffer: file.buffer,
       mimeType: file.mimeType,
       pages,
       isLandscape,
       sizeMb,
+      hash: fileHash,
       isPdf: isPdfItem,
       isImg: file.isImg,
     });
@@ -2196,8 +2978,44 @@ function handleIncomingMediaAttachment({
   const { mediaObj, mediaType } = extracted;
   let fileName = extracted.fileName;
   let mimeType = extracted.mimeType;
+  const currentMsgId = msg?.key?.id;
+  const now = Date.now();
+  const cancelledAt = cancelledTimestamps.get(normalizedJid) || 0;
+  const msgTsSec = getMessageTimestampSec(msg);
+  const msgTsMs = msgTsSec > 0 ? msgTsSec * 1000 : now;
+  if (msgTsMs <= cancelledAt) {
+    console.log(`[WA-Bot] ⏭️ Skipping media attachment received at or prior to cancellation: "${fileName}" (msgTs=${msgTsMs}, cancelledAt=${cancelledAt})`);
+    return;
+  }
 
-  console.log(`[WA-Bot] 📥 Media attachment received from ${senderName} (${senderJid}): "${fileName}" (${mediaType})`);
+  // Ensure photos always have a unique filename derived from WhatsApp message ID or unique tag
+  if (mediaType === 'image' && (!fileName || fileName.startsWith('photo_'))) {
+    const cleanId = (currentMsgId || crypto.randomBytes(3).toString('hex')).replace(/[^a-zA-Z0-9]/g, '').slice(-8);
+    fileName = `photo_${cleanId}.jpg`;
+  }
+
+  console.log(`[WA-Bot] 📥 Media attachment received from ${senderName} (${senderJid}): "${fileName}" (${mediaType}) [id: ${currentMsgId || 'none'}]`);
+
+  // Cache in recentChatMedia (sliding window of 5 minutes for Rescan & deduplication)
+  if (!recentChatMedia.has(normalizedJid)) {
+    recentChatMedia.set(normalizedJid, []);
+  }
+  const mediaHistory = recentChatMedia.get(normalizedJid);
+  const validRecent = mediaHistory.filter(i => (now - i.timestamp) < RESCAN_WINDOW_MS);
+  if (currentMsgId && !validRecent.some(i => i.msgId === currentMsgId)) {
+    validRecent.push({
+      msgId: currentMsgId,
+      msgKey: msg?.key,
+      rawMsg: msg,
+      mediaObj,
+      mediaType,
+      fileName,
+      mimeType,
+      timestamp: now,
+      status: 'downloading',
+    });
+  }
+  recentChatMedia.set(normalizedJid, validRecent);
 
   if (!incomingFileBuffers.has(normalizedJid)) {
     incomingFileBuffers.set(normalizedJid, {
@@ -2226,15 +3044,15 @@ function handleIncomingMediaAttachment({
   const isPhotoFile = !isPdfFile && (mediaType === 'image' || rawMime.startsWith('image/'));
   const isDocxFile = lowerDocName.endsWith('.docx') || lowerDocName.endsWith('.doc');
 
-  let prepNotice = '⏳ *Receiving your files...*\nPlease wait a moment.';
+  let prepNotice = '⏳ *Receiving your files...*\nPlease wait a moment.\n\n💡 _Tip: Check that each file gets a reaction emoji (📄/🖼️) once added to your queue!_';
   if (isPdfFile) {
     prepNotice = fileName
-      ? `⏳ *Your PDF is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`
-      : `⏳ *Your PDF is preparing...*\nPlease wait a moment.`;
+      ? `⏳ *Your PDF is preparing...*\n📄 _${fileName}_\nPlease wait a moment.\n\n💡 _Tip: Check that each file gets a reaction emoji (📄/🖼️) once added to your queue!_`
+      : `⏳ *Your PDF is preparing...*\nPlease wait a moment.\n\n💡 _Tip: Check that each file gets a reaction emoji (📄/🖼️) once added to your queue!_`;
   } else if (isPhotoFile) {
-    prepNotice = `⏳ *Your photo is preparing...*\nPlease wait a moment.`;
+    prepNotice = `⏳ *Your photo is preparing...*\nPlease wait a moment.\n\n💡 _Tip: Check that each file gets a reaction emoji (📄/🖼️) once added to your queue!_`;
   } else if (isDocxFile) {
-    prepNotice = `⏳ *Your Word document is preparing...*\n📄 _${fileName}_\nPlease wait a moment.`;
+    prepNotice = `⏳ *Your Word document is preparing...*\n📄 _${fileName}_\nPlease wait a moment.\n\n💡 _Tip: Check that each file gets a reaction emoji (📄/🖼️) once added to your queue!_`;
   }
 
   if (!entry.hasNotified) {
@@ -2242,7 +3060,7 @@ function handleIncomingMediaAttachment({
     sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch(() => {});
   }
 
-  const debounceDelay = 4500;
+  const debounceDelay = 7500;
   const scheduleProcess = () => {
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(async () => {
@@ -2266,17 +3084,16 @@ function handleIncomingMediaAttachment({
       buffer = await downloadMediaWithRetry(mediaObj, mediaType, msg, sock, 3);
     } catch (dlErr) {
       console.warn('[WA-Bot] Media download error:', dlErr.message);
-    } finally {
-      entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
     }
 
     if (!buffer || buffer.length === 0) {
+      entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
       console.error(`[WA-Bot] ❌ Failed to download attachment "${fileName}" from ${senderName}`);
       sock.sendMessage(senderJid, {
         react: { text: '❌', key: msg.key },
       }).catch(() => {});
       await sock.sendMessage(senderJid, {
-        text: `⚠️ Sorry ${senderName}, failed to download "${fileName}". Please try resending.`,
+        text: `⚠️ *File Transfer Issue:*\nFailed to download "${fileName}". Receiving multiple files is limited due to WhatsApp policy. Please send them merged inside a single PDF or resend the files that do not have a reaction emoji.`,
       }).catch(() => {});
       if (entry.files.length > 0) {
         scheduleProcess();
@@ -2316,6 +3133,7 @@ function handleIncomingMediaAttachment({
           { quoted: msg }
         ).catch(() => {});
       } else {
+        entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
         await sock.sendMessage(
           senderJid,
           {
@@ -2347,13 +3165,27 @@ function handleIncomingMediaAttachment({
       react: { text: isPdfDetected ? '📄' : '🖼️', key: msg.key },
     }).catch(() => {});
 
+    // If session was cancelled in-flight, discard downloaded buffer immediately
+    if ((cancelledTimestamps.get(normalizedJid) || 0) >= now) {
+      console.log(`[WA-Bot] 🗑️ Discarding downloaded attachment "${fileName}" because session was cancelled in-flight`);
+      entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
+      return;
+    }
+
     entry.files.push({
+      msgId: currentMsgId,
       buffer,
       fileName,
       mimeType,
       isImg: isImgDetected,
       isPdf: isPdfDetected,
     });
+
+    // Decrement activeDownloads ONLY AFTER pushing to entry.files to prevent premature buffer flush!
+    entry.activeDownloads = Math.max(0, (entry.activeDownloads || 1) - 1);
+
+    const cachedItem = (recentChatMedia.get(normalizedJid) || []).find(i => i.msgId === currentMsgId);
+    if (cachedItem) cachedItem.status = 'downloaded';
 
     scheduleProcess();
   })().catch((err) => {
@@ -2583,6 +3415,77 @@ async function startBot() {
         sendInteractiveButtons,
         logFn: appendBotLog,
       }).catch((err) => appendBotLog(`[Server Controller] Open hook error: ${err.message}`));
+
+      // Start Cinderac Web Auth Server and Register Push Callback (Once per process)
+      if (!global.__webAuthServerInitialized) {
+        global.__webAuthServerInitialized = true;
+        try {
+          startWebAuthServer(7260);
+          startCloudflaredTunnel(7260);
+          setOnAuthSuccess(async (senderJid, phone, syncResult) => {
+            try {
+              if (!activeBotSock) return;
+              const targetJid = senderJid || (phone ? `${phone}@s.whatsapp.net` : null);
+              if (!targetJid) return;
+
+              const prof = syncResult.profile;
+              const courses = syncResult.courses || [];
+              let listText = '';
+              courses.slice(0, 7).forEach((c, idx) => {
+                listText += `${idx + 1}. *${c.code}* — ${c.name}\n   Faculty: ${c.faculty}\n`;
+              });
+
+              if (courses.length > 0) {
+                const coverObj = {
+                  subjectName: courses[0].name,
+                  subjectCode: courses[0].code,
+                  assignmentTitle: 'ASSIGNMENT',
+                  studentName: prof.fullName,
+                  rollNo: prof.rollNo,
+                  department: prof.departmentName,
+                  yearSemester: `B.Tech Semester ${prof.semester}`,
+                  teacherName: courses[0].faculty,
+                  teacherDesignation: 'Assistant Professor',
+                  academicSession: '2026-2027 Jul-Dec',
+                  timestamp: Date.now()
+                };
+                saveCoverDraft(targetJid, null, phone, coverObj);
+              }
+
+              userLastOpenedStudio.set(targetJid, 'cinderac_cover');
+
+              const body =
+                `*Cinderac Account Verified & Synced*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Student: *${prof.fullName}* (${prof.rollNo})\n` +
+                `Department: ${prof.departmentName} (Semester ${prof.semester})\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `*Enrolled Subjects (${courses.length} Courses):*\n` +
+                listText +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `_Select an enrolled subject below or reply 1 to ${Math.min(courses.length, 7)} to generate an official front cover immediately:_`;
+
+              const buttons = [];
+              if (courses[0]) buttons.push({ id: 'btn_cind_course_1', text: `1. ${courses[0].code}` });
+              if (courses[1]) buttons.push({ id: 'btn_cind_course_2', text: `2. ${courses[1].code}` });
+              if (courses[2]) buttons.push({ id: 'btn_cind_course_3', text: `3. ${courses[2].code}` });
+
+              await sendInteractiveButtons({
+                sock: activeBotSock,
+                jid: targetJid,
+                title: 'Cinderac Academic Verified',
+                body,
+                footer: '1-Click Front Cover · Agent Kurox',
+                buttons
+              });
+            } catch (pushErr) {
+              appendBotLog(`[WebAuth] ❌ Error in push notification callback: ${pushErr.message}`);
+            }
+          });
+        } catch (authInitErr) {
+          appendBotLog(`[WebAuth] ⚠️ Server init notice: ${authInitErr.message}`);
+        }
+      }
     }
   });
 
@@ -2633,11 +3536,6 @@ async function startBot() {
           ''
         ).trim();
 
-        // In groups, respond ONLY to faculty search (@find / !find) & @help / !help (never student search or print flow)
-        if (isGroup && !isGroupFacultyCommand(rawGroupText)) {
-          continue;
-        }
-
         // ======================================================================
         // 0. DETECT BUTTON INTERACTION (NATIVE FLOW QUICK-REPLY / TEMPLATE BUTTON)
         // ======================================================================
@@ -2670,6 +3568,20 @@ async function startBot() {
           const b = content?.buttonsResponseMessage || msg.message?.buttonsResponseMessage;
           buttonId = b.selectedButtonId;
           buttonText = b.selectedDisplayText;
+        }
+
+        if (!buttonId && (content?.listResponseMessage || msg.message?.listResponseMessage)) {
+          const l = content?.listResponseMessage || msg.message?.listResponseMessage;
+          buttonId = l.singleSelectReply?.selectedRowId || l.selectedRowId;
+          buttonText = l.title;
+        }
+
+        let clean = (rawGroupText || buttonText || '').trim().toLowerCase();
+
+        // In groups, respond ONLY to faculty search (@find / !find) or AI chat (@ai / !ai)
+        const isGroupAiTrigger = isGroup && !buttonId && /^[@!]ai\b/i.test(rawGroupText || '');
+        if (isGroup && !isGroupFacultyCommand(rawGroupText, buttonId) && !isGroupAiTrigger) {
+          continue;
         }
 
         // Check if this message was sent by the bot itself
@@ -2959,9 +3871,10 @@ async function startBot() {
           buttonId?.startsWith('unlock_') ||
           buttonId?.startsWith('search_ex_') ||
           buttonId?.startsWith('btn_pay_') ||
+          buttonId?.startsWith('btn_paywall_') ||
           buttonId === 'btn_flow_student' ||
           buttonId === 'info_limit_policy' ||
-          /^[@!#]?(student|phone|dossier|quota|credits|find\s+student|search\s+student)/i.test(rawText.trim()) ||
+          /^[@!#]?(student|phone|dossier|quota|credits|unlock|lock|revokepass|ban|unban|viplist|vip|find\s+student|search\s+student)/i.test(rawText.trim()) ||
           rawText.trim().toLowerCase() === 'student' ||
           rawText.trim().toLowerCase() === 'directory' ||
           rawText.trim().toLowerCase() === 'why limit' ||
@@ -2983,7 +3896,18 @@ async function startBot() {
             rawText.trim().toLowerCase() === '119'
           ));
 
-        const isStudentTrigger = isStudentExplicit || isStudentMenuChoice || isUnlockOrPay;
+        // Cinderac Auth Command Guard
+        const isLoginCommand = /^(?:login|logout|@cinderac|cinderac)\b/i.test(trimmedText);
+
+        // Natural Student Search Triggers ("search for student", "find student", "who is student", "who is ...", student rolls)
+        const isNaturalStudentQuery = !isGroup && !isLoginCommand && (
+          /^[@!#]?(?:search\s+for\s+student|find\s+student|student\s+search|search\s+student|who\s+is\s+student|student\s+named)\b/i.test(trimmedText) ||
+          /(?:\b|\/)([0-9]{2,3}[\/_][0-9]{2,4})\b/i.test(trimmedText) ||
+          /\b([A-Za-z]\/[0-9]{2}\/[A-Za-z]{2}\/[0-9]{2,4})\b/i.test(trimmedText) ||
+          (/^who\s+is\s+[a-zA-Z\s]{2,30}$/i.test(trimmedText) && !/\b(hod|dean|director|registrar|faculty|prof|dr)\b/i.test(trimmedText))
+        );
+
+        const isStudentTrigger = !isLoginCommand && (isStudentExplicit || isNaturalStudentQuery || isStudentMenuChoice || isUnlockOrPay);
 
         // Server Admin Controls (#status, #wifilogin, #wifi, #shutdown, #cancelshutdown, #update, admin buttons)
         if (isAdmin && !isGroup) {
@@ -3022,20 +3946,39 @@ async function startBot() {
           }
         }
 
-        // Faculty Search (@find / !find) & Help (@help / !help) - works in BOTH DMs and Groups
+        // Faculty Search (@find / !find / view_faculty_ disambiguation buttons) & Help (@help / !help) - works in BOTH DMs and Groups
         const facultyHandled = await handleFacultyMessage({
           sock,
           senderJid,
           rawBody: trimmedText,
           lowerBody: lowerText,
+          buttonId,
+          sendInteractiveButtons,
           isAdmin,
           isGroup,
+          rawMessage: msg,
           logFn: appendBotLog,
         });
         if (facultyHandled) continue;
 
-        // Hard guard: never run printing/media/greeting flows inside groups
-        if (isGroup) continue;
+        // Group Conversational AI (@ai <question>)
+        if (isGroup) {
+          if (isGroupAiTrigger) {
+            const aiGroupHandled = await handleAIChatMessage({
+              sock,
+              senderJid,
+              text: rawGroupText,
+              senderName,
+              isGroup: true,
+              rawMessage: msg,
+              logFn: appendBotLog,
+              sendButtonsFn: sendInteractiveButtons,
+            });
+            if (aiGroupHandled) continue;
+          }
+          // Hard guard: never run printing/media/greeting flows inside groups
+          continue;
+        }
 
         // ======================================================================
         // 1. INCOMING FILE (PDF / IMAGE / DOCUMENT) - UNWRAPPED & NON-BLOCKING
@@ -3055,9 +3998,85 @@ async function startBot() {
         }
 
         // ======================================================================
-        // 2. BUTTON CLICKS PROCESSING
+        // 2. BUTTON CLICKS & THEMATIC SHOWCASE SELECTION PROCESSING
         // ======================================================================
+        // Top priority: If user has an active Cinderac session and replies with course selection (e.g. "6", "course 6", "6th")
+        if (!buttonId) {
+          const uPhone = await resolveUserPhone(sock, senderJid);
+          const cSess = getCinderacSession(senderJid, uPhone);
+          const activeStudio = userLastOpenedStudio.get(senderJid) || (normalizedJid && userLastOpenedStudio.get(normalizedJid));
+
+          const hasPendingDisambig = pendingDisambiguations.has(senderJid) || (normalizedJid && pendingDisambiguations.has(normalizedJid));
+          const isExplicitCoursePhrase = /\b(?:course|subject|cover)\s+(?:[1-9]|1\d|20)\b/i.test(clean);
+          if (!hasPendingDisambig && cSess && cSess.courses && cSess.courses.length > 0 && (activeStudio === 'cinderac_cover' || isExplicitCoursePhrase)) {
+            const matchedIdx = matchCinderacCourseSelection(clean, cSess.courses);
+            if (matchedIdx !== -1) {
+              buttonId = `btn_cind_course_${matchedIdx + 1}`;
+              userLastOpenedStudio.set(senderJid, 'cinderac_cover');
+              if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'cinderac_cover');
+            }
+          }
+        }
+
+        if (!buttonId && (!session || session.stage === 'COMPLETED')) {
+          // A. If user has a pending student disambiguation, route typed input (1..4, roll, or name) directly to AI disambiguation
+          if (pendingDisambiguations.has(senderJid) || (normalizedJid && pendingDisambiguations.has(normalizedJid))) {
+            const userActivityPhone = await resolveUserPhone(sock, senderJid);
+            const aiHandled = await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: textMsg || clean,
+              senderName,
+              isGroup: false,
+              rawMessage: msg,
+              logFn: appendBotLog,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone: userActivityPhone,
+            });
+            if (aiHandled) continue;
+          }
+
+          const activeStudio = userLastOpenedStudio.get(senderJid) || (normalizedJid && userLastOpenedStudio.get(normalizedJid));
+
+          if (!buttonId && activeStudio && (clean === '1' || clean === '2' || clean === '3' || clean === '4')) {
+            if (activeStudio === 'cover_auth') {
+              if (clean === '1') buttonId = 'btn_cinderac_chat_info';
+              else if (clean === '2') buttonId = 'btn_cinderac_manual_presets';
+            } else if (activeStudio === 'agent_hub') {
+              if (clean === '1') buttonId = 'btn_flow_cover';
+              else if (clean === '2') buttonId = 'btn_flow_application';
+              else if (clean === '3') buttonId = 'btn_flow_game';
+              else if (clean === '4') buttonId = 'btn_flow_student';
+            } else if (activeStudio === 'cover') {
+              buttonId = `btn_ex_cover_${clean}`;
+            } else if (activeStudio === 'game') {
+              buttonId = `btn_ex_game_${clean}`;
+            } else if (activeStudio === 'app') {
+              buttonId = `btn_ex_app_${clean}`;
+            }
+            userLastOpenedStudio.delete(senderJid);
+            if (normalizedJid) userLastOpenedStudio.delete(normalizedJid);
+          }
+        }
+
         if (buttonId) {
+          if (buttonId.startsWith('btn_disambig_') || buttonId.startsWith('btn_name_intent_')) {
+            const userActivityPhone = await resolveUserPhone(sock, senderJid);
+            const aiHandled = await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: buttonId,
+              senderName,
+              isGroup: false,
+              rawMessage: msg,
+              logFn: appendBotLog,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone: userActivityPhone,
+            });
+            if (aiHandled) continue;
+          }
           if (buttonId === 'btn_campaign_send') {
             const campaign = adminCampaignState.get(senderJid) || adminCampaignState.get(normalizedJid);
             if (!campaign) {
@@ -3123,6 +4142,41 @@ async function startBot() {
             });
             continue;
           }
+          if (buttonId === 'btn_flow_agent' || buttonId === 'btn_paywall_chat_agent') {
+            userLastOpenedStudio.set(senderJid, 'agent_hub');
+            if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'agent_hub');
+            const hr = new Date().getHours();
+            const timeGreeting = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+            const cleanName = (senderName && /^[a-zA-Z\s]{2,25}$/.test(senderName.trim())) ? `, ${senderName.trim()}` : '';
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: 'Agent Kurox · Campus AI Companion',
+              body:
+                `*${timeGreeting}${cleanName}!* ☀️\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `I am *Agent Kurox*, your advanced AI assistant and campus companion at NERIST.\n\n` +
+                `You can consult me on engineering derivations, mathematical solutions, programming, campus procedures, and academic drafting.\n\n` +
+                `*Quick Studio Options:*\n\n` +
+                `1. 📄 *Assignment Front Cover* — 1-Click official NERIST front covers\n` +
+                `2. 📝 *Academic Application* — Formal leave, medical, or NOC requests\n` +
+                `3. 🎮 *Offline Mini-Games & Tools* — Playable browser tools (Snake, Ludo, Calculators)\n` +
+                `4. 🔍 *Campus Directory* — Search students and faculty records\n\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `🎓 *Cinderac & SymphonyX Campus Integration:*\n` +
+                `Reply \`login <RegId> <Password>\` to check your live attendance & bunk limits, semester SGPA/CGPA trend graph, or download official admit cards!\n` +
+                `_(Creating covers & applications is 100% free and never requires login)_\n\n` +
+                `_Tap an action below, reply with a number (1-4), or type any question:_`,
+              footer: 'Agent Kurox · Campus AI Companion',
+              buttons: [
+                { id: 'btn_flow_cover', text: '📄 Assignment Front Cover' },
+                { id: 'btn_flow_application', text: '📝 Academic Application' },
+                { id: 'btn_flow_game', text: '🎮 Offline Mini-Game' },
+                { id: 'btn_flow_student', text: '🔍 Directory Search' },
+              ],
+            });
+            continue;
+          }
           if (buttonId === 'btn_flow_faculty') {
             const facultyGuide =
               '👨‍🏫 *NERIST Faculty Directory Search*\n' +
@@ -3138,27 +4192,563 @@ async function startBot() {
             continue;
           }
           if (buttonId === 'btn_flow_printing') {
-            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
-            const onboardingPrompt =
-              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
-              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
-              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)_\n` +
-              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)_\n` +
-              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
-              `📄 *Standard Rates (1–9 pages):*\n` +
-              `• B&W Single: ₹4/page\n` +
-              `• Color Single: ₹7/page\n\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
-              `📚 *Multiple Files?* Send them one by one to combine into a single print job.\n\n` +
-              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `_Send your file now to start!_`;
-            await sock.sendMessage(senderJid, { text: onboardingPrompt });
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '🖨️ Campus Printing Services',
+              body: `Choose how you would like to print your documents:`,
+              footer: 'PrintKurox · Hostel Block B Kiosk',
+              buttons: [
+                { text: '🌐 Print via Website', url: `${PUBLIC_KIOSK_URL}/` },
+                { id: 'btn_print_via_whatsapp', text: '📱 Print via WhatsApp' },
+              ],
+            });
             continue;
           }
+
+          if (buttonId === 'btn_print_via_whatsapp') {
+            const waGuide =
+              `📱 *How to Print via WhatsApp*\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `1️⃣ *Send your files:* Forward or attach your PDF, Word doc, or photo directly here.\n\n` +
+              `2️⃣ *Look for the reaction emoji:*\n` +
+              `   • 📄 / 🖼️ reaction = File successfully received and queued.\n` +
+              `   • ⚠️ *No reaction emoji?* WhatsApp dropped the upload packet over mobile network. Please send that file again!\n\n` +
+              `3️⃣ *Multiple files:* Send all your files one by one. I will bundle them together under 1 single pickup code.\n\n` +
+              `4️⃣ *Proceed:* Tap *Proceed to Print* when all your files are sent!\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `📍 *Kiosk Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
+              `⚡ *Rates:* B&W ₹3–4/p · Color ₹5–7/p\n\n` +
+              `_Send your document or photo here now to get started!_`;
+            await sock.sendMessage(senderJid, { text: waGuide });
+            continue;
+          }
+
+          // --- AI APPLICATION / GAME DRAFT CONFIRMATION BUTTONS ---
+          if (buttonId === 'btn_draft_pdf') {
+            await handleGenerateApplicationPdfAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
+          }
+          if (buttonId === 'btn_draft_docx') {
+            await handleGenerateApplicationDocxAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
+          }
+          if (buttonId === 'btn_cover_pdf') {
+            await handleGenerateAssignmentCoverPdfAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
+          }
+          if (buttonId === 'btn_cover_docx') {
+            await handleGenerateAssignmentCoverDocxAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
+          }
+          if (buttonId === 'btn_cover_edit') {
+            await sock.sendMessage(senderJid, {
+              text: `✏️ *Edit Assignment Cover Details*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nReply with your updated details (Subject Name, Code, Assignment Number, or Teacher Name), and I will generate the revised cover!`
+            });
+            continue;
+          }
+          if (buttonId.startsWith('btn_cind_course_')) {
+            const courseIdx = parseInt(buttonId.replace('btn_cind_course_', ''), 10) - 1;
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            await handleGenerateCinderacCoverAction({
+              sock,
+              senderJid,
+              normalizedJid,
+              senderName,
+              userPhone,
+              courseIndex: courseIdx
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_cinderac_web_link') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            const token = createAuthToken(userPhone, senderJid);
+            const base = getPublicAuthUrl();
+            const hasValidTunnel = base && !base.includes('localhost') && !base.includes('api.trycloudflare.com');
+
+            let msg = `🔐 *Cinderac Portal Verification*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            if (hasValidTunnel) {
+              msg += `👉 *Tap to log in securely via Browser:*\n${base}/auth?t=${token}\n\n⏱️ _Expires in 10 minutes · Single-Use Cryptographic Token_\n\n`;
+            } else {
+              msg += `⚡ *Fastest Method (Direct in Chat):*\nReply directly to this chat with:\n\`login <RegId> <Password>\`\n\n💡 _Example:_\n\`login 121/016 Password123\`\n\n`;
+            }
+            msg += `_Your credentials are verified directly with Cinderac over SSL and never saved._`;
+
+            await sock.sendMessage(senderJid, { text: msg });
+            continue;
+          }
+
+          if (buttonId === 'btn_cinderac_chat_info') {
+            await sock.sendMessage(senderJid, {
+              text:
+                `💬 *In-Chat Cinderac Authentication*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Reply directly to this chat with:\n` +
+                `\`login <RegId> <Password>\`\n\n` +
+                `💡 *Example:*\n` +
+                `\`login 121/016 Password123\`\n\n` +
+                `🔒 _Your credentials are validated over SSL directly with Cinderac and never saved on disk._`
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_cinderac_manual_presets') {
+            userLastOpenedStudio.set(senderJid, 'cover');
+            if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'cover');
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '📄 Assignment Front Cover (Manual)',
+              body:
+                `Choose one of the prefilled working showcases below to generate immediately, or reply with your own details:\n\n` +
+                `*1️⃣ Civil Engineering (Structural Dynamics)*\n` +
+                `• *Subject:* CE24016 STRUCTURAL DYNAMICS\n` +
+                `• *Student:* ANIRBAN ROY (D/23/CE/035) · B.Tech 4th Year\n` +
+                `• *Submitted To:* DR. TORI BASAR (Assistant Professor)\n\n` +
+                `*2️⃣ Electronics & Communication (DSP)*\n` +
+                `• *Subject:* EC31001 DIGITAL SIGNAL PROCESSING\n` +
+                `• *Student:* RICHARD KONSAM (D/23/EC/002) · B.Tech 4th Year\n` +
+                `• *Submitted To:* DR. JOYATRI BORA HAZARIKA (Assoc. Prof & HOD)\n\n` +
+                `*3️⃣ Computer Science (Data Structures)*\n` +
+                `• *Subject:* CS21001 DATA STRUCTURES & ALGORITHMS\n` +
+                `• *Student:* ANKAN DAS (D/22/CS/014) · B.Tech 4th Year\n` +
+                `• *Submitted To:* DR. MD. ANWAR HUSSAIN (Prof & Dean Academic)\n\n` +
+                `_Tap an option below to generate immediately:_`,
+              footer: 'Official NERIST Template · Red Crest',
+              buttons: [
+                { id: 'btn_ex_cover_1', text: '📄 1. Civil: CE24016' },
+                { id: 'btn_ex_cover_2', text: '📄 2. ECE: EC31001' },
+                { id: 'btn_ex_cover_3', text: '📄 3. CSE: CS21001' },
+              ],
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_flow_cover') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            const cinderacSession = getCinderacSession(senderJid, userPhone);
+
+            if (cinderacSession && cinderacSession.courses && cinderacSession.courses.length > 0) {
+              userLastOpenedStudio.set(senderJid, 'cinderac_cover');
+              if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'cinderac_cover');
+              const prof = cinderacSession.profile || {};
+              const courses = cinderacSession.courses || [];
+              let listText = '';
+              courses.forEach((c, idx) => {
+                listText += `${idx + 1}️⃣ *${c.code}* · ${c.name}\n   👨‍🏫 Faculty: ${c.faculty}\n`;
+              });
+
+              const body =
+                `🎓 *Cinderac Verified Student: ${prof.fullName || 'Student'}*\n` +
+                `🔢 *Roll Number:* ${prof.rollNo || ''}\n` +
+                `🆔 *Registration Number:* ${prof.regId || ''}\n` +
+                `🏛️ *Department:* ${prof.departmentName || ''}\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📚 *Select your enrolled subject for 1-Click Cover (${courses.length} Courses):*\n` +
+                listText +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `_Tap a subject below or reply with a course number (1-${courses.length}) or course code to generate your official front cover!_`;
+
+              const buttons = [];
+              if (courses[0]) buttons.push({ id: 'btn_cind_course_1', text: `📄 1. ${courses[0].code}` });
+              if (courses[1]) buttons.push({ id: 'btn_cind_course_2', text: `📄 2. ${courses[1].code}` });
+              if (courses[2]) buttons.push({ id: 'btn_cind_course_3', text: `📄 3. ${courses[2].code}` });
+
+              await sendInteractiveButtons({
+                sock,
+                jid: senderJid,
+                title: '📄 Assignment Front Cover Studio',
+                body,
+                footer: '1-Click Cinderac Sync · Agent Kurox',
+                buttons
+              });
+              continue;
+            }
+
+            // Not yet synced with Cinderac
+            userLastOpenedStudio.set(senderJid, 'cover_auth');
+            if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'cover_auth');
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '📄 Assignment Front Cover Studio',
+              body:
+                `✨ *Create Official Assignment Cover*\n` +
+                `You can create your cover *freely and instantly* right now! Choose a manual preset below or tell me your subject in chat.\n\n` +
+                `⚡ *Optional Superpower — Cinderac Sync:*\n` +
+                `Want all your registered subjects & faculty loaded in 1-tap?\n` +
+                `Simply reply: \`login <RegId> <Password>\`\n\n` +
+                `💡 _Example:_\n` +
+                `\`login 121/016 Password123\`\n\n` +
+                `_Credentials are verified directly with Cinderac over SSL and are never stored._`,
+              footer: 'Official NERIST Template · Red Crest',
+              buttons: [
+                { id: 'btn_cinderac_manual_presets', text: '⚡ Manual Presets' },
+                { id: 'btn_cinderac_chat_info', text: '💬 Login Instructions' },
+              ],
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_flow_application') {
+            userLastOpenedStudio.set(senderJid, 'app');
+            if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'app');
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '📝 Academic Application Studio',
+              body:
+                `Choose one of the prefilled formal letter templates below to generate immediately, or reply with your custom details:\n\n` +
+                `*1️⃣ Hostel Leave / Night-out Permission*\n` +
+                `• *To:* The Warden, Hostel Block B, NERIST\n` +
+                `• *Purpose:* 3-day home leave with travel & emergency contact details\n\n` +
+                `*2️⃣ Medical Leave & Attendance Exemption*\n` +
+                `• *To:* Dr. Joyatri Bora Hazarika, HOD (ECE), NERIST\n` +
+                `• *Purpose:* 4-day medical leave with doctor prescription reference\n\n` +
+                `*3️⃣ Bonafide / NOC Certificate Request*\n` +
+                `• *To:* The Registrar / Dean (Academic), NERIST\n` +
+                `• *Purpose:* Formal certificate issuance for passport / scholarship\n\n` +
+                `_Tap an option below to generate immediately:_`,
+              footer: 'Formal Academic Format · Zero Filler',
+              buttons: [
+                { id: 'btn_ex_app_1', text: '📝 1. Hostel Leave' },
+                { id: 'btn_ex_app_2', text: '🏥 2. Medical Leave' },
+                { id: 'btn_ex_app_3', text: '📜 3. Bonafide / NOC' },
+              ],
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_flow_game') {
+            userLastOpenedStudio.set(senderJid, 'game');
+            if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'game');
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '🎮 Playable Offline Game Studio',
+              body:
+                `Choose one of the working prefilled games below to download and play directly in your mobile browser with zero internet:\n\n` +
+                `*1️⃣ Classic Retro Arcade Snake*\n` +
+                `• Smooth touch D-Pad & keyboard controls, animated apple food, speed scaling, and live high-score tracker.\n\n` +
+                `*2️⃣ Interactive Multiplayer Ludo Board*\n` +
+                `• 2 to 4 player offline board with 3D animated dice rolling, authentic home paths, turn indicators, and token capturing.\n\n` +
+                `*3️⃣ Neon Tic-Tac-Toe vs Minimax AI*\n` +
+                `• Smart unbeatable AI opponent, neon cyber theme, win-streak tracker, and instant replay.\n\n` +
+                `_Tap an option below to generate immediately:_`,
+              footer: 'Single-File HTML5 · Offline Playable',
+              buttons: [
+                { id: 'btn_ex_game_1', text: '🐍 1. Classic Snake' },
+                { id: 'btn_ex_game_2', text: '🎲 2. Offline Ludo' },
+                { id: 'btn_ex_game_3', text: '❌ 3. Tic-Tac-Toe AI' },
+              ],
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_flow_attendance') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: 'check my attendance',
+              senderName,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_flow_results') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: 'show my exam results and graph',
+              senderName,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_flow_birthdays') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: 'who has birthday today',
+              senderName,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_flow_admit_card') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: 'download my admit card',
+              senderName,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone
+            });
+            continue;
+          }
+
+          // --- PREFILLED SHOWCASE OPTION TRIGGERS ---
+          if (buttonId === 'btn_ex_cover_1' || buttonId === 'btn_ex_cover_2' || buttonId === 'btn_ex_cover_3') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            let coverObj;
+            if (buttonId === 'btn_ex_cover_1') {
+              coverObj = {
+                subjectName: 'STRUCTURAL DYNAMICS',
+                subjectCode: 'CE24016',
+                assignmentTitle: 'ASSIGNMENT',
+                studentName: 'ANIRBAN ROY',
+                rollNo: 'D/23/CE/035',
+                yearSemester: 'B.Tech 4th Year',
+                teacherName: 'DR. TORI BASAR',
+                teacherDesignation: 'Assistant Professor',
+                department: 'CIVIL ENGINEERING',
+                timestamp: Date.now(),
+              };
+            } else if (buttonId === 'btn_ex_cover_2') {
+              coverObj = {
+                subjectName: 'DIGITAL SIGNAL PROCESSING',
+                subjectCode: 'EC31001',
+                assignmentTitle: 'ASSIGNMENT',
+                studentName: 'RICHARD KONSAM',
+                rollNo: 'D/23/EC/002',
+                yearSemester: 'B.Tech 4th Year',
+                teacherName: 'DR. JOYATRI BORA HAZARIKA',
+                teacherDesignation: 'Associate Professor & HOD',
+                department: 'ELECTRONICS AND COMMUNICATION ENGINEERING',
+                timestamp: Date.now(),
+              };
+            } else {
+              coverObj = {
+                subjectName: 'DATA STRUCTURES & ALGORITHMS',
+                subjectCode: 'CS21001',
+                assignmentTitle: 'ASSIGNMENT',
+                studentName: 'ANKAN DAS',
+                rollNo: 'D/22/CS/014',
+                yearSemester: 'B.Tech 4th Year',
+                teacherName: 'DR. MD. ANWAR HUSSAIN',
+                teacherDesignation: 'Professor & Dean Academic',
+                department: 'COMPUTER SCIENCE AND ENGINEERING',
+                timestamp: Date.now(),
+              };
+            }
+            saveCoverDraft(senderJid, normalizedJid, userPhone, coverObj);
+            const cardMsg =
+              `📄 *Official NERIST Assignment Front Cover Ready!*\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `• *Assignment:* ${coverObj.assignmentTitle}\n` +
+              `• *Subject:* ${coverObj.subjectCode}  ${coverObj.subjectName}\n` +
+              `• *Submitted By:* ${coverObj.studentName} (${coverObj.rollNo}) · ${coverObj.yearSemester}\n` +
+              `• *Submitted To:* ${coverObj.teacherName} (${coverObj.teacherDesignation})\n` +
+              `• *Department:* DEPARTMENT OF ${coverObj.department}\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `✅ *Format Verified:* Official red NERIST crest, academic border & accreditation footer.\n\n` +
+              `_Tap below to download your ready-to-print PDF or Word document:_`;
+
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '📄 Assignment Front Cover Ready',
+              body: cardMsg,
+              footer: 'PrintKurox AutoPrint · Official Template',
+              buttons: [
+                { id: 'btn_cover_pdf', text: '📄 Download Cover PDF' },
+                { id: 'btn_cover_docx', text: '📝 Download Cover DOCX' },
+                { id: 'btn_cover_edit', text: '✏️ Edit Details' },
+              ],
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_ex_game_1' || buttonId === 'btn_ex_game_2' || buttonId === 'btn_ex_game_3') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            let gameType = 'snake';
+            let gameTitle = 'Classic Retro Arcade Snake';
+            if (buttonId === 'btn_ex_game_2') {
+              gameType = 'ludo';
+              gameTitle = 'Interactive Multiplayer Ludo Board';
+            } else if (buttonId === 'btn_ex_game_3') {
+              gameType = 'tictactoe';
+              gameTitle = 'Neon Tic-Tac-Toe vs Minimax AI';
+            }
+
+            const generatedHtml = generateHtmlGame(gameType, { studentName: senderName || 'NERIST Student' });
+            const gameObj = { gameType, htmlContent: generatedHtml, timestamp: Date.now() };
+            activeGameDrafts.set(senderJid, gameObj);
+            if (normalizedJid) activeGameDrafts.set(normalizedJid, gameObj);
+            if (userPhone) activeGameDrafts.set(userPhone, gameObj);
+
+            const cardMsg =
+              `🎮 *${gameTitle} Generated!*\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `• *Type:* Single-file offline HTML5 game\n` +
+              `• *Instructions:* Tap *Download .HTML File* to save and play instantly in your mobile browser (Chrome/Safari), or copy the raw code!\n\n` +
+              `_Zero internet connection required after downloading._`;
+
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '🎮 Playable Web Game Ready',
+              body: cardMsg,
+              footer: 'PrintKurox Web Studio',
+              buttons: [
+                { id: 'btn_draft_html', text: '🌐 Download .HTML File' },
+                { text: '📋 Copy HTML Code', copyCode: generatedHtml },
+                { id: 'btn_flow_game', text: '🎮 Play Another Game' },
+              ],
+            });
+            continue;
+          }
+
+          if (buttonId === 'btn_ex_app_1' || buttonId === 'btn_ex_app_2' || buttonId === 'btn_ex_app_3') {
+            const userPhone = await resolveUserPhone(sock, senderJid);
+            let letterText = '';
+            const todayStr = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+
+            if (buttonId === 'btn_ex_app_1') {
+              letterText =
+`To,
+The Warden,
+Hostel Block B,
+North Eastern Regional Institute of Science and Technology (NERIST),
+Nirjuli, Arunachal Pradesh - 791109.
+
+Date: ${todayStr}
+
+Subject: Application for permission for 3 days hostel leave.
+
+Respected Sir,
+
+I am writing to formally request permission for a temporary leave of absence from the hostel for a period of three days, starting from tomorrow. I need to visit my hometown due to an urgent family commitment.
+
+During my absence, I will ensure that my academic responsibilities remain unaffected. My emergency contact and travel details have been provided below for your reference.
+
+I kindly request you to grant me leave for the mentioned duration.
+
+Thanking you.
+
+Yours obediently,
+(Signature of Student)
+Name: ${senderName || 'Student'}
+Roll No: D/23/CE/035
+Room No: Block B, Room 214
+Contact: +91 ${userPhone || '9863013886'}`;
+            } else if (buttonId === 'btn_ex_app_2') {
+              letterText =
+`To,
+Dr. Joyatri Bora Hazarika,
+Head of Department,
+Department of Electronics and Communication Engineering,
+North Eastern Regional Institute of Science and Technology (NERIST),
+Nirjuli, Arunachal Pradesh - 791109.
+
+Date: ${todayStr}
+
+Subject: Application for leave of absence on medical grounds and attendance condonation.
+
+Respected Madam,
+
+I beg most respectfully to bring to your kind notice that I was diagnosed with severe viral fever and was advised strict bed rest by the medical officer from the campus health center for four days.
+
+Consequently, I was unable to attend the scheduled theory lectures and laboratory sessions during this period. I have attached the official medical fitness prescription for your kind verification.
+
+Therefore, I earnestly request you to kindly condone my absence and grant me leave for the aforementioned dates so that my academic attendance requirement is not adversely affected.
+
+Thanking you.
+
+Yours faithfully,
+(Signature of Student)
+Name: RICHARD KONSAM
+Roll No: D/23/EC/002
+Department: Electronics and Communication Engineering
+Semester: 7th Semester (B.Tech 4th Year)`;
+            } else {
+              letterText =
+`To,
+The Registrar / Dean (Academic),
+North Eastern Regional Institute of Science and Technology (NERIST),
+Nirjuli, Arunachal Pradesh - 791109.
+
+Date: ${todayStr}
+
+Subject: Request for issuance of Bonafide Student Certificate.
+
+Respected Sir,
+
+I am a bonafide student of this institute, currently pursuing the Bachelor of Technology (B.Tech) program in the Department of Computer Science and Engineering, in the 4th Year (7th Semester).
+
+I require an official Bonafide Student Certificate for the purpose of applying for an upcoming national internship program and passport renewal.
+
+I kindly request your office to issue the Bonafide Certificate at your earliest convenience. My academic registration credentials are furnished below.
+
+Thanking you.
+
+Yours obediently,
+(Signature of Student)
+Name: ANKAN DAS
+Roll No: D/22/CS/014
+Registration No: 121/045
+Department: Computer Science and Engineering`;
+            }
+
+            const draftObj = {
+              draftText: letterText,
+              text: letterText,
+              studentName: senderName || 'NERIST Student',
+              rollNo: '',
+              timestamp: Date.now(),
+            };
+            activeDrafts.set(senderJid, draftObj);
+            if (normalizedJid) activeDrafts.set(normalizedJid, draftObj);
+            if (userPhone) activeDrafts.set(userPhone, draftObj);
+
+            // Send pure letter directly in chat
+            await sock.sendMessage(senderJid, { text: letterText });
+
+            // Follow up with action buttons
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '📄 Academic Application Ready',
+              body: 'Your formal application is ready. Choose an option below to copy or download:',
+              footer: 'PrintKurox Academic Studio',
+              buttons: [
+                { text: '📋 Copy Letter', copyCode: letterText },
+                { id: 'btn_draft_pdf', text: '📄 Generate Official PDF' },
+                { id: 'btn_draft_docx', text: '📝 Generate Word DOCX' },
+              ],
+            });
+            continue;
+          }
+          if (buttonId === 'btn_print_generated_doc') {
+            await handlePrintGeneratedDocAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
+          }
+          if (buttonId === 'btn_draft_html') {
+            await handleGenerateHtmlGameAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
+          }
+          if (buttonId === 'btn_draft_edit') {
+            await sock.sendMessage(senderJid, {
+              text: `✏️ *Edit Application Draft*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nSimply reply here with the details you'd like to adjust (e.g. dates, reason, or roll number)!\n\nI will update the draft for you.`
+            });
+            continue;
+          }
+
           // Session Expiration Guard
           if (session && isSessionExpired(session) && session.stage !== 'COMPLETED') {
             userSessions.delete(senderJid);
@@ -3191,32 +4781,71 @@ async function startBot() {
             continue;
           }
 
-          // --- QUEUE STAGING BUTTON: CONTINUE TO PRINT ---
+          // --- QUEUE STAGING / CHANGE SETTINGS BUTTON: CONTINUE TO PRINT ---
           if (buttonId === 'btn_queue_continue') {
             if (!session) {
               await sendSessionExpiredMessage(sock, senderJid);
+              continue;
+            }
+            if (session.stage === 'CHANGE_SETTINGS_STAGING' && session.colorMode) {
+              await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
               continue;
             }
             await continueWithQueuedFiles({ sock, senderJid, session, senderName });
             continue;
           }
 
+          // --- CHANGE SETTINGS / PROMO BUTTON: APPLY PROMO CODE ---
+          if (buttonId === 'btn_queue_promo') {
+            if (!session) {
+              await sendSessionExpiredMessage(sock, senderJid);
+              continue;
+            }
+            if (session.promoApplied) {
+              await sock.sendMessage(senderJid, {
+                text:
+                  `🎟️ *Promo Discount Already Active!*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Your promotional discount is already active on this order.\n\n` +
+                  `⚡ *Active Rates:*\n` +
+                  `• ⚫ B&W: *₹3.00/p* (<10 pgs) · *₹2.50/p* (10+ pgs)\n` +
+                  `• 🎨 Color: *₹5.00/p* (<10 pgs) · *₹4.00/p* (10+ pgs)\n\n` +
+                  `_Settings are preserved! Tap "Proceed to Print" to view your updated summary._`,
+              });
+              if (session.colorMode) {
+                await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+              } else {
+                await sendChangeSettingsCard({ sock, senderJid, session });
+              }
+              continue;
+            }
+
+            session.prevStage = session.stage || 'CHANGE_SETTINGS_STAGING';
+            session.stage = 'AWAITING_PROMO_CODE';
+            await sock.sendMessage(senderJid, {
+              text:
+                `🎟️ *Enter Promo Code*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Please reply with your promo code to unlock exclusive student print tariffs for this order.\n\n` +
+                `_Reply with your code or send *cancel* to return._`,
+            });
+            continue;
+          }
+
+          // --- QUEUE STAGING BUTTON: RESCAN RECENT FILES (LEGACY FALLBACK) ---
+          if (buttonId === 'btn_queue_rescan') {
+            await handleRescanRecentFiles({ sock, senderJid, normalizedJid, session, senderName });
+            continue;
+          }
+
           // --- QUEUE STAGING BUTTON: CLEAR QUEUE ---
           if (buttonId === 'btn_queue_clear') {
-            if (session) {
-              if (session.jobId && activePollers.has(session.jobId)) {
-                clearInterval(activePollers.get(session.jobId));
-                activePollers.delete(session.jobId);
-              }
-              session.queuedFiles = [];
-              userSessions.delete(senderJid);
-              userSessions.delete(normalizedJid);
-            }
+            purgeUserPrintSession(senderJid, normalizedJid);
             await sock.sendMessage(senderJid, {
               text:
                 `🗑️ *Print Queue Cleared*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Your print queue has been emptied.\n` +
+                `Your print queue has been emptied and all files cancelled.\n` +
                 `Whenever you're ready, forward or send any document or photo to start fresh!`,
             });
             continue;
@@ -3369,23 +4998,16 @@ async function startBot() {
               clearInterval(activePollers.get(session.jobId));
               activePollers.delete(session.jobId);
             }
-            session.stage = 'QUEUE_STAGING';
-            session.colorMode = null;
-            session.copies = 1;
-            session.selectedPages = null;
-            session.pageRangeStr = 'All';
+            // PRESERVE current print settings (colorMode, copies, selectedPages, orientation)
+            session.stage = 'CHANGE_SETTINGS_STAGING';
             session.paymentLinkUrl = null;
             session.paymentLinkId = null;
             session.jobId = null;
             session.pickupCode = null;
             session.timestamp = Date.now();
 
-            console.log(`[WA-Bot] ${senderName} tapped RESET / CHANGE. Re-dispatching Queue Staging.`);
-            if (session.queuedFiles && session.queuedFiles.length > 0) {
-              await sendQueueStagingCard({ sock, senderJid, session });
-            } else if (session.fileName) {
-              await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb);
-            }
+            console.log(`[WA-Bot] ${senderName} tapped RESET / CHANGE. Showing Change Settings Card (Settings Preserved).`);
+            await sendChangeSettingsCard({ sock, senderJid, session });
             continue;
           }
 
@@ -3413,13 +5035,16 @@ async function startBot() {
         // 3. INCOMING TEXT REPLY (TYPED FALLBACK / STATIONS / CASH / HELP)
         // ======================================================================
         const textMsg =
-          msg.message.conversation ||
-          msg.message.extendedTextMessage?.text ||
+          msg.message?.conversation ||
+          msg.message?.extendedTextMessage?.text ||
+          content?.conversation ||
+          content?.extendedTextMessage?.text ||
           buttonText ||
+          rawGroupText ||
           '';
 
         if (textMsg && !isGroup) {
-          const clean = textMsg.trim().toLowerCase();
+          clean = textMsg.trim().toLowerCase();
 
           // Session Expiration Guard for typed input
           if (session && isSessionExpired(session) && session.stage !== 'COMPLETED') {
@@ -3431,15 +5056,7 @@ async function startBot() {
 
           // --- UNIVERSAL CANCEL / STOP COMMAND ---
           if (/^(cancel|stop|abort|exit|quit|clear|end|cancel\s+order)$/i.test(clean)) {
-            if (session) {
-              if (session.jobId && activePollers.has(session.jobId)) {
-                clearInterval(activePollers.get(session.jobId));
-                activePollers.delete(session.jobId);
-              }
-              if (session.queuedFiles) session.queuedFiles = [];
-              userSessions.delete(senderJid);
-              userSessions.delete(normalizedJid);
-            }
+            purgeUserPrintSession(senderJid, normalizedJid);
             await sock.sendMessage(senderJid, {
               text:
                 `❌ *Print Order Cancelled*\n` +
@@ -3447,6 +5064,177 @@ async function startBot() {
                 `Your active print session and queue have been cleared.\n` +
                 `No payment has been charged.\n\n` +
                 `_Whenever you're ready, simply send or forward a new document or photo to start fresh!_`,
+            });
+            continue;
+          }
+
+          // --- PROMO CODE ENTRY STAGE ---
+          if (session && session.stage === 'AWAITING_PROMO_CODE') {
+            const enteredCode = clean.trim().toUpperCase();
+            if (clean === 'cancel' || clean === 'back' || clean === 'return' || clean === 'skip') {
+              session.stage = session.prevStage || 'CHANGE_SETTINGS_STAGING';
+              const returnToPayment = Boolean(session.colorMode);
+              delete session.prevStage;
+              await sock.sendMessage(senderJid, {
+                text: '↩️ Promo code entry cancelled. Standard tariffs apply.',
+              });
+              if (returnToPayment) {
+                await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+              } else {
+                await sendChangeSettingsCard({ sock, senderJid, session });
+              }
+              continue;
+            }
+
+            if (isValidPromoCode(enteredCode)) {
+              session.promoApplied = true;
+              session.promoCode = VALID_PROMO_CODE;
+              session.stage = 'AWAITING_PAYMENT';
+              delete session.prevStage;
+
+              // Clear prior payment link so Razorpay / UPI link is regenerated with discounted total
+              session.paymentLinkUrl = null;
+              session.paymentLinkId = null;
+
+              console.log(`[WA-Bot] 🎟️ Valid Promo Code applied for ${senderName} (${senderJid}) with preserved settings.`);
+              await sock.sendMessage(senderJid, {
+                text:
+                  `🎉 *Promo Code Applied Successfully!*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Exclusive student promotional tariffs activated for this order:\n` +
+                  `• ⚫ B&W: *₹3.00/p* (<10 pgs) · *₹2.50/p* (10+ pgs)\n` +
+                  `• 🎨 Color: *₹5.00/p* (<10 pgs) · *₹4.00/p* (10+ pgs)\n\n` +
+                  `_Your print settings (color mode & copies) are preserved! Here is your updated discount checkout:_`,
+              });
+
+              // Dispatch the edited discount order summary card with new price & UPI link!
+              await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+              continue;
+            } else {
+              session.stage = session.prevStage || 'CHANGE_SETTINGS_STAGING';
+              delete session.prevStage;
+
+              console.log(`[WA-Bot] ❌ Invalid promo code attempt "${clean}" by ${senderName} (${senderJid})`);
+              await sock.sendMessage(senderJid, {
+                text:
+                  `❌ *Invalid Promo Code*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `The promo code you entered is not recognized or has expired.\n` +
+                  `Standard tariffs will apply to your order.\n\n` +
+                  `_Your previous settings are preserved._`,
+              });
+
+              if (session.colorMode) {
+                await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+              } else {
+                await sendChangeSettingsCard({ sock, senderJid, session });
+              }
+              continue;
+            }
+          }
+
+          // --- CHANGE SETTINGS INTERACTIVE TEXT REPLIES ---
+          if (session && session.stage === 'CHANGE_SETTINGS_STAGING') {
+            if (/^(bw|b&w|black|black\s*and\s*white|mono|monochrome)$/i.test(clean)) {
+              session.colorMode = 'bw';
+              session.paymentLinkUrl = null;
+              session.paymentLinkId = null;
+              await sock.sendMessage(senderJid, { text: '⚫ Print mode updated to *Black & White*.' });
+              await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+              continue;
+            }
+            if (/^(color|colour)$/i.test(clean)) {
+              session.colorMode = 'color';
+              session.paymentLinkUrl = null;
+              session.paymentLinkId = null;
+              await sock.sendMessage(senderJid, { text: '🎨 Print mode updated to *Color*.' });
+              await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+              continue;
+            }
+            const copyMatch = clean.match(/^(\d+)(?:\s*copies|\s*copy)?$/i);
+            if (copyMatch) {
+              const c = parseInt(copyMatch[1], 10);
+              if (c >= 1 && c <= 50) {
+                session.copies = c;
+                session.paymentLinkUrl = null;
+                session.paymentLinkId = null;
+                await sock.sendMessage(senderJid, { text: `🔢 Copies updated to *${c}*.` });
+                await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+                continue;
+              }
+            }
+            if (/^(proceed|print|continue|pay|done|checkout)$/i.test(clean)) {
+              await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+              continue;
+            }
+          }
+
+          // --- DIRECT PROMO CODE ENTRY AT ANY ACTIVE PRINT STAGE ---
+          if (session && session.stage && session.stage !== 'COMPLETED' && isValidPromoCode(clean)) {
+            if (session.promoApplied) {
+              await sock.sendMessage(senderJid, {
+                text:
+                  `🎟️ *Promo Code Already Active!*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Your promotional discount is already active on this order.\n\n` +
+                  `⚡ *Active Rates:*\n` +
+                  `• ⚫ B&W: *₹3.00/p* (<10 pgs) · *₹2.50/p* (10+ pgs)\n` +
+                  `• 🎨 Color: *₹5.00/p* (<10 pgs) · *₹4.00/p* (10+ pgs)\n\n` +
+                  `_Discount is applied once per order._`,
+              });
+              continue;
+            }
+
+            session.promoApplied = true;
+            session.promoCode = VALID_PROMO_CODE;
+            session.paymentLinkUrl = null;
+            session.paymentLinkId = null;
+
+            console.log(`[WA-Bot] 🎟️ Direct Promo Code applied for ${senderName} (${senderJid}) at stage ${session.stage}`);
+            await sock.sendMessage(senderJid, {
+              text:
+                `🎉 *Promo Code Applied Successfully!*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Exclusive student promotional tariffs activated for this order:\n` +
+                `• ⚫ B&W: *₹3.00/p* (<10 pgs) · *₹2.50/p* (10+ pgs)\n` +
+                `• 🎨 Color: *₹5.00/p* (<10 pgs) · *₹4.00/p* (10+ pgs)\n\n` +
+                `_Discount active for this print order!_`,
+            });
+
+            if (session.stage === 'AWAITING_PAYMENT' || session.stage === 'AWAITING_SUMMARY_CONFIRMATION') {
+              await sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName, session });
+            } else if (session.stage === 'QUEUE_STAGING') {
+              await sendQueueStagingCard({ sock, senderJid, session });
+            } else if (session.stage === 'AWAITING_COLOR_MODE') {
+              await sendStep1Buttons(sock, senderJid, session.fileName, session.totalPages, session.fileSizeMb, session);
+            }
+            continue;
+          }
+
+          // --- TRIGGER PROMO CODE PROMPT VIA TEXT ---
+          if (session && session.stage && session.stage !== 'COMPLETED' && /^(promo|promocode|promo\s*code|coupon|discount|apply\s*promo)$/i.test(clean)) {
+            if (session.promoApplied) {
+              await sock.sendMessage(senderJid, {
+                text:
+                  `🎟️ *Promo Code Already Active!*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Your promotional discount is already active on this order.\n\n` +
+                  `⚡ *Active Rates:*\n` +
+                  `• ⚫ B&W: *₹3.00/p* (<10 pgs) · *₹2.50/p* (10+ pgs)\n` +
+                  `• 🎨 Color: *₹5.00/p* (<10 pgs) · *₹4.00/p* (10+ pgs)\n\n` +
+                  `_Discount is applied once per order._`,
+              });
+              continue;
+            }
+
+            session.prevStage = session.stage;
+            session.stage = 'AWAITING_PROMO_CODE';
+            await sock.sendMessage(senderJid, {
+              text:
+                `🎟️ *Enter Promo Code*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Please reply with your promo code to unlock exclusive student print tariffs for this order.\n\n` +
+                `_Reply with your code or send *cancel* to return._`,
             });
             continue;
           }
@@ -3471,11 +5259,7 @@ async function startBot() {
             }
 
             if (clean === 'clear' || clean === 'cancel' || clean === 'cancel queue' || clean === 'clear queue' || clean === 'empty' || clean === 'delete' || clean === 'stop' || clean === 'quit' || clean === 'exit') {
-              if (session) {
-                session.queuedFiles = [];
-                userSessions.delete(senderJid);
-                userSessions.delete(normalizedJid);
-              }
+              purgeUserPrintSession(senderJid, normalizedJid);
               await sock.sendMessage(senderJid, {
                 text: `🗑️ *Print queue cleared!* Forward or send a new document to start fresh.`,
               });
@@ -3486,6 +5270,50 @@ async function startBot() {
               await sendQueueStagingCard({ sock, senderJid, session });
               continue;
             }
+
+            if (clean === 'rescan' || clean === 'scan again' || clean === 'check files' || clean === 'recheck') {
+              await handleRescanRecentFiles({ sock, senderJid, normalizedJid, session, senderName });
+              continue;
+            }
+          }
+
+          // --- TEXT CONFIRMATION FOR APPLICATION & COVER PDF GENERATION ---
+          if (/(?:make|generate|create|save|download|send)\s+(?:it\s+into\s+a?\s*)?pdf\b/i.test(clean) || /^(?:make|generate|create|download|send)?\s*pdf$/i.test(clean)) {
+            const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+            const hasCover = (norm && activeCoverDrafts.get(norm)) || (senderJid && activeCoverDrafts.get(senderJid));
+            if (hasCover && /cover/i.test(clean)) {
+              await handleGenerateAssignmentCoverPdfAction({ sock, senderJid, normalizedJid, senderName });
+            } else if (hasCover && !activeDrafts.get(norm) && !activeDrafts.get(senderJid)) {
+              await handleGenerateAssignmentCoverPdfAction({ sock, senderJid, normalizedJid, senderName });
+            } else {
+              await handleGenerateApplicationPdfAction({ sock, senderJid, normalizedJid, senderName });
+            }
+            continue;
+          }
+
+          // --- TEXT CONFIRMATION FOR DOCX GENERATION ---
+          if (/(?:make|generate|create|save|download|send)\s+(?:it\s+into\s+a?\s*)?(?:docx|word)\b/i.test(clean) || /^(?:make|generate|create|download|send)?\s*(?:docx|word)$/i.test(clean)) {
+            const norm = normalizedJid || (senderJid ? jidNormalizedUser(senderJid) : null);
+            const hasCover = (norm && activeCoverDrafts.get(norm)) || (senderJid && activeCoverDrafts.get(senderJid));
+            if (hasCover && /cover/i.test(clean)) {
+              await handleGenerateAssignmentCoverDocxAction({ sock, senderJid, normalizedJid, senderName });
+            } else if (hasCover && !activeDrafts.get(norm) && !activeDrafts.get(senderJid)) {
+              await handleGenerateAssignmentCoverDocxAction({ sock, senderJid, normalizedJid, senderName });
+            } else {
+              await handleGenerateApplicationDocxAction({ sock, senderJid, normalizedJid, senderName });
+            }
+            continue;
+          }
+
+          if (/^(print\s+application|print\s+this\s+pdf|print\s+doc|print\s+draft|print\s+my\s+application)$/i.test(clean)) {
+            await handlePrintGeneratedDocAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
+          }
+
+          // --- TEXT CONFIRMATION FOR HTML GAME / WEB TOOL ---
+          if (/(?:make|generate|create|save|download|send)\s+(?:it\s+into\s+a?\s*)?html\b/i.test(clean) || /(?:html\s+file|download\s+html|send\s+html|play\s+game|download\s+game|make\s+game|create\s+game)/i.test(clean)) {
+            await handleGenerateHtmlGameAction({ sock, senderJid, normalizedJid, senderName });
+            continue;
           }
 
           // --- HELP & OPERATOR COMMAND ---
@@ -3797,9 +5625,9 @@ async function startBot() {
             clean.startsWith('hi print') ||
             clean.startsWith('hello print');
 
-          const isPureGreeting = /^(hi|hello|hey|start|menu|options|help|yo|info|hlo|hii|helo)$/i.test(clean);
+          const isPureMenuCommand = /^(start|menu|options|help|services|info)$/i.test(clean);
 
-          if (isPrintGreetingIntent || isPureGreeting) {
+          if (isPrintGreetingIntent || isPureMenuCommand) {
             appendBotLog(`[Greeting] Matched greeting from ${senderName} (${senderJid}), dispatching menu card`);
             const cleanName = (senderName && /^[a-zA-Z\s]{2,25}$/.test(senderName.trim())) ? (' ' + senderName.trim()) : '';
             const welcomeLine = cleanName ? `👋 Hi${cleanName}! Welcome to PrintKurox.` : `👋 Welcome to PrintKurox Campus Services!`;
@@ -3807,50 +5635,189 @@ async function startBot() {
               sock,
               jid: senderJid,
               title: '⚡ NERIST Campus Assistant',
-              body: `${welcomeLine}\n\nPlease choose a service below:`,
+              body: `${welcomeLine}\n\n• 🖨️ *Print documents:* Forward PDFs/photos to print at Block B Kiosk\n• 📄 *Assignment Cover:* Create official PDF & Word covers with red crest\n• 📝 *Applications:* Draft formal leave letters to HOD/Warden\n• 🎓 *Directory:* Search 3900+ students and 350+ faculty\n\n_Please choose a service below:_`,
               footer: 'PrintKurox AutoPrint',
               buttons: [
-                { id: 'btn_flow_printing', text: '🖨️ Printing Service' },
-                { id: 'btn_flow_student', text: '🎓 Student Directory' },
-                { id: 'btn_flow_faculty', text: '👨‍🏫 Faculty Search' },
+                { id: 'btn_flow_printing', text: '🖨️ Printing Services' },
+                { id: 'btn_flow_agent', text: '🤖 Agent Chatbot' },
+                { id: 'btn_flow_student', text: '👥 Student Search' },
               ],
             });
             appendBotLog(`[Greeting] Menu card dispatched to ${senderJid}`);
             continue;
           }
 
-          // Direct typed choice or button tap: "1", "print", "btn_flow_printing" -> Direct Printing Onboarding
+          // Direct typed choice or button tap: "1", "print", "btn_flow_printing" -> Direct Printing Disambiguation
           if ((clean === '1' || clean === 'print' || clean === 'autoprint' || buttonId === 'btn_flow_printing') && (!session || session.stage === 'COMPLETED')) {
-            const displayName = senderName && senderName !== 'Student' ? ` ${senderName}` : '';
-            const onboardingPrompt =
-              `*PrintKurox AutoPrint* · Fast Campus Printing\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `👋 Hello${displayName}! Welcome to automated instant printing.\n\n` +
-              `🔥 *SPECIAL VOLUME OFFER (10+ Pages):*\n` +
-              `⚫ *B&W Single Page:* *₹3 / page* _(Save 25%)\n` +
-              `🎨 *Color Single Page:* *₹5 / page* _(Save 28%)\n` +
-              `⚠️ _Note: Volume offer applies strictly to single-sided (single page) printing._\n\n` +
-              `📄 *Standard Rates (1–9 pages):*\n` +
-              `• B&W Single: ₹4/page\n` +
-              `• Color Single: ₹7/page\n\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `📎 *To Print:* Just send or forward your *PDF*, *Document*, or *Photo* here!\n` +
-              `📚 *Multiple Files?* Send them all to combine into a single print batch.\n\n` +
-              `📍 *Release Station:* ${STATION_NAME} (${STATION_ROOM})\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `_Send your file now to start!_`;
-
-            await sock.sendMessage(senderJid, { text: onboardingPrompt });
-            continue;
-          }
-
-          // Fallback if session exists but user typed something unhandled
-          if (session && session.stage) {
-            await sock.sendMessage(senderJid, {
-              text: `👉 Please tap an option button above to continue, or forward a new PDF/photo to start fresh!`,
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: '🖨️ Campus Printing Services',
+              body: `Choose how you would like to print your documents:`,
+              footer: 'PrintKurox · Hostel Block B Kiosk',
+              buttons: [
+                { text: '🌐 Print via Website', url: `${PUBLIC_KIOSK_URL}/` },
+                { id: 'btn_print_via_whatsapp', text: '📱 Print via WhatsApp' },
+              ],
             });
             continue;
           }
+
+          // Direct typed choice or button tap: "2", "agent", "btn_flow_agent" -> Agent Kurox Studio
+          if ((clean === '2' || buttonId === 'btn_flow_agent' || /^(agent|agent\s+chatbot|chatbot|kurox|agent\s+kurox|what\s+can\s+you\s+do|introduction|intro)$/i.test(clean)) && (!session || session.stage === 'COMPLETED')) {
+            userLastOpenedStudio.set(senderJid, 'agent_hub');
+            if (normalizedJid) userLastOpenedStudio.set(normalizedJid, 'agent_hub');
+            const hr = new Date().getHours();
+            const timeGreeting = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+            const cleanName = (senderName && /^[a-zA-Z\s]{2,25}$/.test(senderName.trim())) ? `, ${senderName.trim()}` : '';
+            await sendInteractiveButtons({
+              sock,
+              jid: senderJid,
+              title: 'Agent Kurox · Campus AI Companion',
+              body:
+                `*${timeGreeting}${cleanName}!* ☀️\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `I am *Agent Kurox*, your advanced AI assistant and campus companion at NERIST.\n\n` +
+                `You can consult me on engineering derivations, mathematical solutions, programming, campus procedures, and academic drafting.\n\n` +
+                `*Quick Studio Options:*\n\n` +
+                `1. 📄 *Assignment Front Cover* — 1-Click official NERIST front covers\n` +
+                `2. 📝 *Academic Application* — Formal leave, medical, or NOC requests\n` +
+                `3. 🎮 *Offline Mini-Games & Tools* — Playable browser tools (Snake, Ludo, Calculators)\n` +
+                `4. 🔍 *Campus Directory* — Search students and faculty records\n\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `🎓 *Cinderac & SymphonyX Campus Integration:*\n` +
+                `Reply \`login <RegId> <Password>\` to check your live attendance & bunk limits, semester SGPA/CGPA trend graph, or download official admit cards!\n` +
+                `_(Creating covers & applications is 100% free and never requires login)_\n\n` +
+                `_Tap an action below, reply with a number (1-4), or type any question:_`,
+              footer: 'Agent Kurox · Campus AI Companion',
+              buttons: [
+                { id: 'btn_flow_cover', text: '📄 Assignment Front Cover' },
+                { id: 'btn_flow_application', text: '📝 Academic Application' },
+                { id: 'btn_flow_game', text: '🎮 Offline Mini-Game' },
+                { id: 'btn_flow_student', text: '🔍 Directory Search' },
+              ],
+            });
+            continue;
+          }
+
+          // Direct typed choice: "3" -> Student Directory Search
+          if (clean === '3' && (!session || session.stage === 'COMPLETED')) {
+            const resolvedUserPhone = await resolveUserPhone(sock, senderJid);
+            await handleStudentMessage({
+              sock,
+              getSock: () => activeBotSock,
+              msg,
+              rawBody: '',
+              lowerBody: '',
+              buttonId: 'btn_flow_student',
+              senderJid,
+              sendInteractiveButtons,
+              razorpay,
+              userPhone: resolvedUserPhone,
+            });
+            continue;
+          }
+
+          // If session exists in QUEUE_STAGING, handle print intents or conversational AI questions
+          if (session && session.stage === 'QUEUE_STAGING') {
+            if (/^(proceed|print|continue|done|yes|ok|next|go|proceed\s+to\s+print)$/i.test(clean)) {
+              await continueWithQueuedFiles({ sock, senderJid, session, senderName });
+              continue;
+            }
+            if (/^(cancel|clear|stop|exit|quit|abort|cancel\s+print|clear\s+queue)$/i.test(clean)) {
+              purgeUserPrintSession(senderJid, normalizedJid);
+              await sock.sendMessage(senderJid, {
+                text: `🗑️ *Print Queue Cleared!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nAll staged files have been discarded.\nWhenever you're ready, simply forward or send a document/photo to start fresh!`,
+              });
+              continue;
+            }
+            if (/^(rescan|re-scan|scan\s+again|check|recheck)$/i.test(clean)) {
+              await handleRescanRecentFiles({ sock, senderJid, normalizedJid, session, senderName });
+              continue;
+            }
+            if (/^(add|more|add\s+more|upload|attach)$/i.test(clean)) {
+              await sock.sendMessage(senderJid, {
+                text: `📎 *Send your next file here!*\nI will add it to your batch (${session.queuedFiles?.length || 0} files currently queued).\n\n_Reply *proceed* when finished!_`,
+              });
+              continue;
+            }
+
+            // Conversational query / asking AI to read/solve photo / campus chat while files are staged:
+            const aiHandled = await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: textMsg || clean,
+              senderName,
+              isGroup: false,
+              rawMessage: msg,
+              logFn: appendBotLog,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone: userActivityPhone,
+              stagedPrintContext: {
+                fileCount: session.queuedFiles?.length || 1,
+                stage: session.stage,
+                station: session.station || defaultStation,
+              },
+            });
+            if (aiHandled) {
+              const fileCount = session.queuedFiles?.length || 1;
+              await sendInteractiveButtons({
+                sock,
+                jid: senderJid,
+                title: '🖨️ Staged Print Queue',
+                body: `You have *${fileCount}* file${fileCount === 1 ? '' : 's'} staged in your print queue for Hostel Block B.\n\nChoose an action below:`,
+                footer: 'PrintKurox AutoPrint',
+                buttons: [
+                  { id: 'btn_queue_continue', text: `✅ Proceed to Print (${fileCount} ${fileCount === 1 ? 'File' : 'Files'})` },
+                  { id: 'btn_queue_rescan', text: '🔄 Rescan Recent Files' },
+                  { id: 'btn_queue_clear', text: '❌ Cancel Print' },
+                ],
+              }).catch(() => {});
+              continue;
+            }
+          }
+
+          // If session is in other active stages (e.g. AWAITING_COLOR_MODE, AWAITING_PAGE_SELECTION, etc.)
+          if (session && session.stage && session.stage !== 'COMPLETED') {
+            const aiHandled = await handleAIChatMessage({
+              sock,
+              senderJid,
+              normalizedJid,
+              text: textMsg || clean,
+              senderName,
+              isGroup: false,
+              rawMessage: msg,
+              logFn: appendBotLog,
+              sendButtonsFn: sendInteractiveButtons,
+              userPhone: userActivityPhone,
+              stagedPrintContext: {
+                stage: session.stage,
+                station: session.station || defaultStation,
+              },
+            });
+            if (aiHandled) continue;
+
+            await sock.sendMessage(senderJid, {
+              text: `👉 Please choose one of the options above for your document, or reply *cancel* to start fresh!`,
+            });
+            continue;
+          }
+
+          // Conversational AI: In DM, if user sent a question or chat and has no active print session, let AI answer!
+          const aiHandled = await handleAIChatMessage({
+            sock,
+            senderJid,
+            normalizedJid,
+            text: textMsg || clean,
+            senderName,
+            isGroup: false,
+            rawMessage: msg,
+            logFn: appendBotLog,
+            sendButtonsFn: sendInteractiveButtons,
+            userPhone: userActivityPhone,
+          });
+          if (aiHandled) continue;
 
           // Universal fallback for ANY incoming text query when no active session exists:
           appendBotLog(`[Fallback] Unhandled text from ${senderName} (${senderJid}): "${clean.slice(0, 50)}", dispatching welcome card`);
@@ -3860,12 +5827,12 @@ async function startBot() {
             sock,
             jid: senderJid,
             title: '⚡ NERIST Campus Assistant',
-            body: `${welcomeLine}\n\n• 🖨️ *To print:* Send or forward any *PDF*, *Document*, or *Photo* here!\n• 📍 *Station:* ${STATION_NAME} (${STATION_ROOM})\n• ⚡ *Rates:* B&W ₹3-4/p · Color ₹5-7/p\n\nPlease choose an option below:`,
+            body: `${welcomeLine}\n\n• 🖨️ *Print documents:* Forward PDFs/photos to print at Block B Kiosk\n• 📄 *Assignment Cover:* Create official PDF & Word covers with red crest\n• 📝 *Applications:* Draft formal leave letters to HOD/Warden\n• 🎓 *Directory:* Search 3900+ students and 350+ faculty\n\n_Please choose a service below:_`,
             footer: 'PrintKurox AutoPrint',
             buttons: [
-              { id: 'btn_flow_printing', text: '🖨️ How to Print' },
-              { id: 'btn_flow_student', text: '🎓 Student Directory' },
-              { id: 'btn_flow_faculty', text: '👨‍🏫 Faculty Search' },
+              { id: 'btn_flow_printing', text: '🖨️ Printing Services' },
+              { id: 'btn_flow_agent', text: '🤖 Agent Chatbot' },
+              { id: 'btn_flow_student', text: '👥 Student Search' },
             ],
           });
           continue;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateStationTokenAsync } from '@/lib/stations';
 import { executeD1 } from '@/lib/cloudflare-d1';
+import { setAppSetting } from '@/lib/settings';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -79,6 +80,11 @@ export async function POST(req: NextRequest) {
           console.warn('[Heartbeat] Could not save docx_converter_url to D1:', d1Err);
         }
       }
+    }
+
+    // If system hardware telemetry was sent (Raspberry Pi / Linux SBC), store it in app_settings
+    if (body.system_telemetry && typeof body.system_telemetry === 'object') {
+      await setAppSetting(`pi_telemetry_${station.id}`, JSON.stringify(body.system_telemetry));
     }
 
     return NextResponse.json({

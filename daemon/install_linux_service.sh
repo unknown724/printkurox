@@ -34,6 +34,15 @@ cupsctl --remote-admin --remote-any --share-printers
 systemctl enable cups
 systemctl restart cups
 
+# Cap systemd journald logs so Raspberry Pi SD/USB storage cannot fill up
+mkdir -p /etc/systemd/journald.conf.d
+cat <<EOF > /etc/systemd/journald.conf.d/printkurox-cap.conf
+[Journal]
+SystemMaxUse=150M
+MaxRetentionSec=14day
+EOF
+systemctl restart systemd-journald || true
+
 echo "[4/4] Creating PrintKurox systemd Background Service..."
 SERVICE_FILE="/etc/systemd/system/printkurox.service"
 
