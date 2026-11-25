@@ -5,8 +5,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function getLocalPdfBuffer(pickup?: string | null, name?: string | null): { buffer: Buffer; fileName: string } | null {
-  // Only evaluate when running locally on Node.js, bypass completely on Vercel
-  if (process.env.VERCEL) return null;
+  // Only evaluate when running locally on Node.js, bypass completely on Vercel and Cloudflare Workers
+  if (process.env.VERCEL || typeof (globalThis as { caches?: unknown }).caches !== 'undefined') return null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const nodeFs = eval('require("fs")');

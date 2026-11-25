@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Razorpay from 'razorpay';
-import crypto from 'crypto';
 import { calculatePricing } from '@/lib/pricing';
 import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
@@ -167,14 +165,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let rzpOrder;
+    let rzpOrder: { id: string; amount: number; currency: string };
     try {
-      const razorpay = new Razorpay({
-        key_id: keyId,
-        key_secret: keySecret,
-      });
-
-      // Direct 100% Settlement to Primary Razorpay Account (No Route Transfers)
+      // Direct 100% Settlement to Primary Razorpay Account (REST fetch for Edge/Worker compatibility)
       const orderPayload: Record<string, unknown> = {
         amount: amountInPaise,
         currency,
@@ -185,8 +178,35 @@ export async function POST(req: NextRequest) {
         },
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rzpOrder = await razorpay.orders.create(orderPayload as any);
+      const basicAuth = Buffer.from(`${keyId.trim()}:${keySecret.trim()}`).toString('base64');
+      const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${basicAuth}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderPayload),
+        cache: 'no-store',
+      });
+
+      const rzpData = await rzpRes.json().catch(() => ({})) as {
+        id?: string;
+        amount?: number;
+        currency?: string;
+        error?: { description?: string; code?: string };
+      };
+
+      if (!rzpRes.ok || !rzpData.id) {
+        const statusCode = rzpRes.status === 401 ? 401 : 500;
+        const errorMessage = rzpData.error?.description || `Razorpay API error (${rzpRes.status})`;
+        return NextResponse.json({ error: errorMessage }, { status: statusCode });
+      }
+
+      rzpOrder = {
+        id: rzpData.id,
+        amount: Number(rzpData.amount ?? amountInPaise),
+        currency: String(rzpData.currency || currency),
+      };
     } catch (rzpErr: unknown) {
       console.error('Razorpay order creation API error:', rzpErr);
       const errObj = rzpErr as { statusCode?: number; error?: { description?: string; code?: string }; message?: string };

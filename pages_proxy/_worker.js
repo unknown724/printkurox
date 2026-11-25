@@ -1,4 +1,4 @@
-const VERCEL_ORIGIN = "printkurox.vercel.app";
+const VERCEL_ORIGIN = "printkurox.unknowniphone724.workers.dev";
 
 export default {
   async fetch(request, env, ctx) {
@@ -38,12 +38,16 @@ export default {
     proxyHeaders.delete("cf-ray");
     proxyHeaders.delete("cf-visitor");
 
-    const originResponse = await fetch(targetUrl.toString(), {
+    const originReq = new Request(targetUrl.toString(), {
       method: request.method,
       headers: proxyHeaders,
       body: isGetOrHead ? undefined : request.body,
       redirect: "manual",
     });
+
+    const originResponse = env?.NEXT_WORKER
+      ? await env.NEXT_WORKER.fetch(originReq)
+      : await fetch(originReq);
 
     const respHeaders = new Headers(originResponse.headers);
     const loc = respHeaders.get("Location");

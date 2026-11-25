@@ -75,8 +75,8 @@ function safeEncode(text: string, font: PDFFont): string {
  * Preserves 100% of formatting, tables, font styles, colors, diagrams, images, and true page breaks.
  */
 async function convertWithNativeWord(buffer: Buffer, fileExt: string = 'docx'): Promise<DocxConversionResult | null> {
-  // Guard against browser execution or non-Windows environments
-  if (typeof window !== 'undefined' || process.platform !== 'win32') return null;
+  // Guard against browser, Cloudflare Workers, or non-Windows environments
+  if (typeof window !== 'undefined' || typeof (globalThis as { caches?: unknown }).caches !== 'undefined' || process.platform !== 'win32') return null;
 
   let fs: typeof import('fs');
   let path: typeof import('path');
