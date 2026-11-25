@@ -35,6 +35,19 @@ ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
+# Lightweight .env loader (ensures systemd / standalone runs pick up .env keys)
+_env_path = os.path.join(BASE_DIR, '.env')
+if os.path.exists(_env_path):
+    try:
+        with open(_env_path, 'r', encoding='utf-8') as _ef:
+            for _line in _ef:
+                _s = _line.strip()
+                if _s and not _s.startswith('#') and '=' in _s:
+                    _k, _v = _s.split('=', 1)
+                    os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+    except Exception:
+        pass
+
 # Logging Setup
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +70,7 @@ if os.path.exists(CONFIG_PATH):
 
 STATION_ID = os.getenv('STATION_ID', station_data.get('station_id', 'block_b'))
 STATION_TOKEN = os.getenv('STATION_TOKEN', station_data.get('station_token', ''))
-SERVER_URL = os.getenv('SERVER_URL', station_data.get('server_url', 'https://printkurox.vercel.app')).rstrip('/')
+SERVER_URL = os.getenv('SERVER_URL', station_data.get('server_url', 'https://printkurox.pages.dev')).rstrip('/')
 CONFIGURED_PRINTER = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 12))))
@@ -364,7 +377,7 @@ def main():
                             orientation=orientation
                         )
                         update_job_status(job_id, "COMPLETED", pages_printed=total_pages, sheets_used=total_pages)
-                        log(f"Successfully printed Job {pickup_code} on {target_printer}!", "SUCCESS")
+                        log(f"Successfully printed Job {pickup_code} on {target_printer}!")
 
                         # Archive locally
                         archive_path = os.path.join(ARCHIVE_DIR, os.path.basename(local_pdf))

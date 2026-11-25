@@ -424,7 +424,7 @@ export function CostSummary({
         // 2. Otherwise, quietly fall back to station/kiosk phone number.
         // This ensures prefill.contact is NEVER empty, so Razorpay
         // completely skips asking for a phone number and opens straight into UPI / QR code!
-        const stationContactDigits = (station?.contact || station?.whatsappNumber || '9362980761').replace(/\D/g, '');
+        const stationContactDigits = ((station as { contact?: string })?.contact || station?.whatsappNumber || '9362980761').replace(/\D/g, '');
         const effectiveContact = (phoneNumber && phoneNumber.length === 10)
           ? phoneNumber
           : (stationContactDigits.length === 10 ? stationContactDigits : '9362980761');

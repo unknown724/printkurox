@@ -210,6 +210,7 @@ export function ExpressPrintStudio({
             downloadUrl={uploadedBatch.downloadUrl}
             rawFiles={uploadedBatch.rawFiles}
             pageConfigs={pageConfigs}
+            onPageConfigsChange={onPageConfigsChange}
             colorMode={settings.colorMode}
           />
 
