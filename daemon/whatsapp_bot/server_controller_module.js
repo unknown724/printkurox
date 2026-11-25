@@ -376,6 +376,13 @@ function resolveAdminAlertJid() {
 /**
  * Starts startup alert (once per boot) and 30s hardware Power/Battery Watchdog
  */
+function isSocketReady(sock) {
+  if (!sock) return false;
+  if (sock.ws?.isClosed === true || sock.ws?.isOpen === false) return false;
+  if (typeof sock.ws?.readyState === 'number') return sock.ws.readyState === 1;
+  return Boolean(sock.user || sock.ws);
+}
+
 async function sendAdminAlert({ getSock, alertKey, severity = 'warn', title, body, cooldownMs = 30 * 60 * 1000, logFn = console.log }) {
   try {
     const key = String(alertKey || title || 'generic');
@@ -393,7 +400,7 @@ async function sendAdminAlert({ getSock, alertKey, severity = 'warn', title, bod
     }
 
     const sock = getSock?.();
-    if (!sock || sock.ws?.readyState !== 1) {
+    if (!isSocketReady(sock)) {
       return { sent: false, skipped: 'socket_offline' };
     }
 
@@ -529,7 +536,7 @@ async function onBotConnectionOpen({ getSock, sendInteractiveButtons, logFn = co
     setInterval(async () => {
       try {
         const liveSock = getSock();
-        if (!liveSock || liveSock.ws?.readyState !== 1) return;
+        if (!isSocketReady(liveSock)) return;
 
         const power = await getPowerStatus();
         if (!power.success) return;
