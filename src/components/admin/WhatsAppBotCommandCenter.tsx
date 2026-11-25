@@ -23,11 +23,20 @@ import {
   VolumeX,
   MessageCircleReply,
   Search,
+  Lock,
+  Unlock,
+  Eye,
+  EyeOff,
+  Loader2,
+  X,
 } from 'lucide-react';
 import type { DossierAccessLists, WhatsAppBotControlConfig } from '@/lib/settings';
 import { DEFAULT_WHATSAPP_BOT_CONFIG } from '@/lib/settings';
 
 interface WhatsAppBotCommandCenterProps {
+  isUnlocked: boolean;
+  onUnlocked: (nextConfig: WhatsAppBotControlConfig, nextDossier: DossierAccessLists) => void;
+  onLocked: () => void;
   config: WhatsAppBotControlConfig;
   onConfigChange: (next: WhatsAppBotControlConfig) => void;
   dossierAccess: DossierAccessLists;
@@ -37,12 +46,20 @@ interface WhatsAppBotCommandCenterProps {
 type ViewMode = 'minimized' | 'normal' | 'maximized';
 
 export function WhatsAppBotCommandCenter({
+  isUnlocked,
+  onUnlocked,
+  onLocked,
   config,
   onConfigChange,
   dossierAccess,
   onDossierAccessChange,
 }: WhatsAppBotCommandCenterProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('normal');
+  const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
+  const [waPassword, setWaPassword] = useState('');
+  const [showWaPassword, setShowWaPassword] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
   const [draftMessages, setDraftMessages] = useState(config.messages);
   const [draftCooldown, setDraftCooldown] = useState<number>(config.replyCooldownSec || 60);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -69,6 +86,53 @@ export function WhatsAppBotCommandCenter({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [viewMode]);
 
+  const handleUnlockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!waPassword.trim()) {
+      setUnlockError('Enter owner password.');
+      return;
+    }
+    setUnlocking(true);
+    setUnlockError(null);
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'unlock_whatsapp_section',
+          waPassword: waPassword.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.whatsappUnlocked) {
+        setUnlockError(data.error || 'Incorrect owner password.');
+        return;
+      }
+      setWaPassword('');
+      setShowUnlockPrompt(false);
+      onUnlocked(
+        data.whatsappBotConfig || DEFAULT_WHATSAPP_BOT_CONFIG,
+        data.dossierAccess || { unlimited: [], banned: [] }
+      );
+    } catch {
+      setUnlockError('Network error verifying password.');
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleLockSection = async () => {
+    try {
+      await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'lock_whatsapp_section' }),
+      });
+    } catch {}
+    setViewMode('normal');
+    onLocked();
+  };
+
   const persistBotConfig = async (patch: Partial<WhatsAppBotControlConfig>, okMsg = 'Saved to Cloudflare D1') => {
     setSavingConfig(true);
     setCfgNotice(null);
@@ -82,6 +146,10 @@ export function WhatsAppBotCommandCenter({
         }),
       });
       const data = await res.json();
+      if (data.locked || res.status === 403) {
+        onLocked();
+        return;
+      }
       if (!res.ok || !data.success) {
         setCfgNotice({ type: 'err', text: data.error || 'Failed to update WhatsApp config.' });
       } else {
@@ -120,6 +188,10 @@ export function WhatsAppBotCommandCenter({
         }),
       });
       const data = await res.json();
+      if (data.locked || res.status === 403) {
+        onLocked();
+        return;
+      }
       if (!res.ok || !data.success) {
         setDossierNotice({ type: 'err', text: data.error || 'Failed to update dossier list.' });
       } else {
@@ -242,6 +314,102 @@ export function WhatsAppBotCommandCenter({
       ? 'max-w-7xl mx-auto rounded-2xl p-5 sm:p-6 border border-zinc-200 dark:border-[#2e3136] bg-white dark:bg-[#18191b] shadow-2xl space-y-5'
       : 'rounded-2xl p-5 border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] shadow-2xs space-y-4';
 
+  if (!isUnlocked) {
+    return (
+      <div className="rounded-2xl p-5 border border-amber-500/30 dark:border-amber-500/25 bg-white dark:bg-[#1e1f20] shadow-2xs space-y-4">
+        <div
+          onClick={() => setShowUnlockPrompt(true)}
+          className="flex flex-wrap items-center justify-between gap-3 cursor-pointer"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25 flex items-center justify-center shrink-0">
+              <Lock className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
+                  WhatsApp Bot Settings &amp; Command Center
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                  OWNER PROTECTED
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Restricted to primary owner only. Click to enter owner password to manage bot switches, replies &amp; ∞ VIPs.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowUnlockPrompt((prev) => !prev);
+            }}
+            className="px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-amber-500 dark:hover:bg-amber-400 text-white dark:text-zinc-950 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shrink-0 transition"
+          >
+            <Unlock className="w-3.5 h-3.5" />
+            <span>{showUnlockPrompt ? 'Cancel' : 'Unlock Section'}</span>
+          </button>
+        </div>
+
+        {showUnlockPrompt && (
+          <form
+            onSubmit={handleUnlockSubmit}
+            className="p-4 rounded-xl bg-zinc-50 dark:bg-[#131314] border border-zinc-200 dark:border-[#282a2c] space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                Enter Owner Password to Open WhatsApp Bot Settings
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUnlockPrompt(false);
+                  setUnlockError(null);
+                  setWaPassword('');
+                }}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showWaPassword ? 'text' : 'password'}
+                  value={waPassword}
+                  onChange={(e) => setWaPassword(e.target.value)}
+                  placeholder="Owner password..."
+                  autoFocus
+                  className="w-full h-10 px-3 pr-10 rounded-xl border border-zinc-200 dark:border-[#282a2c] bg-white dark:bg-[#1e1f20] text-xs font-mono text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowWaPassword((v) => !v)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                >
+                  {showWaPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <button
+                type="submit"
+                disabled={unlocking}
+                className="h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {unlocking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />}
+                <span>Unlock</span>
+              </button>
+            </div>
+            {unlockError && (
+              <p className="text-xs font-semibold text-rose-500">{unlockError}</p>
+            )}
+          </form>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={outerClass}>
       <div className={cardClass}>
@@ -356,6 +524,17 @@ export function WhatsAppBotCommandCenter({
               title={viewMode === 'maximized' ? 'Exit Full Workspace (Esc)' : 'Maximize WhatsApp Workspace'}
             >
               {viewMode === 'maximized' ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+
+            {/* Re-Lock Owner Section */}
+            <button
+              type="button"
+              onClick={handleLockSection}
+              className="px-2.5 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
+              title="Lock WhatsApp Bot section"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Lock</span>
             </button>
           </div>
         </div>

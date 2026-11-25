@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminToken, validateAdminPin, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
+import {
+  verifyAdminToken,
+  validateAdminPin,
+  ADMIN_COOKIE_NAME,
+  WHATSAPP_OWNER_COOKIE,
+  validateWhatsAppOwnerPassword,
+  createWhatsAppOwnerToken,
+  verifyWhatsAppOwnerToken,
+} from '@/lib/admin-auth';
 import {
   getHostelChangeSetting,
   setHostelChangeSetting,
@@ -21,6 +29,11 @@ async function isAuthorizedAdmin(req: NextRequest): Promise<boolean> {
   return false;
 }
 
+function isWhatsAppOwnerUnlocked(req: NextRequest): boolean {
+  const cookieVal = req.cookies.get(WHATSAPP_OWNER_COOKIE)?.value;
+  return verifyWhatsAppOwnerToken(cookieVal);
+}
+
 export async function GET(req: NextRequest) {
   try {
     const isAuth = await isAuthorizedAdmin(req);
@@ -28,8 +41,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const [hostelChangeEnabled, dossierAccess, whatsappBotConfig] = await Promise.all([
-      getHostelChangeSetting(),
+    const whatsappUnlocked = isWhatsAppOwnerUnlocked(req);
+    const hostelChangeEnabled = await getHostelChangeSetting();
+
+    if (!whatsappUnlocked) {
+      return NextResponse.json({
+        success: true,
+        hostelChangeEnabled,
+        whatsappUnlocked: false,
+      });
+    }
+
+    const [dossierAccess, whatsappBotConfig] = await Promise.all([
       getDossierAccessLists(),
       getWhatsAppBotConfig(),
     ]);
@@ -37,6 +60,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       hostelChangeEnabled,
+      whatsappUnlocked: true,
       dossierAccess,
       whatsappBotConfig,
     });
@@ -50,26 +74,82 @@ export async function POST(req: NextRequest) {
   try {
     const isAuth = await isAuthorizedAdmin(req);
     const body = await req.json().catch(() => ({}));
-    const { hostelChangeEnabled, pin, action, phone, note, whatsappBotConfig } = body;
+    const { hostelChangeEnabled, pin, action, phone, note, whatsappBotConfig, waPassword } = body;
 
     const pinValid = pin && validateAdminPin(pin);
     if (!isAuth && !pinValid) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // WhatsApp Bot Master / Mode Toggles & Custom Auto-Replies
-    if (action === 'update_whatsapp_config') {
-      if (!whatsappBotConfig || typeof whatsappBotConfig !== 'object') {
-        return NextResponse.json({ error: 'Invalid whatsappBotConfig payload' }, { status: 400 });
+    // Unlock WhatsApp Bot Command Center section (secondary owner password)
+    if (action === 'unlock_whatsapp_section') {
+      if (!validateWhatsAppOwnerPassword(String(waPassword || ''))) {
+        return NextResponse.json(
+          { error: 'Incorrect WhatsApp owner password.' },
+          { status: 403 }
+        );
       }
-      const savedConfig = await saveWhatsAppBotConfig(whatsappBotConfig);
-      if (!savedConfig) {
-        return NextResponse.json({ error: 'Failed to save WhatsApp bot config' }, { status: 500 });
-      }
-      return NextResponse.json({
+
+      const [dossierAccess, cfg] = await Promise.all([
+        getDossierAccessLists(),
+        getWhatsAppBotConfig(),
+      ]);
+
+      const res = NextResponse.json({
         success: true,
-        whatsappBotConfig: savedConfig,
+        whatsappUnlocked: true,
+        dossierAccess,
+        whatsappBotConfig: cfg,
       });
+      res.cookies.set(WHATSAPP_OWNER_COOKIE, createWhatsAppOwnerToken(7200), {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 7200,
+      });
+      return res;
+    }
+
+    // Lock WhatsApp Bot Command Center section immediately
+    if (action === 'lock_whatsapp_section') {
+      const res = NextResponse.json({
+        success: true,
+        whatsappUnlocked: false,
+      });
+      res.cookies.set(WHATSAPP_OWNER_COOKIE, '', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 0,
+      });
+      return res;
+    }
+
+    // All WhatsApp Bot & Dossier VIP/Ban mutations require verified WhatsApp owner unlock
+    if (typeof action === 'string') {
+      if (!isWhatsAppOwnerUnlocked(req)) {
+        return NextResponse.json(
+          { error: 'WhatsApp Bot section is locked. Enter owner password first.', locked: true },
+          { status: 403 }
+        );
+      }
+
+      // WhatsApp Bot Master / Mode Toggles & Custom Auto-Replies
+      if (action === 'update_whatsapp_config') {
+        if (!whatsappBotConfig || typeof whatsappBotConfig !== 'object') {
+          return NextResponse.json({ error: 'Invalid whatsappBotConfig payload' }, { status: 400 });
+        }
+        const savedConfig = await saveWhatsAppBotConfig(whatsappBotConfig);
+        if (!savedConfig) {
+          return NextResponse.json({ error: 'Failed to save WhatsApp bot config' }, { status: 500 });
+        }
+        return NextResponse.json({
+          success: true,
+          whatsappBotConfig: savedConfig,
+        });
+      }
     }
 
     // Dossier VIP / Ban management actions

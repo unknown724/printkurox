@@ -231,6 +231,7 @@ export default function AdminKuroxPage() {
   const [whatsappBotConfig, setWhatsappBotConfig] = useState<WhatsAppBotControlConfig>(
     DEFAULT_WHATSAPP_BOT_CONFIG
   );
+  const [whatsappUnlocked, setWhatsappUnlocked] = useState<boolean>(false);
 
   // Campus Hostel Stations Dynamic Pricing State
   const [stationsPricing, setStationsPricing] = useState<Record<string, StationPricingConfig>>({});
@@ -418,10 +419,12 @@ export default function AdminKuroxPage() {
       }
       if (adminRes.ok) {
         const adminData = await adminRes.json();
-        if (adminData.dossierAccess) {
+        const unlocked = Boolean(adminData.whatsappUnlocked);
+        setWhatsappUnlocked(unlocked);
+        if (unlocked && adminData.dossierAccess) {
           setDossierAccess(adminData.dossierAccess);
         }
-        if (adminData.whatsappBotConfig) {
+        if (unlocked && adminData.whatsappBotConfig) {
           setWhatsappBotConfig(adminData.whatsappBotConfig);
         }
       }
@@ -1132,6 +1135,17 @@ export default function AdminKuroxPage() {
           </div>
 
           <WhatsAppBotCommandCenter
+            isUnlocked={whatsappUnlocked}
+            onUnlocked={(nextCfg, nextDossier) => {
+              setWhatsappBotConfig(nextCfg);
+              setDossierAccess(nextDossier);
+              setWhatsappUnlocked(true);
+            }}
+            onLocked={() => {
+              setWhatsappUnlocked(false);
+              setDossierAccess({ unlimited: [], banned: [] });
+              setWhatsappBotConfig(DEFAULT_WHATSAPP_BOT_CONFIG);
+            }}
             config={whatsappBotConfig}
             onConfigChange={setWhatsappBotConfig}
             dossierAccess={dossierAccess}

@@ -112,6 +112,35 @@ export default function JobStatusPage({
       scheduleNext();
     };
 
+    const verifyPaymentLinkCallback = async () => {
+      if (typeof window === 'undefined' || !window.location.search) return;
+      const sp = new URLSearchParams(window.location.search);
+      const plinkId = sp.get('razorpay_payment_link_id');
+      const paymentId = sp.get('razorpay_payment_id');
+      const plinkRef = sp.get('razorpay_payment_link_reference_id') || '';
+      const plinkStatus = sp.get('razorpay_payment_link_status') || '';
+      const sig = sp.get('razorpay_signature') || '';
+      if (plinkId && paymentId) {
+        try {
+          await fetch('/api/verify-payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobId,
+              razorpay_payment_link_id: plinkId,
+              razorpay_payment_link_reference_id: plinkRef,
+              razorpay_payment_link_status: plinkStatus,
+              razorpay_payment_id: paymentId,
+              razorpay_signature: sig,
+            }),
+          });
+          window.history.replaceState({}, '', window.location.pathname);
+        } catch (cbErr) {
+          console.warn('Payment link verification notice:', cbErr);
+        }
+      }
+    };
+
     const onVisible = () => {
       if (document.visibilityState === 'visible' && active && !isTerminal) {
         if (timerId) clearTimeout(timerId);
@@ -119,7 +148,10 @@ export default function JobStatusPage({
       }
     };
 
-    tick();
+    void (async () => {
+      await verifyPaymentLinkCallback();
+      if (active) await tick();
+    })();
     window.addEventListener('visibilitychange', onVisible);
 
     return () => {

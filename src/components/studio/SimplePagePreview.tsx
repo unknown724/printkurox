@@ -39,6 +39,7 @@ interface SimplePagePreviewProps {
   pageConfigs: PageConfig[];
   onPageConfigsChange?: (updated: PageConfig[]) => void;
   colorMode: 'bw' | 'color' | 'custom';
+  orientation?: 'auto' | 'portrait' | 'landscape';
 }
 
 async function renderPdfPageToUrl(page: PdfPageLike, scale = 1.25): Promise<string | null> {
@@ -79,6 +80,7 @@ export function SimplePagePreview({
   pageConfigs,
   onPageConfigsChange,
   colorMode,
+  orientation = 'auto',
 }: SimplePagePreviewProps) {
   const effectiveConfigs: PageConfig[] =
     pageConfigs.length > 0
@@ -354,6 +356,9 @@ export function SimplePagePreview({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border border-zinc-200 dark:border-white/15 bg-white/70 dark:bg-white/[0.06] text-zinc-600 dark:text-zinc-300 capitalize">
+              {orientation}
+            </span>
             <span
               className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
                 activeBw
@@ -388,14 +393,24 @@ export function SimplePagePreview({
               <span className="text-[11px] font-medium">Rendering page {activePageNum}…</span>
             </div>
           ) : activePreviewUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={activePreviewUrl}
-              alt={`Page ${activePageNum} preview`}
-              className={`max-h-full max-w-full object-contain rounded-md bg-white shadow-md transition-all duration-200 group-hover:scale-[1.01] ${
-                activeBw ? 'grayscale contrast-110' : ''
+            <div
+              className={`h-full max-w-full flex items-center justify-center p-1 rounded-md bg-white shadow-md transition-all duration-200 group-hover:scale-[1.01] ${
+                orientation === 'landscape'
+                  ? 'aspect-[297/210] w-full max-h-44 sm:max-h-48'
+                  : orientation === 'portrait'
+                  ? 'aspect-[210/297]'
+                  : 'h-full'
               }`}
-            />
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={activePreviewUrl}
+                alt={`Page ${activePageNum} preview`}
+                className={`max-h-full max-w-full object-contain rounded-sm ${
+                  activeBw ? 'grayscale contrast-110' : ''
+                }`}
+              />
+            </div>
           ) : (
             <div className="flex flex-col items-center gap-1.5 text-zinc-500 dark:text-zinc-400 text-xs">
               <FileText className="w-6 h-6 opacity-60" />

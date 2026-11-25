@@ -3,6 +3,7 @@ import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
 
 export const ADMIN_COOKIE_NAME = 'printkurox_admin_device_id';
 export const STATION_SESSION_COOKIE = 'printkurox_station_session';
+export const WHATSAPP_OWNER_COOKIE = 'printkurox_wa_owner_unlock';
 export const MAX_ADMIN_DEVICES = 6;
 
 export interface AdminDevice {
@@ -250,5 +251,37 @@ export async function verifyAdminDevice(deviceId: string): Promise<{ isValid: bo
 export async function verifyAdminToken(deviceId: string): Promise<boolean> {
   const { isValid } = await verifyAdminDevice(deviceId);
   return isValid;
+}
+
+export function validateWhatsAppOwnerPassword(input: string): boolean {
+  if (!input || typeof input !== 'string') return false;
+  const expected = (process.env.WHATSAPP_OWNER_PASSWORD || 'nowyouseeme').trim();
+  return safeCompare(input.trim(), expected);
+}
+
+export function createWhatsAppOwnerToken(maxAgeSec = 7200): string {
+  const secret = `${process.env.ADMIN_SECRET_KEY || 'kurox_station_session_secret_2026'}:wa_owner_v1`;
+  const exp = Math.floor(Date.now() / 1000) + maxAgeSec;
+  const payloadB64 = Buffer.from(JSON.stringify({ scope: 'wa_owner', exp })).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  return `${payloadB64}.${sig}`;
+}
+
+export function verifyWhatsAppOwnerToken(token?: string | null): boolean {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return false;
+  try {
+    const [payloadB64, sig] = token.split('.');
+    if (!payloadB64 || !sig) return false;
+    const secret = `${process.env.ADMIN_SECRET_KEY || 'kurox_station_session_secret_2026'}:wa_owner_v1`;
+    const expectedSig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+    if (!safeCompare(sig, expectedSig)) return false;
+    const parsed = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as {
+      scope?: string;
+      exp?: number;
+    };
+    return parsed.scope === 'wa_owner' && typeof parsed.exp === 'number' && parsed.exp > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
 }
 

@@ -114,6 +114,8 @@ export function CostSummary({
 
   // Student phone number for silent auto-prefill in Razorpay (from localStorage if saved)
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [lastCreatedJobId, setLastCreatedJobId] = useState<string | null>(null);
+  const [openingHostedLink, setOpeningHostedLink] = useState(false);
 
   // Promo code state
   const [inputPromo, setInputPromo] = useState('');
@@ -359,6 +361,49 @@ export function CostSummary({
     }
   };
 
+  const openHostedPaymentLink = async (existingId?: string | null) => {
+    setOpeningHostedLink(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch('/api/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkoutMode: 'payment_link',
+          existingJobId: existingId || undefined,
+          fileKey,
+          fileName,
+          docPages: totalPages,
+          pageRange,
+          colorMode: pricing.colorMode,
+          isDuplex: pricing.isDuplex,
+          copies: pricing.copies,
+          orientation: getEffectiveOrientation(),
+          pageConfigs,
+          layoutMode,
+          customCols,
+          customRows,
+          textOverlay,
+          station_id: station.id,
+          customScale,
+          fitMode,
+          drawBorder,
+          autoRotate,
+          phone: phoneNumber.length === 10 ? phoneNumber : undefined,
+          promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.paymentLinkUrl) {
+        throw new Error(data.error || 'Could not generate Hosted Payment Link.');
+      }
+      window.location.assign(data.paymentLinkUrl);
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'Hosted link checkout failed.');
+      setOpeningHostedLink(false);
+    }
+  };
+
   const handlePayAndPrint = async () => {
     setIsProcessing(true);
     setErrorMessage(null);
@@ -395,8 +440,13 @@ export function CostSummary({
         throw new Error(errData.error || 'Failed to create order.');
       }
 
-      const { jobId, orderId, order_id, amount, currency, keyId, pickupCode } = await orderRes.json();
+      const { jobId, orderId, order_id, amount, currency, keyId, pickupCode, paymentLinkUrl } = await orderRes.json();
       const activeOrderId = order_id || orderId;
+      if (jobId) setLastCreatedJobId(jobId);
+      if (paymentLinkUrl) {
+        window.location.assign(paymentLinkUrl);
+        return;
+      }
 
       if (typeof window !== 'undefined') {
         if (!window.Razorpay) {
@@ -500,8 +550,12 @@ export function CostSummary({
         };
         const rzp = new window.Razorpay(options);
         rzp.on('payment.failed', (r: { error?: { description?: string; reason?: string } }) => {
-          setErrorMessage(r.error?.description || r.error?.reason || 'Payment was cancelled or failed.');
+          const msg = r.error?.description || r.error?.reason || 'Payment was cancelled or failed.';
+          setErrorMessage(msg);
           setIsProcessing(false);
+          if (/register|domain|risk|merchant|website/i.test(msg)) {
+            void openHostedPaymentLink(jobId);
+          }
         });
         rzp.open();
       }
@@ -927,13 +981,34 @@ export function CostSummary({
               </span>
             ))}
           </div>
+
+          <div className="pt-1 text-center">
+            <button
+              type="button"
+              disabled={isProcessing || openingHostedLink}
+              onClick={() => void openHostedPaymentLink(lastCreatedJobId)}
+              className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer disabled:opacity-50"
+            >
+              {openingHostedLink ? 'Opening Hosted Razorpay Link…' : 'Pay via Hosted Razorpay UPI Link (Direct rzp.io)'}
+            </button>
+          </div>
         </div>
       )}
 
       {errorMessage && (
-        <div className="p-3 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/20 text-xs text-rose-800 dark:text-rose-300 flex items-center justify-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
-          <span>{errorMessage}</span>
+        <div className="p-3 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/20 text-xs text-rose-800 dark:text-rose-300 flex flex-col items-center justify-center gap-2 text-center">
+          <div className="flex items-center justify-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            type="button"
+            disabled={openingHostedLink}
+            onClick={() => void openHostedPaymentLink(lastCreatedJobId)}
+            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
+          >
+            {openingHostedLink ? 'Redirecting to Razorpay…' : 'Open Hosted Razorpay UPI Link Instead'}
+          </button>
         </div>
       )}
 

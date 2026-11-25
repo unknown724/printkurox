@@ -13,6 +13,7 @@ import {
   SlidersHorizontal,
   ArrowRight,
   Zap,
+  RectangleVertical,
 } from 'lucide-react';
 import { FileUpload, UploadedBatchData } from '@/components/FileUpload';
 import { PrintSettingsState } from '@/components/PrintSettings';
@@ -31,6 +32,8 @@ interface ExpressPrintStudioProps {
   onBatchUploaded: (data: UploadedBatchData | null) => void;
   pageConfigs: PageConfig[];
   onPageConfigsChange: (updated: PageConfig[]) => void;
+  orientation: 'auto' | 'portrait' | 'landscape';
+  onOrientationChange: (orient: 'auto' | 'portrait' | 'landscape') => void;
   settings: PrintSettingsState;
   onSettingsChange: (settings: PrintSettingsState) => void;
   pricing: PricingResult;
@@ -50,6 +53,8 @@ export function ExpressPrintStudio({
   onBatchUploaded,
   pageConfigs,
   onPageConfigsChange,
+  orientation,
+  onOrientationChange,
   settings,
   onSettingsChange,
   pricing,
@@ -212,6 +217,7 @@ export function ExpressPrintStudio({
             pageConfigs={pageConfigs}
             onPageConfigsChange={onPageConfigsChange}
             colorMode={settings.colorMode}
+            orientation={orientation}
           />
 
           {/* Quick Options Card: Color + Copies + Custom Pages */}
@@ -289,7 +295,41 @@ export function ExpressPrintStudio({
               </div>
             </div>
 
-            {/* 3. Custom Pages Selection */}
+            {/* 3. Page Orientation (Auto / Portrait / Landscape) */}
+            <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-white/[0.06]">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+                  <RectangleVertical className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-400" />
+                  <span>Page Orientation</span>
+                </span>
+                <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 capitalize">
+                  {orientation}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1.5">
+                {([
+                  { value: 'auto', label: 'Auto' },
+                  { value: 'portrait', label: 'Portrait' },
+                  { value: 'landscape', label: 'Landscape' },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => onOrientationChange(opt.value)}
+                    className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      orientation === opt.value
+                        ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-950 border-zinc-900 dark:border-white shadow-xs'
+                        : 'bg-zinc-50 dark:bg-white/[0.04] text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-white/10 hover:bg-zinc-100 dark:hover:bg-white/[0.08]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 4. Custom Pages Selection */}
             <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-white/[0.06]">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
@@ -364,7 +404,7 @@ export function ExpressPrintStudio({
             pageRange={settings.pageRangeType === 'all' ? 'All' : settings.customPageRange}
             pageConfigs={pageConfigs}
             layoutMode="1-up"
-            orientation="auto"
+            orientation={orientation}
             autoRotate
             stationId={stationId}
             customScale={100}

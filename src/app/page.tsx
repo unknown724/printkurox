@@ -437,6 +437,11 @@ function HomePageContent() {
             onBatchUploaded={handleBatchUploaded}
             pageConfigs={pageConfigs}
             onPageConfigsChange={handlePageConfigsChange}
+            orientation={orientation}
+            onOrientationChange={(orient) => {
+              setOrientation(orient);
+              setLayoutSettings((prev) => ({ ...prev, orientation: orient }));
+            }}
             settings={settings}
             onSettingsChange={handleSettingsChange}
             pricing={pricing}

@@ -11,38 +11,81 @@ export async function POST(req: NextRequest) {
     const order_id = body.razorpay_order_id || body.order_id;
     const payment_id = body.razorpay_payment_id || body.payment_id;
     const signature = body.razorpay_signature || body.signature;
+    const payment_link_id = body.razorpay_payment_link_id || body.payment_link_id;
+    const payment_link_ref = body.razorpay_payment_link_reference_id || body.payment_link_reference_id || '';
+    const payment_link_status = body.razorpay_payment_link_status || body.payment_link_status || '';
     const jobId = body.jobId;
 
-    // 1. Validate required verification parameters
-    if (!order_id || !payment_id || !signature) {
-      return NextResponse.json(
-        {
-          error: 'Missing required Razorpay verification fields (order_id, payment_id, signature)',
-        },
-        { status: 400 }
-      );
-    }
-
-    // 2. Load and validate Secret Key from environment
+    const keyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '';
     const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim() || '';
     if (!keySecret) {
       console.error('RAZORPAY_KEY_SECRET is not configured in server environment');
       return NextResponse.json({ error: 'Payment gateway configuration error' }, { status: 500 });
     }
 
-    // 3. Cryptographic HMAC-SHA256 signature verification (Timing safe)
-    // Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
-    const generatedSignature = crypto
-      .createHmac('sha256', keySecret)
-      .update(`${order_id}|${payment_id}`)
-      .digest('hex');
+    let resolvedOrderId = order_id as string | undefined;
+    let resolvedPaymentId = payment_id as string | undefined;
 
-    const sigBuffer = Buffer.from(signature.trim());
-    const genBuffer = Buffer.from(generatedSignature.trim());
+    if (payment_link_id && payment_id && signature && payment_link_status) {
+      // Razorpay Payment Link callback verification:
+      // HMAC-SHA256(payment_link_id + "|" + reference_id + "|" + status + "|" + payment_id, KEY_SECRET)
+      const plPayload = `${payment_link_id}|${payment_link_ref}|${payment_link_status}|${payment_id}`;
+      const expectedPlSig = crypto
+        .createHmac('sha256', keySecret)
+        .update(plPayload)
+        .digest('hex');
+      const sigBuffer = Buffer.from(String(signature).trim());
+      const expBuffer = Buffer.from(expectedPlSig.trim());
+      if (sigBuffer.length !== expBuffer.length || !crypto.timingSafeEqual(sigBuffer, expBuffer)) {
+        return NextResponse.json({ error: 'Invalid payment link signature' }, { status: 400 });
+      }
+      if (String(payment_link_status).toLowerCase() !== 'paid') {
+        return NextResponse.json({ error: 'Payment link is not marked paid yet' }, { status: 400 });
+      }
+      resolvedOrderId = String(payment_link_id);
+      resolvedPaymentId = String(payment_id);
+    } else if (payment_link_id && keyId) {
+      // Direct Razorpay REST check for Hosted Payment Link status
+      const basicAuth = Buffer.from(`${keyId.trim()}:${keySecret}`).toString('base64');
+      const plRes = await fetch(`https://api.razorpay.com/v1/payment_links/${encodeURIComponent(String(payment_link_id))}`, {
+        headers: { Authorization: `Basic ${basicAuth}` },
+        cache: 'no-store',
+      });
+      const plData = await plRes.json().catch(() => ({})) as {
+        id?: string;
+        status?: string;
+        payments?: Array<{ payment_id?: string }>;
+      };
+      if (!plRes.ok || plData.status !== 'paid') {
+        return NextResponse.json({ error: 'Payment link has not settled yet' }, { status: 402 });
+      }
+      resolvedOrderId = plData.id || String(payment_link_id);
+      resolvedPaymentId = resolvedPaymentId || plData.payments?.[0]?.payment_id || `plink_${resolvedOrderId}`;
+    } else {
+      // 1. Validate required standard order verification parameters
+      if (!order_id || !payment_id || !signature) {
+        return NextResponse.json(
+          {
+            error: 'Missing required Razorpay verification fields (order_id, payment_id, signature)',
+          },
+          { status: 400 }
+        );
+      }
 
-    if (sigBuffer.length !== genBuffer.length || !crypto.timingSafeEqual(sigBuffer, genBuffer)) {
-      console.error('Tampered payment signature detected! Signature mismatch.');
-      return NextResponse.json({ error: 'Invalid payment signature' }, { status: 400 });
+      // 3. Cryptographic HMAC-SHA256 signature verification (Timing safe)
+      // Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
+      const generatedSignature = crypto
+        .createHmac('sha256', keySecret)
+        .update(`${order_id}|${payment_id}`)
+        .digest('hex');
+
+      const sigBuffer = Buffer.from(signature.trim());
+      const genBuffer = Buffer.from(generatedSignature.trim());
+
+      if (sigBuffer.length !== genBuffer.length || !crypto.timingSafeEqual(sigBuffer, genBuffer)) {
+        console.error('Tampered payment signature detected! Signature mismatch.');
+        return NextResponse.json({ error: 'Invalid payment signature' }, { status: 400 });
+      }
     }
 
     // 4. If linked to a Print Job, fetch and atomically update status in Cloudflare D1
@@ -55,10 +98,10 @@ export async function POST(req: NextRequest) {
           [jobId]
         );
       }
-      if ((!jobs || jobs.length === 0) && order_id) {
+      if ((!jobs || jobs.length === 0) && resolvedOrderId) {
         jobs = await queryD1<PrintJobRecord>(
           'SELECT id, order_id, status, pickup_code, total_price FROM print_jobs WHERE order_id = ?',
-          [order_id]
+          [resolvedOrderId]
         );
       }
       if (jobs && jobs.length > 0) {
@@ -70,8 +113,8 @@ export async function POST(req: NextRequest) {
 
     if (matchedJob) {
       // Order ID validation (Prevent Cross-Job replay)
-      if (matchedJob.order_id && matchedJob.order_id !== order_id) {
-        console.error(`Order ID mismatch! DB order: ${matchedJob.order_id}, received: ${order_id}`);
+      if (matchedJob.order_id && resolvedOrderId && matchedJob.order_id !== resolvedOrderId) {
+        console.error(`Order ID mismatch! DB order: ${matchedJob.order_id}, received: ${resolvedOrderId}`);
         return NextResponse.json({ error: 'Order ID does not match print job' }, { status: 400 });
       }
 
@@ -81,7 +124,7 @@ export async function POST(req: NextRequest) {
           `UPDATE print_jobs 
            SET status = 'PAID', payment_id = ?
            WHERE id = ? AND status = 'PENDING_PAYMENT'`,
-          [payment_id, matchedJob.id]
+          [resolvedPaymentId || null, matchedJob.id]
         );
 
         // Instant local wake trigger to kiosk daemon (0ms queue polling delay)

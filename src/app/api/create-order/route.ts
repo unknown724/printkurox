@@ -38,10 +38,96 @@ export async function POST(req: NextRequest) {
       autoRotate,
       promoCode,
       phone,
+      checkoutMode = 'modal',
+      existingJobId,
     } = body;
 
     const station = getStationConfig(rawStationId);
     const stationId = station.id;
+    const isPaymentLinkMode = checkoutMode === 'payment_link';
+
+    // Handle upgrading an existing PENDING_PAYMENT job (e.g. after modal domain error) to a Hosted Razorpay Payment Link
+    if (isPaymentLinkMode && existingJobId && typeof existingJobId === 'string') {
+      const keyId = process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || '';
+      const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+      if (!keyId || !keySecret) {
+        return NextResponse.json({ error: 'Razorpay API credentials not configured on server' }, { status: 500 });
+      }
+      const rows = await queryD1<{
+        id: string;
+        pickup_code: string;
+        file_name: string;
+        total_price: number;
+        total_pages: number;
+        copies: number;
+        status: string;
+      }>(
+        `SELECT id, pickup_code, file_name, total_price, total_pages, copies, status FROM print_jobs WHERE id = ? LIMIT 1`,
+        [existingJobId]
+      );
+      const existingJob = rows?.[0];
+      if (!existingJob || existingJob.status !== 'PENDING_PAYMENT') {
+        return NextResponse.json({ error: 'Pending print job not found for payment link' }, { status: 404 });
+      }
+      const amountInPaise = Math.max(100, Math.round(Number(existingJob.total_price) * 100));
+      const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
+      const customerContact = /^[6-9]\d{9}$/.test(cleanPhone) ? `+91${cleanPhone}` : '+919362980761';
+      const reqOrigin = req.nextUrl.origin || 'https://printkurox.pages.dev';
+      const basicAuth = Buffer.from(`${keyId.trim()}:${keySecret.trim()}`).toString('base64');
+      const plRes = await fetch('https://api.razorpay.com/v1/payment_links', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${basicAuth}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: amountInPaise,
+          currency: 'INR',
+          accept_partial: false,
+          reference_id: existingJob.id.replace(/-/g, '').slice(0, 32),
+          description: `PrintKurox ${existingJob.pickup_code} - ${existingJob.total_pages}p x ${existingJob.copies}`,
+          customer: {
+            name: 'Student',
+            contact: customerContact,
+          },
+          notify: { sms: false, email: false },
+          reminder_enable: false,
+          callback_url: `${reqOrigin}/status/${existingJob.id}`,
+          callback_method: 'get',
+          notes: {
+            jobId: existingJob.id,
+            pickupCode: existingJob.pickup_code,
+            station_id: station.id,
+          },
+        }),
+        cache: 'no-store',
+      });
+      const plData = await plRes.json().catch(() => ({})) as {
+        id?: string;
+        short_url?: string;
+        error?: { description?: string };
+      };
+      if (!plRes.ok || !plData.id || !plData.short_url) {
+        return NextResponse.json(
+          { error: plData.error?.description || 'Failed to create Razorpay Hosted Payment Link' },
+          { status: 500 }
+        );
+      }
+      await executeD1(`UPDATE print_jobs SET order_id = ? WHERE id = ?`, [plData.id, existingJob.id]);
+      return NextResponse.json({
+        success: true,
+        checkoutMode: 'payment_link',
+        paymentLinkUrl: plData.short_url,
+        paymentLinkId: plData.id,
+        order_id: plData.id,
+        orderId: plData.id,
+        amount: amountInPaise,
+        currency: 'INR',
+        keyId,
+        jobId: existingJob.id,
+        pickupCode: existingJob.pickup_code,
+      });
+    }
 
     let amountInPaise = 0;
     const currency = directCurrency || 'INR';
@@ -165,48 +251,105 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let rzpOrder: { id: string; amount: number; currency: string };
+    let rzpOrder: { id: string; amount: number; currency: string; shortUrl?: string };
+    const createdJobId = fileKey && fileName && pickupCode && pricing ? crypto.randomUUID() : undefined;
     try {
-      // Direct 100% Settlement to Primary Razorpay Account (REST fetch for Edge/Worker compatibility)
-      const orderPayload: Record<string, unknown> = {
-        amount: amountInPaise,
-        currency,
-        receipt,
-        notes: {
-          ...orderNotes,
-          station_id: station.id,
-        },
-      };
-
       const basicAuth = Buffer.from(`${keyId.trim()}:${keySecret.trim()}`).toString('base64');
-      const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${basicAuth}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderPayload),
-        cache: 'no-store',
-      });
+      if (isPaymentLinkMode) {
+        const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
+        const customerContact = /^[6-9]\d{9}$/.test(cleanPhone) ? `+91${cleanPhone}` : '+919362980761';
+        const reqOrigin = req.nextUrl.origin || 'https://printkurox.pages.dev';
+        const plPayload = {
+          amount: amountInPaise,
+          currency,
+          accept_partial: false,
+          reference_id: (createdJobId || receipt || `pk${Date.now()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 32),
+          description: pickupCode
+            ? `PrintKurox ${pickupCode} - ${pricing?.totalPages || 1}p x ${pricing?.copies || 1}`
+            : 'PrintKurox Order',
+          customer: {
+            name: 'Student',
+            contact: customerContact,
+          },
+          notify: { sms: false, email: false },
+          reminder_enable: false,
+          ...(createdJobId ? { callback_url: `${reqOrigin}/status/${createdJobId}`, callback_method: 'get' } : {}),
+          notes: {
+            ...orderNotes,
+            ...(createdJobId ? { jobId: createdJobId } : {}),
+            station_id: station.id,
+          },
+        };
+        const plRes = await fetch('https://api.razorpay.com/v1/payment_links', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${basicAuth}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(plPayload),
+          cache: 'no-store',
+        });
+        const plData = await plRes.json().catch(() => ({})) as {
+          id?: string;
+          amount?: number;
+          currency?: string;
+          short_url?: string;
+          error?: { description?: string };
+        };
+        if (!plRes.ok || !plData.id || !plData.short_url) {
+          const statusCode = plRes.status === 401 ? 401 : 500;
+          return NextResponse.json(
+            { error: plData.error?.description || `Razorpay Payment Link error (${plRes.status})` },
+            { status: statusCode }
+          );
+        }
+        rzpOrder = {
+          id: plData.id,
+          amount: Number(plData.amount ?? amountInPaise),
+          currency: String(plData.currency || currency),
+          shortUrl: plData.short_url,
+        };
+      } else {
+        // Direct 100% Settlement to Primary Razorpay Account (REST fetch for Edge/Worker compatibility)
+        const orderPayload: Record<string, unknown> = {
+          amount: amountInPaise,
+          currency,
+          receipt,
+          notes: {
+            ...orderNotes,
+            station_id: station.id,
+          },
+        };
 
-      const rzpData = await rzpRes.json().catch(() => ({})) as {
-        id?: string;
-        amount?: number;
-        currency?: string;
-        error?: { description?: string; code?: string };
-      };
+        const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${basicAuth}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(orderPayload),
+          cache: 'no-store',
+        });
 
-      if (!rzpRes.ok || !rzpData.id) {
-        const statusCode = rzpRes.status === 401 ? 401 : 500;
-        const errorMessage = rzpData.error?.description || `Razorpay API error (${rzpRes.status})`;
-        return NextResponse.json({ error: errorMessage }, { status: statusCode });
+        const rzpData = await rzpRes.json().catch(() => ({})) as {
+          id?: string;
+          amount?: number;
+          currency?: string;
+          error?: { description?: string; code?: string };
+        };
+
+        if (!rzpRes.ok || !rzpData.id) {
+          const statusCode = rzpRes.status === 401 ? 401 : 500;
+          const errorMessage = rzpData.error?.description || `Razorpay API error (${rzpRes.status})`;
+          return NextResponse.json({ error: errorMessage }, { status: statusCode });
+        }
+
+        rzpOrder = {
+          id: rzpData.id,
+          amount: Number(rzpData.amount ?? amountInPaise),
+          currency: String(rzpData.currency || currency),
+        };
       }
-
-      rzpOrder = {
-        id: rzpData.id,
-        amount: Number(rzpData.amount ?? amountInPaise),
-        currency: String(rzpData.currency || currency),
-      };
     } catch (rzpErr: unknown) {
       console.error('Razorpay order creation API error:', rzpErr);
       const errObj = rzpErr as { statusCode?: number; error?: { description?: string; code?: string }; message?: string };
@@ -219,7 +362,7 @@ export async function POST(req: NextRequest) {
 
     // 5. If this is a Print Kiosk Job, insert record into Cloudflare D1
     if (fileKey && fileName && pickupCode && pricing) {
-      jobId = crypto.randomUUID();
+      jobId = createdJobId || crypto.randomUUID();
       const now = new Date();
       const createdAt = now.toISOString();
       const expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
@@ -337,6 +480,8 @@ export async function POST(req: NextRequest) {
     // Return standard Razorpay checkout response format
     return NextResponse.json({
       success: true,
+      checkoutMode: rzpOrder.shortUrl ? 'payment_link' : 'modal',
+      paymentLinkUrl: rzpOrder.shortUrl,
       order_id: razorpayOrderId,
       orderId: razorpayOrderId,
       amount: amountInPaise,
