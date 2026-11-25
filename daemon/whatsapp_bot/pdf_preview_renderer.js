@@ -13,7 +13,31 @@ const crypto = require('crypto');
 const previewCache = new Map();
 const MAX_CACHE_ITEMS = 50;
 
+let _cachedPythonCmd = null;
+
 function findPython() {
+  if (_cachedPythonCmd) return _cachedPythonCmd;
+
+  if (process.platform !== 'win32') {
+    const linuxCandidates = ['/usr/bin/python3', '/usr/local/bin/python3'];
+    for (const c of linuxCandidates) {
+      if (fs.existsSync(c)) {
+        _cachedPythonCmd = c;
+        return c;
+      }
+    }
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync('command -v python3 || command -v python', { encoding: 'utf8', shell: '/bin/sh' }).trim().split(/\r?\n/);
+      if (out[0] && fs.existsSync(out[0])) {
+        _cachedPythonCmd = out[0];
+        return out[0];
+      }
+    } catch (e) {}
+    _cachedPythonCmd = 'python3';
+    return 'python3';
+  }
+
   const localAppData = process.env.LOCALAPPDATA || '';
   const candidates = [
     localAppData ? path.join(localAppData, 'Programs', 'Python', 'Python312', 'python.exe') : '',
@@ -25,20 +49,25 @@ function findPython() {
   ];
 
   for (const c of candidates) {
-    if (c && fs.existsSync(c)) return c;
+    if (c && fs.existsSync(c)) {
+      _cachedPythonCmd = c;
+      return c;
+    }
   }
 
-  // Try finding via `where python`
+  // Try finding via `where python` (Windows only)
   try {
     const { execSync } = require('child_process');
     const out = execSync('where python', { encoding: 'utf8' }).trim().split(/\r?\n/);
     for (const p of out) {
       if (p && !p.toLowerCase().includes('windowsapps') && fs.existsSync(p)) {
+        _cachedPythonCmd = p;
         return p;
       }
     }
   } catch (e) {}
 
+  _cachedPythonCmd = 'python';
   return 'python';
 }
 

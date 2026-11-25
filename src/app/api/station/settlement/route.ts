@@ -6,7 +6,7 @@ import {
 } from '@/lib/settlement-service';
 import { verifyAdminDevice, validateAdminPin, ADMIN_COOKIE_NAME, verifyStationSession } from '@/lib/admin-auth';
 import { validateStationPin, normalizeStationId } from '@/lib/stations';
-import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
+import { executeD1 } from '@/lib/cloudflare-d1';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,16 +34,17 @@ export async function GET(req: NextRequest) {
 
     const summary = await getStationSettlementSummary(stationId);
     return NextResponse.json({ success: true, summary });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Internal server error';
     console.error('Error fetching settlement summary:', err);
-    return NextResponse.json({ success: false, error: err.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { action, stationId, paymentRef, notes, upiId, quota, pin, token } = body;
+    const { action, stationId, paymentRef, notes, upiId, quota, pin } = body;
 
     if (!stationId) {
       return NextResponse.json({ success: false, error: 'stationId is required' }, { status: 400 });
@@ -125,8 +126,9 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ success: false, error: 'Invalid action' }, { status: 400 });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Internal server error';
     console.error('Settlement API error:', err);
-    return NextResponse.json({ success: false, error: err.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

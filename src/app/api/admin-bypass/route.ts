@@ -3,11 +3,11 @@ import crypto from 'crypto';
 import { calculatePricing } from '@/lib/pricing';
 import { generateRandomPickupCode } from '@/lib/pickup-code';
 import { queryD1, executeD1 } from '@/lib/cloudflare-d1';
-import { parsePageRange, transformPdfForPrint } from '@/lib/pdf-utils';
+import { parsePageRange, preparePrintDocument } from '@/lib/pdf-utils';
 import { getFileBufferFromR2, uploadToR2 } from '@/lib/cloudflare-r2';
 import { validateAdminPin, verifyAdminDevice, ADMIN_COOKIE_NAME } from '@/lib/admin-auth';
 import { validateStationPin, validateStationPinWithRoleAsync, getStationConfig, validateStationTokenAsync } from '@/lib/stations';
-import { checkRateLimit, recordFailedAttempt, resetFailedAttempts } from '@/lib/rate-limit';
+import { checkRateLimit, recordFailedAttempt } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -191,84 +191,30 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
 
-    let finalFileKey = fileKey;
-    let finalDocPages = pricing.totalPages;
-    let finalPageRange = effectivePageRange;
-
-    const hasCustomPageConfigs =
-      Array.isArray(pageConfigs) &&
-      pageConfigs.some(
-        (p: { included?: boolean; rotation?: number; customScale?: number; copies?: number }) =>
-          p.included === false ||
-          (p.rotation && p.rotation !== 0) ||
-          (p.customScale && p.customScale !== 100) ||
-          (p.copies && p.copies > 1)
-      );
-
-    const hasTextOverlay = Boolean(
-      textOverlay && (
-        textOverlay.enabled ||
-        (Array.isArray(textOverlay.items) && textOverlay.items.some((it: { text?: string }) => it.text && it.text.trim().length > 0)) ||
-        (typeof textOverlay.text === 'string' && textOverlay.text.trim().length > 0)
-      )
-    );
-
-    const isNotPdf = Boolean(fileName && !fileName.toLowerCase().endsWith('.pdf'));
-
-    const hasPageOverrides = Boolean(
-      Array.isArray(pageConfigs) &&
-      pageConfigs.some((p: { rotation?: number; customScale?: number; included?: boolean; orientation?: string }) =>
-        (p.rotation && p.rotation !== 0) ||
-        (p.customScale && p.customScale !== 100) ||
-        p.included === false ||
-        p.orientation === 'landscape' ||
-        p.orientation === 'portrait'
-      )
-    );
-
-    // Perform server-side PDF manipulation when layout, orientation, rotation, scale, or overlays are adjusted
-    const needsTransform = Boolean(
-      isNotPdf ||
-      (customScale && Number(customScale) !== 100) ||
-      (layoutMode && layoutMode !== '1-up') ||
-      drawBorder ||
-      hasTextOverlay ||
-      orientation === 'landscape' ||
-      orientation === 'portrait' ||
-      hasPageOverrides
-    );
-
-    if (needsTransform) {
-      try {
-        const originalBuffer = await getFileBufferFromR2(fileKey);
-        const { transformedBuffer, totalPages: transformedPages } = await transformPdfForPrint(
-          originalBuffer,
-          fileName,
-          {
-            layoutMode: layoutMode || '1-up',
-            customCols: customCols ? Number(customCols) : undefined,
-            customRows: customRows ? Number(customRows) : undefined,
-            fitMode: fitMode || 'fit',
-            drawBorder: Boolean(drawBorder),
-            autoRotate: autoRotate ?? true,
-            textOverlay,
-            orientation: orientation || 'auto',
-            pageConfigs,
-            customScale: customScale ? Number(customScale) : 100,
-            pageRange: effectivePageRange,
-          }
-        );
-
-        const cleanBase = fileName.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9.-]/g, '_');
-        const transformedKey = `uploads/transformed-${jobId}-${cleanBase}.pdf`;
-        await uploadToR2(transformedKey, transformedBuffer, 'application/pdf');
-        finalFileKey = transformedKey;
-        finalDocPages = transformedPages;
-        finalPageRange = 'All'; // Layout, sequence, and exclusions are baked into the PDF
-      } catch (err) {
-        console.error('Error transforming PDF for print in admin-bypass, using original file:', err);
-      }
-    }
+    const {
+      finalFileKey,
+      finalDocPages,
+      finalPageRange,
+    } = await preparePrintDocument({
+      jobId,
+      fileKey,
+      fileName,
+      totalPages: pricing.totalPages,
+      pageRange: effectivePageRange,
+      layoutMode: layoutMode || '1-up',
+      customCols,
+      customRows,
+      fitMode: fitMode || 'fit',
+      drawBorder: Boolean(drawBorder),
+      autoRotate: autoRotate ?? true,
+      textOverlay,
+      orientation: orientation || 'auto',
+      pageConfigs,
+      customScale: customScale ? Number(customScale) : 100,
+      logContext: 'admin-bypass',
+      getBufferFromR2: getFileBufferFromR2,
+      uploadBufferToR2: uploadToR2,
+    });
 
     // Insert directly as PAID into Cloudflare D1 with orientation, page_configs, and station_id
     await executeD1(

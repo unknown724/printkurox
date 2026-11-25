@@ -85,8 +85,9 @@ export async function POST(req: NextRequest) {
       message: 'Station registered successfully'
     });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Internal error';
     console.error('Station registration error:', err);
-    return NextResponse.json({ error: 'Internal server error', details: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error', details: msg }, { status: 500 });
   }
 }

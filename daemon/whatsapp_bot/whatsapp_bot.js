@@ -369,50 +369,53 @@ console.log('============================================================\n');
 // HELPER FUNCTIONS: D1 DATABASE, PRICING, & PICKUP CODES
 // ============================================================================
 
-async function executeD1(sql, params = []) {
-  if (!CF_ACCOUNT_ID || !CF_API_TOKEN || !CF_D1_DB_ID) return false;
-  try {
-    const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/${CF_D1_DB_ID}/query`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${CF_API_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ sql, params }),
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      console.error('[WA-Bot D1 Execute Error]:', txt);
-      return false;
+async function runD1Sql(sql, params = [], maxAttempts = 3) {
+  if (!CF_ACCOUNT_ID || !CF_API_TOKEN || !CF_D1_DB_ID) return null;
+  const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/${CF_D1_DB_ID}/query`;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CF_API_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sql, params }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 429 || (res.status >= 502 && res.status <= 504)) {
+        const retryAfter = Number(res.headers.get('retry-after') || '0');
+        const delayMs = retryAfter > 0 ? Math.min(5000, Math.max(300, retryAfter * 1000)) : Math.min(4000, 400 * (2 ** (attempt - 1)));
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+      }
+      if (!res.ok) {
+        const txt = await res.text();
+        console.error('[WA-Bot D1 Execute Error]:', txt);
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      if (attempt === maxAttempts) {
+        console.error('[WA-Bot D1 Network Error]:', err);
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, 350 * attempt));
     }
-    const data = await res.json();
-    return data.success === true;
-  } catch (err) {
-    console.error('[WA-Bot D1 Network Error]:', err);
-    return false;
   }
+  return null;
+}
+
+async function executeD1(sql, params = []) {
+  const data = await runD1Sql(sql, params);
+  return Boolean(data && data.success === true);
 }
 
 async function queryD1(sql, params = []) {
-  if (!CF_ACCOUNT_ID || !CF_API_TOKEN || !CF_D1_DB_ID) return [];
-  try {
-    const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/${CF_D1_DB_ID}/query`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${CF_API_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ sql, params }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.result?.[0]?.results || [];
-  } catch (err) {
-    console.error('[WA-Bot D1 Query Error]:', err);
-    return [];
-  }
+  const data = await runD1Sql(sql, params);
+  return data?.result?.[0]?.results || [];
 }
 
 function generateRandomPickupCode() {
@@ -1319,6 +1322,30 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
     console.log(`[WA-Bot] Using Direct Fallback UPI Link: ${paymentLinkUrl}`);
   }
 
+  // Wait briefly for in-flight background R2 upload so paid jobs never miss their file in R2
+  if (session.uploadPromise) {
+    try {
+      await session.uploadPromise;
+    } catch (upErr) {
+      console.warn('[WA-Bot] Background R2 upload warning before checkout:', upErr.message);
+    }
+  }
+  if (session.uploadOk === false && session.fileBuffer && session.fileKey) {
+    try {
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: R2_BUCKET_NAME,
+          Key: session.fileKey,
+          Body: session.fileBuffer,
+          ContentType: session.mimeType || 'application/pdf',
+        })
+      );
+      session.uploadOk = true;
+    } catch (retryUpErr) {
+      console.error('[WA-Bot R2 Retry Upload Error]:', retryUpErr.message);
+    }
+  }
+
   // Pre-generate preview image in background so "Preview Document" responds in 0ms!
   if (session.fileBuffer || session.imageBuffer) {
     generatePreviewImage({
@@ -1329,37 +1356,39 @@ async function sendDocumentSummaryAndPaymentCard({ sock, senderJid, senderName =
     }).catch(() => {});
   }
 
-  // Save order to Cloudflare D1 in background (non-blocking for ultra-fast card dispatch)
-  executeD1(
-    `INSERT INTO print_jobs (
-      id, pickup_code, file_key, file_name, total_pages, page_range,
-      color_mode, is_duplex, copies, duplex_sheets, single_sheets,
-      total_price, order_id, status, created_at, expires_at,
-      orientation, station_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      jobId,
-      pickupCode,
-      session.fileKey,
-      session.fileName,
-      session.selectedPages ? session.selectedPages.length : session.totalPages,
-      session.pageRangeStr || 'All',
-      session.colorMode,
-      0,
-      session.copies || 1,
-      0,
-      (session.selectedPages ? session.selectedPages.length : session.totalPages) * (session.copies || 1),
-      totalAmount,
-      paymentLinkId || `WA_${jobId.slice(0, 8)}`,
-      'PENDING_PAYMENT',
-      now,
-      expiresAt,
-      session.orientation || 'portrait',
-      currentStation.id,
-    ]
-  ).catch((d1Err) => {
-    console.error('[WA-Bot D1 Background Insert Error]:', d1Err);
-  });
+  // Commit order to Cloudflare D1 BEFORE showing payment link so webhook/poller never race a missing row
+  try {
+    await executeD1(
+      `INSERT INTO print_jobs (
+        id, pickup_code, file_key, file_name, total_pages, page_range,
+        color_mode, is_duplex, copies, duplex_sheets, single_sheets,
+        total_price, order_id, status, created_at, expires_at,
+        orientation, station_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        jobId,
+        pickupCode,
+        session.fileKey,
+        session.fileName,
+        session.selectedPages ? session.selectedPages.length : session.totalPages,
+        session.pageRangeStr || 'All',
+        session.colorMode,
+        0,
+        session.copies || 1,
+        0,
+        (session.selectedPages ? session.selectedPages.length : session.totalPages) * (session.copies || 1),
+        totalAmount,
+        paymentLinkId || `WA_${jobId.slice(0, 8)}`,
+        'PENDING_PAYMENT',
+        now,
+        expiresAt,
+        session.orientation || 'portrait',
+        currentStation.id,
+      ]
+    );
+  } catch (d1Err) {
+    console.error('[WA-Bot D1 Insert Error]:', d1Err);
+  }
 
   session.stage = 'AWAITING_PAYMENT';
   session.jobId = jobId;
@@ -1607,7 +1636,7 @@ function monitorPaymentLink({ sock, senderJid, paymentLinkId, jobId, pickupCode,
         const currentStation = session.station || defaultStation;
 
         await executeD1(
-          `UPDATE print_jobs SET status = 'PAID', payment_id = ? WHERE id = ?`,
+          `UPDATE print_jobs SET status = 'PAID', payment_id = ? WHERE id = ? AND status = 'PENDING_PAYMENT'`,
           [paymentId, jobId]
         );
 
@@ -2655,16 +2684,28 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
   const cleanBaseName = finalFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
   const r2Key = `uploads/wa-${randomPrefix}-${cleanBaseName}`;
 
-  const r2UploadPromise = s3Client.send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: r2Key,
-      Body: finalBuffer,
-      ContentType: finalMimeType,
-    })
-  ).catch((err) => {
-    console.error('[WA-Bot R2 Upload Error]:', err.message);
-  });
+  session.uploadOk = null;
+  const r2UploadPromise = (async () => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await s3Client.send(
+          new PutObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: r2Key,
+            Body: finalBuffer,
+            ContentType: finalMimeType,
+          })
+        );
+        session.uploadOk = true;
+        return true;
+      } catch (err) {
+        console.error(`[WA-Bot R2 Upload Error attempt ${attempt}/3]:`, err.message);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 700 * attempt));
+      }
+    }
+    session.uploadOk = false;
+    return false;
+  })();
 
   const fileSizeMb = (finalBuffer.length / (1024 * 1024)).toFixed(2);
 
@@ -3095,7 +3136,7 @@ function handleIncomingMediaAttachment({
     sock.sendMessage(senderJid, { text: prepNotice }, { quoted: msg }).catch(() => {});
   }
 
-  const debounceDelay = 7500;
+  const debounceDelay = 2200;
   const scheduleProcess = () => {
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(async () => {
@@ -5972,6 +6013,24 @@ Department: Computer Science and Engineering`;
     isStartingBot = false;
   }
 }
+
+function gracefulShutdown(signal) {
+  console.log(`[WA-Bot] Received ${signal}, shutting down cleanly...`);
+  try { activeBotSock?.ev?.removeAllListeners?.(); } catch (e) {}
+  try { activeBotSock?.ws?.terminate?.(); } catch (e) {}
+  try { activeBotSock?.end?.(undefined); } catch (e) {}
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (currentLivenessTimer) clearInterval(currentLivenessTimer);
+  if (currentHeartbeatTimer) clearInterval(currentHeartbeatTimer);
+  for (const timer of activePollers.values()) {
+    try { clearTimeout(timer); clearInterval(timer); } catch (e) {}
+  }
+  activePollers.clear();
+  setTimeout(() => process.exit(0), 250).unref();
+  process.exit(0);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 process.on('uncaughtException', (err) => {
   console.error('[WA-Bot UncaughtException]:', err);

@@ -971,3 +971,132 @@ export async function transformPdfForPrint(
   };
 }
 
+export interface PreparePrintDocumentInput {
+  jobId: string;
+  fileKey: string;
+  fileName: string;
+  totalPages: number;
+  pageRange: string;
+  layoutMode?: LayoutMode;
+  customCols?: number | string;
+  customRows?: number | string;
+  fitMode?: 'fit' | 'fill' | 'actual' | 'custom';
+  customScale?: number | string;
+  drawBorder?: boolean;
+  autoRotate?: boolean;
+  orientation?: 'portrait' | 'landscape' | 'auto';
+  textOverlay?: TextOverlayConfig;
+  pageConfigs?: PageConfig[];
+  cachedBuffer?: Buffer | null;
+  logContext?: string;
+}
+
+/**
+ * Resolves the final print-ready R2 fileKey, page count, and page range.
+ * Skips redundant R2 downloads and pdf-lib rebuilds when the uploaded/merged PDF
+ * already matches the requested 1-up settings.
+ */
+export async function preparePrintDocument(
+  input: PreparePrintDocumentInput & {
+    getBufferFromR2: (key: string) => Promise<Buffer>;
+    uploadBufferToR2: (key: string, body: Buffer, contentType: string) => Promise<unknown>;
+  }
+): Promise<{ finalFileKey: string; finalDocPages: number; finalPageRange: string }> {
+  const {
+    jobId,
+    fileKey,
+    fileName,
+    totalPages,
+    pageRange,
+    layoutMode = '1-up',
+    customCols,
+    customRows,
+    fitMode = 'fit',
+    customScale = 100,
+    drawBorder = false,
+    autoRotate = true,
+    orientation = 'auto',
+    textOverlay,
+    pageConfigs,
+    cachedBuffer,
+    logContext = 'print',
+    getBufferFromR2,
+    uploadBufferToR2,
+  } = input;
+
+  let finalFileKey = fileKey;
+  let finalDocPages = totalPages;
+  let finalPageRange = pageRange;
+
+  const hasTextOverlay = Boolean(
+    textOverlay &&
+      (textOverlay.enabled ||
+        (Array.isArray(textOverlay.items) &&
+          textOverlay.items.some((it) => it.text && it.text.trim().length > 0)) ||
+        (typeof textOverlay.text === 'string' && textOverlay.text.trim().length > 0))
+  );
+
+  // If /api/upload/complete already baked a multi-file or photo upload into uploads/*.pdf, do not re-bake it.
+  const keyIsPdf = Boolean(fileKey && fileKey.toLowerCase().endsWith('.pdf'));
+  const needsRawConversion = Boolean(fileName && !fileName.toLowerCase().endsWith('.pdf') && !keyIsPdf);
+
+  const hasPageOverrides = Boolean(
+    Array.isArray(pageConfigs) &&
+      pageConfigs.some(
+        (p) =>
+          (p.rotation && p.rotation !== 0) ||
+          (p.customScale && p.customScale !== 100) ||
+          (p.copies && p.copies > 1) ||
+          p.included === false ||
+          p.orientation === 'landscape' ||
+          p.orientation === 'portrait'
+      )
+  );
+
+  const needsTransform = Boolean(
+    needsRawConversion ||
+      (customScale && Number(customScale) !== 100) ||
+      (layoutMode && layoutMode !== '1-up') ||
+      (fitMode && fitMode === 'actual') ||
+      drawBorder ||
+      hasTextOverlay ||
+      orientation === 'landscape' ||
+      orientation === 'portrait' ||
+      hasPageOverrides
+  );
+
+  if (needsTransform) {
+    try {
+      const originalBuffer = cachedBuffer || (await getBufferFromR2(fileKey));
+      const { transformedBuffer, totalPages: transformedPages } = await transformPdfForPrint(
+        originalBuffer,
+        fileName,
+        {
+          layoutMode: layoutMode || '1-up',
+          customCols: customCols ? Number(customCols) : undefined,
+          customRows: customRows ? Number(customRows) : undefined,
+          fitMode: fitMode || 'fit',
+          drawBorder: Boolean(drawBorder),
+          autoRotate: autoRotate ?? true,
+          textOverlay,
+          orientation: orientation || 'auto',
+          pageConfigs,
+          customScale: customScale ? Number(customScale) : 100,
+          pageRange,
+        }
+      );
+
+      const cleanBase = fileName.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9.-]/g, '_');
+      const transformedKey = `uploads/transformed-${jobId}-${cleanBase}.pdf`;
+      await uploadBufferToR2(transformedKey, transformedBuffer, 'application/pdf');
+      finalFileKey = transformedKey;
+      finalDocPages = transformedPages;
+      finalPageRange = 'All';
+    } catch (err) {
+      console.error(`Error transforming PDF for print in ${logContext}, using original file:`, err);
+    }
+  }
+
+  return { finalFileKey, finalDocPages, finalPageRange };
+}
+

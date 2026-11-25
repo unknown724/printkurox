@@ -393,6 +393,13 @@ def printer_supports_duplex(printer_name):
 
 def inspect_pdf_is_landscape(file_path):
     """Inspects first PDF page geometry (width > height accounting for /Rotate) cleanly."""
+    if not str(file_path).lower().endswith('.pdf'):
+        try:
+            with open(file_path, 'rb') as f:
+                if f.read(4) != b'%PDF':
+                    return False
+        except Exception:
+            return False
     try:
         import pypdf
         reader = pypdf.PdfReader(file_path)
@@ -610,7 +617,7 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         cmd.extend(['-d', printer_name])
     if copies and int(copies) > 1:
         cmd.extend(['-n', str(copies)])
-    cmd.extend(['-o', 'fit-to-page'])
+    cmd.extend(['-o', 'fit-to-page', '-o', 'cm-calibration=true'])
 
     pdf_is_landscape = inspect_pdf_is_landscape(file_path)
     raw_orient = (orientation or 'auto').strip().lower()

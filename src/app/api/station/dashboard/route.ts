@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { stationId, pin, token, action, pricingUpdates, isMasterAdmin } = body;
+    const { stationId, pin, token, action, pricingUpdates } = body;
 
     if (!stationId) {
       return NextResponse.json({ success: false, error: 'Missing stationId' }, { status: 400 });
@@ -140,7 +140,18 @@ export async function POST(req: NextRequest) {
     } catch {}
 
     // Fetch recent unpaid student uploads (eligible for in-person cash collection "Verify & Print")
-    let pendingCashOrders: any[] = [];
+    let pendingCashOrders: Array<{
+      id: string;
+      pickup_code: string;
+      file_name: string;
+      file_key: string;
+      total_pages: number;
+      copies: number;
+      total_price: number;
+      color_mode: string;
+      is_duplex: number;
+      created_at: string;
+    }> = [];
     try {
       pendingCashOrders = await queryD1<{
         id: string;

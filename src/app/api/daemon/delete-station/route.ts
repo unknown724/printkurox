@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Delete the station
-    const deleted = await executeD1('DELETE FROM stations WHERE id = ?', [stationId]);
+    await executeD1('DELETE FROM stations WHERE id = ?', [stationId]);
 
     // Also clean up any print jobs for this station
     try {
@@ -39,8 +39,9 @@ export async function POST(req: NextRequest) {
       message: `Station '${stationId}' deleted successfully`,
     });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Internal error';
     console.error('Station delete error:', err);
-    return NextResponse.json({ error: 'Internal server error', details: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error', details: msg }, { status: 500 });
   }
 }

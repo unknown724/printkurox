@@ -2,8 +2,16 @@ import sys
 import os
 import io
 import json
+import glob
+import re
+import shutil
+import subprocess
+import tempfile
 import argparse
-import pymupdf
+try:
+    import pymupdf
+except ImportError:
+    pymupdf = None
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
 def render_preview(input_path, output_path, color_mode="bw", page_indices=None, max_pages=4, dpi=140):
@@ -50,40 +58,91 @@ def render_preview(input_path, output_path, color_mode="bw", page_indices=None, 
             "height": img.height
         }
 
-    # PDF Rendering
-    doc = pymupdf.open(input_path)
-    total_pages = len(doc)
-    if total_pages == 0:
-        raise ValueError("PDF document has 0 pages")
-
-    if page_indices and len(page_indices) > 0:
-        target_indices = [p for p in page_indices if 0 <= p < total_pages]
-    else:
-        target_indices = list(range(min(total_pages, max_pages)))
-
-    if not target_indices:
-        target_indices = [0]
-
-    target_indices = target_indices[:max_pages]
-
+    # PDF Rendering (PyMuPDF if installed, else Poppler pdftoppm + pdfinfo fallback for Raspberry Pi)
     rendered_pages = []
-    for idx in target_indices:
-        page = doc[idx]
-        pix = page.get_pixmap(dpi=dpi)
-        img_bytes = pix.tobytes("png")
-        page_img = Image.open(io.BytesIO(img_bytes))
-        if is_bw:
-            page_img = ImageOps.grayscale(page_img)
-        elif page_img.mode != 'RGB':
-            page_img = page_img.convert('RGB')
+    if pymupdf is not None:
+        doc = pymupdf.open(input_path)
+        total_pages = len(doc)
+        if total_pages == 0:
+            raise ValueError("PDF document has 0 pages")
 
-        draw = ImageDraw.Draw(page_img)
-        border_col = 180 if is_bw else (180, 180, 180)
-        draw.rectangle([0, 0, page_img.width - 1, page_img.height - 1], outline=border_col, width=1)
-        rendered_pages.append({
-            "page_num": idx + 1,
-            "img": page_img
-        })
+        if page_indices and len(page_indices) > 0:
+            target_indices = [p for p in page_indices if 0 <= p < total_pages]
+        else:
+            target_indices = list(range(min(total_pages, max_pages)))
+
+        if not target_indices:
+            target_indices = [0]
+
+        target_indices = target_indices[:max_pages]
+
+        for idx in target_indices:
+            page = doc[idx]
+            pix = page.get_pixmap(dpi=dpi)
+            img_bytes = pix.tobytes("png")
+            page_img = Image.open(io.BytesIO(img_bytes))
+            page_img.load()
+            if is_bw:
+                page_img = ImageOps.grayscale(page_img)
+            elif page_img.mode != 'RGB':
+                page_img = page_img.convert('RGB')
+
+            draw = ImageDraw.Draw(page_img)
+            border_col = 180 if is_bw else (180, 180, 180)
+            draw.rectangle([0, 0, page_img.width - 1, page_img.height - 1], outline=border_col, width=1)
+            rendered_pages.append({
+                "page_num": idx + 1,
+                "img": page_img
+            })
+    else:
+        total_pages = 1
+        try:
+            info_out = subprocess.check_output(["pdfinfo", input_path], stderr=subprocess.STDOUT, text=True)
+            m = re.search(r'^Pages:\s+(\d+)', info_out, re.MULTILINE)
+            if m:
+                total_pages = max(1, int(m.group(1)))
+        except Exception:
+            total_pages = 1
+
+        if page_indices and len(page_indices) > 0:
+            target_indices = [p for p in page_indices if 0 <= p < total_pages]
+        else:
+            target_indices = list(range(min(total_pages, max_pages)))
+
+        if not target_indices:
+            target_indices = [0]
+
+        target_indices = target_indices[:max_pages]
+
+        tmp_dir = tempfile.mkdtemp(prefix="pk_prev_")
+        try:
+            for idx in target_indices:
+                page_num = idx + 1
+                prefix = os.path.join(tmp_dir, f"p{page_num}")
+                cmd = ["pdftoppm", "-png", "-r", str(dpi), "-f", str(page_num), "-l", str(page_num)]
+                if is_bw:
+                    cmd.append("-gray")
+                cmd.extend([input_path, prefix])
+                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                matches = sorted(glob.glob(f"{prefix}*.png"))
+                if not matches:
+                    raise RuntimeError(f"pdftoppm produced no output for page {page_num}")
+                with Image.open(matches[0]) as raw_img:
+                    page_img = raw_img.copy()
+                if is_bw and page_img.mode != 'L':
+                    page_img = ImageOps.grayscale(page_img)
+                elif not is_bw and page_img.mode != 'RGB':
+                    page_img = page_img.convert('RGB')
+
+                draw = ImageDraw.Draw(page_img)
+                border_col = 180 if is_bw else (180, 180, 180)
+                draw.rectangle([0, 0, page_img.width - 1, page_img.height - 1], outline=border_col, width=1)
+                rendered_pages.append({
+                    "page_num": page_num,
+                    "img": page_img
+                })
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     count = len(rendered_pages)
     pad = 16

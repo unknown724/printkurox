@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
           last_heartbeat = datetime('now')
       WHERE id = ?
     `;
-    const updated = await executeD1(updateSql, [
+    await executeD1(updateSql, [
       name || null,
       shortName || null,
       adminPin || null,
@@ -59,8 +59,9 @@ export async function POST(req: NextRequest) {
       message: 'Station updated successfully',
     });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Internal error';
     console.error('Station update error:', err);
-    return NextResponse.json({ error: 'Internal server error', details: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error', details: msg }, { status: 500 });
   }
 }

@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
       `SELECT id, name FROM stations ORDER BY created_at ASC`
     );
 
-    const summaries: Record<string, any> = {};
+    const summaries: Record<string, Awaited<ReturnType<typeof getStationSettlementSummary>>> = {};
     for (const st of stations) {
       try {
         summaries[st.id] = await getStationSettlementSummary(st.id);
@@ -49,8 +49,9 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true, summaries });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Internal server error';
     console.error('All settlements summary error:', err);
-    return NextResponse.json({ success: false, error: err.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

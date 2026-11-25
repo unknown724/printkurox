@@ -202,7 +202,7 @@ export default function SetupWizardPage() {
                 <button
                   key={s.num}
                   type="button"
-                  onClick={() => setStep(s.num as any)}
+                  onClick={() => setStep(s.num as 0 | 1 | 2 | 3 | 4)}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                     step === s.num
                       ? 'bg-amber-500 text-black font-bold shadow-lg shadow-amber-500/20'

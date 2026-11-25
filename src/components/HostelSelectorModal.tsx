@@ -90,7 +90,7 @@ export function HostelSelectorModal({
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.stations)) {
-          setDynamicStations(data.stations.filter((st: any) => st.type === 'hostel'));
+          setDynamicStations(data.stations.filter((st: DynamicStation) => st.type === 'hostel'));
         }
       }
     } catch {

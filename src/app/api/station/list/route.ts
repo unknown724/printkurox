@@ -36,25 +36,48 @@ export async function GET(req: NextRequest) {
       ? `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, admin_pin as adminPin, station_token as stationToken, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota, owner_print_enabled as ownerPrintEnabled, created_at as createdAt FROM stations ORDER BY created_at ASC`
       : `SELECT id, name, short_name as shortName, station_type as type, is_public as isPublic, whatsapp_number as whatsappNumber, status, last_heartbeat, duplex_enabled as duplexEnabled, upi_id as upiId, monthly_free_quota as monthlyFreeQuota, owner_print_enabled as ownerPrintEnabled FROM stations WHERE is_public = 1 ORDER BY created_at ASC`;
 
-    const rows = await queryD1(sql);
+    interface StationRow {
+      id: string;
+      name: string;
+      shortName?: string | null;
+      type?: string | null;
+      isPublic: number;
+      whatsappNumber?: string | null;
+      adminPin?: string;
+      stationToken?: string;
+      status: string;
+      last_heartbeat?: string | null;
+      duplexEnabled: number;
+      upiId?: string | null;
+      monthlyFreeQuota?: number | null;
+      ownerPrintEnabled?: number | null;
+      createdAt?: string | null;
+    }
+    interface HeartbeatRow {
+      id: number;
+      updated_at?: string | null;
+      station_id?: string | null;
+    }
+
+    const rows = await queryD1<StationRow>(sql);
 
     // Also get daemon_heartbeats to cross-reference active connectors
-    let heartbeatRows: any[] = [];
+    let heartbeatRows: HeartbeatRow[] = [];
     try {
-      heartbeatRows = await queryD1(`SELECT id, updated_at, station_id FROM daemon_heartbeat`);
+      heartbeatRows = await queryD1<HeartbeatRow>(`SELECT id, updated_at, station_id FROM daemon_heartbeat`);
     } catch {}
 
     const now = Date.now();
 
     // Process rows to determine accurate online/offline status based on last_heartbeat & daemon_heartbeat
-    const stations = rows.map((row: any) => {
+    const stations = rows.map((row) => {
       let isOnline = false;
       let offlineMinutes = 0;
       let effectiveHeartbeat = row.last_heartbeat;
 
       // Check if daemon_heartbeat has a fresher ping
       const hb = heartbeatRows.find(
-        (h: any) =>
+        (h) =>
           h.station_id === row.id ||
           (row.id === 'hostel_block_b_pare' && (h.station_id === 'block_b' || h.station_id === 'main' || h.id === 1)) ||
           (row.shortName && h.station_id === row.shortName.toLowerCase())
@@ -104,7 +127,7 @@ export async function GET(req: NextRequest) {
         ? { headers: { 'Cache-Control': 'no-store' } }
         : { headers: { 'Cache-Control': 'public, s-maxage=20, stale-while-revalidate=60' } }
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Failed to list stations:', err);
     return NextResponse.json({ error: 'Failed to fetch stations' }, { status: 500 });
   }
@@ -188,9 +211,10 @@ export async function POST(req: NextRequest) {
       station_token: stationToken,
       message: `Station '${cleanName}' created successfully`,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to create station';
     console.error('Create station error:', err);
-    return NextResponse.json({ error: err.message || 'Failed to create station' }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
@@ -216,8 +240,9 @@ export async function DELETE(req: NextRequest) {
       stationId,
       message: `Station '${stationId}' has been deleted successfully.`,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to delete station';
     console.error('Delete station error:', err);
-    return NextResponse.json({ error: err.message || 'Failed to delete station' }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

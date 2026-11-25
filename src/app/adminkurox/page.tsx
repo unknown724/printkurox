@@ -243,10 +243,60 @@ export default function AdminKuroxPage() {
   const [stationPricingError, setStationPricingError] = useState<string | null>(null);
 
   // Dynamic D1 Station Management
-  const [dbStations, setDbStations] = useState<any[]>([]);
+  interface AdminDbStation {
+    id: string;
+    name: string;
+    shortName?: string | null;
+    type?: string;
+    status?: string;
+    offlineText?: string | null;
+    adminPin?: string;
+    stationToken?: string;
+    upiId?: string | null;
+    monthlyFreeQuota?: number;
+    ownerPrintEnabled?: boolean;
+    whatsappNumber?: string | null;
+  }
+  interface AdminSettlementHistoryItem {
+    id: string;
+    settled_at: string;
+    total_jobs: number;
+    total_pages: number;
+    gross_amount: number;
+    commission_amount: number;
+    payment_ref?: string | null;
+    payout_amount: number;
+  }
+  interface AdminSettlementSummary {
+    upiId?: string | null;
+    totalPaidLifetime?: number;
+    settled?: {
+      totalPaidLifetime?: number;
+    };
+    unsettled: {
+      grossRevenue: number;
+      platformFee: number;
+      netPayoutOwed: number;
+      jobsCount: number;
+    };
+    history?: AdminSettlementHistoryItem[];
+  }
+  interface AdminStationModalTarget {
+    station: { id: string; name: string; upiId?: string | null };
+    summary?: AdminSettlementSummary;
+  }
+  interface AdminHardwareDevice {
+    serial_key: string;
+    status: string;
+    batch_number?: string;
+    claimed_station_id?: string | null;
+    claimed_at?: string | null;
+  }
+
+  const [dbStations, setDbStations] = useState<AdminDbStation[]>([]);
   const [loadingStations, setLoadingStations] = useState<boolean>(false);
   const [showAddStationModal, setShowAddStationModal] = useState<boolean>(false);
-  const [stationToDelete, setStationToDelete] = useState<any | null>(null);
+  const [stationToDelete, setStationToDelete] = useState<AdminDbStation | null>(null);
   const [deletingStation, setDeletingStation] = useState<boolean>(false);
   const [addStationForm, setAddStationForm] = useState({
     name: '',
@@ -259,23 +309,23 @@ export default function AdminKuroxPage() {
 
   // Hardware Devices Inventory Modal (KUROX-PRO)
   const [showHardwareModal, setShowHardwareModal] = useState<boolean>(false);
-  const [hardwareDevices, setHardwareDevices] = useState<any[]>([]);
+  const [hardwareDevices, setHardwareDevices] = useState<AdminHardwareDevice[]>([]);
   const [loadingHardware, setLoadingHardware] = useState<boolean>(false);
   const [generatingHardware, setGeneratingHardware] = useState<boolean>(false);
   const [hardwareBatchName, setHardwareBatchName] = useState<string>('BATCH-02');
   const [copiedSerial, setCopiedSerial] = useState<string | null>(null);
 
   // Station Settlements & Weekly Sunday Payouts
-  const [settlements, setSettlements] = useState<Record<string, any>>({});
+  const [settlements, setSettlements] = useState<Record<string, AdminSettlementSummary>>({});
   const [loadingSettlements, setLoadingSettlements] = useState<boolean>(false);
   const [showSettleModal, setShowSettleModal] = useState<boolean>(false);
-  const [settleStation, setSettleStation] = useState<any | null>(null);
+  const [settleStation, setSettleStation] = useState<AdminStationModalTarget | null>(null);
   const [settlePaymentRef, setSettlePaymentRef] = useState<string>('');
   const [settleNotes, setSettleNotes] = useState<string>('');
   const [settlingStation, setSettlingStation] = useState<boolean>(false);
   const [settleSuccessMsg, setSettleSuccessMsg] = useState<string | null>(null);
   const [settleErrorMsg, setSettleErrorMsg] = useState<string | null>(null);
-  const [historyModalStation, setHistoryModalStation] = useState<any | null>(null);
+  const [historyModalStation, setHistoryModalStation] = useState<AdminStationModalTarget | null>(null);
   const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
   const [copiedUpiStationId, setCopiedUpiStationId] = useState<string | null>(null);
   const [copiedPinStationId, setCopiedPinStationId] = useState<string | null>(null);
@@ -574,8 +624,8 @@ export default function AdminKuroxPage() {
         setSettlePaymentRef('');
         setSettleNotes('');
       }, 1800);
-    } catch (err: any) {
-      setSettleErrorMsg(err.message || 'Error executing settlement');
+    } catch (err: unknown) {
+      setSettleErrorMsg(err instanceof Error ? err.message : 'Error executing settlement');
     } finally {
       setSettlingStation(false);
     }
@@ -607,8 +657,8 @@ export default function AdminKuroxPage() {
       await fetchDbStations();
       await fetchStationsPricing();
       setTimeout(() => setStationPricingSuccess(null), 3500);
-    } catch (err: any) {
-      setStationPricingError(err.message || 'Failed to add station');
+    } catch (err: unknown) {
+      setStationPricingError(err instanceof Error ? err.message : 'Failed to add station');
       setTimeout(() => setStationPricingError(null), 4000);
     } finally {
       setAddingStation(false);
@@ -630,8 +680,8 @@ export default function AdminKuroxPage() {
       await fetchDbStations();
       await fetchStationsPricing();
       setTimeout(() => setStationPricingSuccess(null), 3500);
-    } catch (err: any) {
-      setStationPricingError(err.message || 'Failed to delete station');
+    } catch (err: unknown) {
+      setStationPricingError(err instanceof Error ? err.message : 'Failed to delete station');
       setTimeout(() => setStationPricingError(null), 4000);
     } finally {
       setDeletingStation(false);
@@ -693,8 +743,8 @@ export default function AdminKuroxPage() {
       setStationPricingSuccess(`Owner printing ${!currentEnabled ? 'ENABLED' : 'DISABLED'} for ${stationId}`);
       await fetchDbStations();
       setTimeout(() => setStationPricingSuccess(null), 3500);
-    } catch (err: any) {
-      setStationPricingError(err.message || 'Failed to update owner printing setting');
+    } catch (err: unknown) {
+      setStationPricingError(err instanceof Error ? err.message : 'Failed to update owner printing setting');
       setTimeout(() => setStationPricingError(null), 4000);
     }
   };
@@ -3538,8 +3588,8 @@ export default function AdminKuroxPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      const upi = settleStation.station.upiId || settleStation.summary?.upiId;
-                      navigator.clipboard.writeText(upi);
+                      const upi = settleStation.station.upiId || settleStation.summary?.upiId || '';
+                      if (upi) navigator.clipboard.writeText(upi);
                       setCopiedUpi(true);
                       setTimeout(() => setCopiedUpi(false), 2500);
                     }}
@@ -3629,7 +3679,7 @@ export default function AdminKuroxPage() {
 
             <div className="max-h-80 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 text-xs">
               {historyModalStation.summary?.history && historyModalStation.summary.history.length > 0 ? (
-                historyModalStation.summary.history.map((s: any) => (
+                historyModalStation.summary.history.map((s) => (
                   <div key={s.id} className="py-3 flex items-center justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2">
@@ -3744,7 +3794,7 @@ export default function AdminKuroxPage() {
                   <span>Loading hardware serials from Cloudflare D1...</span>
                 </div>
               ) : hardwareDevices.length > 0 ? (
-                hardwareDevices.map((dev: any) => {
+                hardwareDevices.map((dev) => {
                   const isClaimed = dev.status === 'claimed';
                   return (
                     <div
@@ -3802,7 +3852,7 @@ export default function AdminKuroxPage() {
                 })
               ) : (
                 <div className="py-8 text-center text-zinc-400 text-xs">
-                  No hardware devices found. Click 'Generate 10 New Keys' to create your first batch!
+                  No hardware devices found. Click &apos;Generate 10 New Keys&apos; to create your first batch!
                 </div>
               )}
             </div>

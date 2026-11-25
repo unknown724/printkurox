@@ -266,8 +266,8 @@ export default function StationAdminPage() {
         if (credentials.token) {
           localStorage.setItem(`station_token_${stationId}`, credentials.token);
         }
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to load dashboard');
         sessionStorage.removeItem(`station_pass_${stationId}`);
       } finally {
         setLoading(false);
@@ -320,8 +320,8 @@ export default function StationAdminPage() {
       if (token) fetchDashboard({ token });
       else if (pin) fetchDashboard({ pin });
       setTimeout(() => setCashSuccessMsg(null), 4000);
-    } catch (err: any) {
-      setCashErrorMsg(err.message);
+    } catch (err: unknown) {
+      setCashErrorMsg(err instanceof Error ? err.message : 'Failed to verify cash payment');
       setTimeout(() => setCashErrorMsg(null), 4000);
     } finally {
       setVerifyingCashJobId(null);
@@ -549,8 +549,8 @@ export default function StationAdminPage() {
       // Refresh dashboard to reflect updated quota and recent jobs
       if (savedToken) fetchDashboard({ token: savedToken });
       else if (savedPass) fetchDashboard({ pin: savedPass });
-    } catch (err: any) {
-      setFreeError(err.message || 'Failed to dispatch free print job.');
+    } catch (err: unknown) {
+      setFreeError(err instanceof Error ? err.message : 'Failed to dispatch free print job.');
     } finally {
       setFreeUploading(false);
     }
@@ -652,8 +652,8 @@ export default function StationAdminPage() {
 
       setPriceSuccess(true);
       setTimeout(() => setPriceSuccess(false), 4000);
-    } catch (err: any) {
-      setPriceError(err.message);
+    } catch (err: unknown) {
+      setPriceError(err instanceof Error ? err.message : 'Failed to update rates');
     } finally {
       setSavingPrice(false);
     }
@@ -695,8 +695,8 @@ export default function StationAdminPage() {
         setData({ ...data, upiId: upiInput.trim() });
       }
       setTimeout(() => setUpiSuccess(false), 4000);
-    } catch (err: any) {
-      setUpiError(err.message);
+    } catch (err: unknown) {
+      setUpiError(err instanceof Error ? err.message : 'Failed to update UPI ID');
     } finally {
       setSavingUpi(false);
     }

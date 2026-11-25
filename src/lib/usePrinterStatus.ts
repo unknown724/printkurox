@@ -9,12 +9,18 @@ interface PrinterStatus {
   loading: boolean;
 }
 
+interface PrinterStatusApiResponse {
+  online?: boolean;
+  lastSeen?: string | null;
+  ageSeconds?: number | null;
+}
+
 // In-memory module cache to deduplicate simultaneous calls across multiple components
-const cacheMap = new Map<string, { data: any; timestamp: number }>();
-const inFlightMap = new Map<string, Promise<any>>();
+const cacheMap = new Map<string, { data: PrinterStatusApiResponse; timestamp: number }>();
+const inFlightMap = new Map<string, Promise<PrinterStatusApiResponse>>();
 const CACHE_TTL_MS = 15_000; // 15 seconds client cache
 
-async function fetchStationStatus(stationId?: string): Promise<any> {
+async function fetchStationStatus(stationId?: string): Promise<PrinterStatusApiResponse> {
   const cacheKey = stationId || '__default__';
   const now = Date.now();
 
@@ -23,18 +29,19 @@ async function fetchStationStatus(stationId?: string): Promise<any> {
     return cached.data;
   }
 
-  if (inFlightMap.has(cacheKey)) {
-    return inFlightMap.get(cacheKey);
+  const existingInFlight = inFlightMap.get(cacheKey);
+  if (existingInFlight) {
+    return existingInFlight;
   }
 
   const url = stationId
     ? `/api/printer-status?station_id=${encodeURIComponent(stationId)}`
     : '/api/printer-status';
 
-  const promise = fetch(url)
+  const promise: Promise<PrinterStatusApiResponse> = fetch(url)
     .then(async (res) => {
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const data = (await res.json()) as PrinterStatusApiResponse;
       cacheMap.set(cacheKey, { data, timestamp: Date.now() });
       return data;
     })

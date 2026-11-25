@@ -77,7 +77,7 @@ function HomePageContent() {
       .then((res) => res.json())
       .then((data) => {
         if (data.success && Array.isArray(data.stations)) {
-          data.stations.forEach((st: any) => {
+          data.stations.forEach((st: { id: string; name: string; shortName?: string; type?: string; status?: string }) => {
             const blockMatch = st.id.match(/block[_-]?([a-z0-9]+)/i);
             const blockCode = blockMatch ? `Block ${blockMatch[1].toUpperCase()}` : (st.type === 'shop' ? 'Shop' : 'Station');
             registerDynamicStation({
