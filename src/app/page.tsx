@@ -9,16 +9,48 @@ import { AdvancedPrintOptions } from '@/components/AdvancedSettings';
 import { calculatePricing, PageConfig, CustomTierRates } from '@/lib/pricing';
 import { pagesToRangeString } from '@/lib/pdf-utils';
 import { DocumentStudio } from '@/components/studio/DocumentStudio';
+import { ExpressPrintStudio } from '@/components/studio/ExpressPrintStudio';
 import { BorderBeam } from '@/components/ui/BorderBeam';
-import { Crown, ChevronRight, MessageCircle } from 'lucide-react';
+import { Crown, ChevronRight, MessageCircle, Zap, SlidersHorizontal } from 'lucide-react';
 import { PhotoLayoutSettings } from '@/components/studio/PhotoLayoutSelector';
 import { EnhanceMode } from '@/lib/image-enhancer';
 import { getStationConfig, DEFAULT_STATION_ID, registerDynamicStation } from '@/lib/stations';
+
+type UiMode = 'simple' | 'advanced';
+const DEFAULT_UI_MODE: UiMode = 'simple';
 
 function HomePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const stationParam = searchParams.get('station') || searchParams.get('station_id');
+  const modeParam = searchParams.get('mode');
+
+  const [uiMode, setUiMode] = useState<UiMode>(DEFAULT_UI_MODE);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      if (modeParam === 'simple' || modeParam === 'advanced') {
+        setUiMode(modeParam);
+        try {
+          localStorage.setItem('printkurox_ui_mode', modeParam);
+        } catch {}
+        return;
+      }
+      try {
+        const saved = localStorage.getItem('printkurox_ui_mode');
+        if (saved === 'simple' || saved === 'advanced') {
+          setUiMode(saved);
+        }
+      } catch {}
+    });
+  }, [modeParam]);
+
+  const handleModeChange = (nextMode: UiMode) => {
+    setUiMode(nextMode);
+    try {
+      localStorage.setItem('printkurox_ui_mode', nextMode);
+    } catch {}
+  };
 
   const [preferredStation, setPreferredStation] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -241,15 +273,17 @@ function HomePageContent() {
     }));
   };
 
+  const isSimpleMode = uiMode === 'simple';
+
   const pricing = calculatePricing({
     totalPages: uploadedBatch?.totalPages || 1,
     colorMode: settings.colorMode,
-    isDuplex: settings.isDuplex,
+    isDuplex: isSimpleMode ? false : settings.isDuplex,
     copies: settings.copies,
     pageConfigs: pageConfigs.length > 0 ? pageConfigs : undefined,
-    layoutMode: layoutSettings.layoutMode,
-    customCols: layoutSettings.customCols,
-    customRows: layoutSettings.customRows,
+    layoutMode: isSimpleMode ? '1-up' : layoutSettings.layoutMode,
+    customCols: isSimpleMode ? undefined : layoutSettings.customCols,
+    customRows: isSimpleMode ? undefined : layoutSettings.customRows,
     customRates: stationTierRates,
     promoCode: promoCode,
   });
@@ -270,13 +304,65 @@ function HomePageContent() {
   const bwCount = pageConfigs.filter((p) => p.included && p.colorMode === 'bw').length;
   const colorCount = pageConfigs.filter((p) => p.included && p.colorMode === 'color').length;
 
+  const handleStationSelect = (newStationId: string) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('printkurox_preferred_station', newStationId);
+      localStorage.setItem('nerist_selected_station', newStationId);
+      setPreferredStation(newStationId);
+    }
+    setStation(getStationConfig(newStationId));
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('station', newStationId);
+    router.push(`/?${params.toString()}`);
+  };
+
   return (
     <div
       id="kiosk-studio"
       className={`w-full mx-auto px-2.5 sm:px-4 py-2 sm:py-3.5 space-y-2.5 sm:space-y-3 animate-fade-in-up transition-all duration-300 ${
-        uploadedBatch ? 'max-w-3xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[1240px]' : 'max-w-xl'
+        uploadedBatch && !isSimpleMode ? 'max-w-3xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[1240px]' : 'max-w-xl'
       }`}
     >
+      {/* Mode Switcher: Simple Express Print vs Advanced Document Studio */}
+      <div className="flex items-center justify-between gap-2 px-1">
+        <div
+          role="tablist"
+          aria-label="Print interface mode"
+          className="inline-flex w-full sm:w-auto p-1 rounded-xl bg-zinc-200/75 dark:bg-[#0d0d12] border border-zinc-200 dark:border-white/10 shadow-2xs"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isSimpleMode}
+            onClick={() => handleModeChange('simple')}
+            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              isSimpleMode
+                ? 'bg-white dark:bg-amber-400 text-zinc-950 shadow-xs'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Simple Mode</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isSimpleMode}
+            onClick={() => handleModeChange('advanced')}
+            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              !isSimpleMode
+                ? 'bg-white dark:bg-white/[0.12] text-zinc-950 dark:text-white border border-zinc-200/80 dark:border-white/20 shadow-xs'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
+            }`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Advanced Mode</span>
+          </button>
+        </div>
+        <span className="hidden md:inline text-[11px] text-zinc-500 dark:text-zinc-400">
+          {isSimpleMode ? 'Fast 1-screen upload, B&W, copies & pay' : 'Full page preview, N-up, duplex & filters'}
+        </span>
+      </div>
       {/* Station Specific Banner (e.g. for Romen Xerox) */}
       {station.id === 'romen_xerox' && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-2xl border border-emerald-500/35 bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-transparent text-xs text-zinc-900 dark:text-zinc-100 shadow-xs">
@@ -345,44 +431,55 @@ function HomePageContent() {
         {/* Dynamic Specular Border Beam gliding seamlessly around perimeter */}
         <BorderBeam duration={12} borderWidth={2} borderRadius={16} colorFrom="rgba(255, 255, 255, 1)" />
 
-        <DocumentStudio
-          uploadedBatch={uploadedBatch}
-          onBatchUploaded={handleBatchUploaded}
-          pageConfigs={pageConfigs}
-          onPageConfigsChange={handlePageConfigsChange}
-          orientation={orientation}
-          onOrientationChange={(orient) => {
-            setOrientation(orient);
-            setLayoutSettings((prev) => ({ ...prev, orientation: orient }));
-          }}
-          settings={settings}
-          onSettingsChange={handleSettingsChange}
-          advancedOptions={advancedOptions}
-          onAdvancedOptionsChange={(opts) => setAdvancedOptions(opts)}
-          layoutSettings={layoutSettings}
-          onLayoutSettingsChange={setLayoutSettings}
-          enhanceMode={enhanceMode}
-          onEnhanceModeChange={setEnhanceMode}
-          pricing={pricing}
-          bwCount={bwCount}
-          colorCount={colorCount}
-          onRangeChange={handleRangeChange}
-          stationId={station.id}
-          stationTierRates={stationTierRates}
-          promoCode={promoCode}
-          onPromoCodeChange={handlePromoCodeChange}
-          onStationSelect={(newStationId) => {
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('printkurox_preferred_station', newStationId);
-              localStorage.setItem('nerist_selected_station', newStationId);
-              setPreferredStation(newStationId);
-            }
-            setStation(getStationConfig(newStationId));
-            const params = new URLSearchParams(searchParams.toString());
-            params.set('station', newStationId);
-            router.push(`/?${params.toString()}`);
-          }}
-        />
+        {isSimpleMode ? (
+          <ExpressPrintStudio
+            uploadedBatch={uploadedBatch}
+            onBatchUploaded={handleBatchUploaded}
+            pageConfigs={pageConfigs}
+            onPageConfigsChange={handlePageConfigsChange}
+            settings={settings}
+            onSettingsChange={handleSettingsChange}
+            pricing={pricing}
+            bwCount={bwCount}
+            colorCount={colorCount}
+            onRangeChange={handleRangeChange}
+            stationId={station.id}
+            stationTierRates={stationTierRates}
+            promoCode={promoCode}
+            onPromoCodeChange={handlePromoCodeChange}
+            onSwitchToAdvanced={() => handleModeChange('advanced')}
+            onStationSelect={handleStationSelect}
+          />
+        ) : (
+          <DocumentStudio
+            uploadedBatch={uploadedBatch}
+            onBatchUploaded={handleBatchUploaded}
+            pageConfigs={pageConfigs}
+            onPageConfigsChange={handlePageConfigsChange}
+            orientation={orientation}
+            onOrientationChange={(orient) => {
+              setOrientation(orient);
+              setLayoutSettings((prev) => ({ ...prev, orientation: orient }));
+            }}
+            settings={settings}
+            onSettingsChange={handleSettingsChange}
+            advancedOptions={advancedOptions}
+            onAdvancedOptionsChange={(opts) => setAdvancedOptions(opts)}
+            layoutSettings={layoutSettings}
+            onLayoutSettingsChange={setLayoutSettings}
+            enhanceMode={enhanceMode}
+            onEnhanceModeChange={setEnhanceMode}
+            pricing={pricing}
+            bwCount={bwCount}
+            colorCount={colorCount}
+            onRangeChange={handleRangeChange}
+            stationId={station.id}
+            stationTierRates={stationTierRates}
+            promoCode={promoCode}
+            onPromoCodeChange={handlePromoCodeChange}
+            onStationSelect={handleStationSelect}
+          />
+        )}
       </div>
     </div>
   );

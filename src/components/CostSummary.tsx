@@ -56,6 +56,7 @@ interface CostSummaryProps {
   onOpenStationModal?: () => void;
   promoCode?: string;
   onPromoCodeChange?: (code: string) => void;
+  compact?: boolean;
 }
 
 export function CostSummary({
@@ -78,6 +79,7 @@ export function CostSummary({
   onOpenStationModal,
   promoCode,
   onPromoCodeChange,
+  compact = false,
 }: CostSummaryProps) {
   const router = useRouter();
   const station = getStationConfig(stationId);
@@ -516,6 +518,7 @@ export function CostSummary({
           Positioned directly between Print & Advanced Settings and Order Summary
           so users can verify or change their pickup hostel before checkout.
           ========================================================================= */}
+      {!compact && (
       <div className="relative rounded-2xl border-2 border-amber-500/40 dark:border-amber-400/50 bg-gradient-to-r from-amber-50/70 via-white to-amber-50/40 dark:from-amber-950/25 dark:via-[#14151a] dark:to-zinc-950/60 backdrop-blur-xl p-3 sm:p-3.5 shadow-md shadow-amber-500/10 overflow-hidden animate-fade-in-up">
         {/* Luminous Top Perimeter Accent */}
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 animate-pulse" />
@@ -574,6 +577,7 @@ export function CostSummary({
           <span>⚠️ Check carefully: Your printout will be placed at this hostel tray.</span>
         </div>
       </div>
+      )}
 
       {/* Itemized Summary Card (Glassmorphic with Qronos Moving Border Beam) */}
       <div className="relative rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#16161c]/95 backdrop-blur-xl shadow-xs overflow-hidden group">
@@ -652,6 +656,7 @@ export function CostSummary({
         </div>
 
         {/* Promo Code Input & Management Section */}
+        {(!compact || isPromoActive) && (
         <div className="px-3.5 py-2.5 border-t border-zinc-100 dark:border-white/[0.06] bg-zinc-50/70 dark:bg-white/[0.02]">
           {isPromoActive ? (
             <div className="p-2.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 dark:bg-emerald-950/25 flex items-center justify-between gap-2.5 shadow-2xs animate-fade-in-up">
@@ -723,6 +728,7 @@ export function CostSummary({
             </form>
           )}
         </div>
+        )}
 
         {/* Total Row with Golden Highlight */}
         <div className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent border-t border-amber-500/20 dark:border-amber-400/25 flex items-center justify-between">
