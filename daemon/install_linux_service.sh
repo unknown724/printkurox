@@ -70,6 +70,32 @@ systemctl daemon-reload
 systemctl enable printkurox.service
 systemctl restart printkurox.service
 
+if [ -f "$INSTALL_DIR/campus_wifi_portal.py" ]; then
+  WIFI_SERVICE_FILE="/etc/systemd/system/printkurox-wifi.service"
+  cat <<EOF > $WIFI_SERVICE_FILE
+[Unit]
+Description=PrintKurox NERIST Captive Portal Auto-Login Daemon
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$INSTALL_DIR
+ExecStart=/usr/bin/python3 $INSTALL_DIR/campus_wifi_portal.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable printkurox-wifi.service
+  systemctl restart printkurox-wifi.service
+fi
+
 NODE_BIN=$(command -v node || echo "/usr/bin/node")
 BOT_DIR="$INSTALL_DIR/whatsapp_bot"
 if [ -f "$BOT_DIR/whatsapp_bot.js" ] && [ -x "$NODE_BIN" ]; then
