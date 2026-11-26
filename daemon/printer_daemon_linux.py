@@ -803,6 +803,7 @@ def _format_cups_page_ranges(page_range, total_pages=0):
 
 
 _PPD_CACHE_DIR = '/tmp/printkurox_ppd'
+_CALIBRATION_PATH = os.path.join(BASE_DIR, 'l3210_calibration.json')
 _CUPS_FILTER_DIR = '/usr/lib/cups/filter'
 _PRESPOOL_MIN_FREE_MB = 150.0
 _PRESPOOL_MAX_PDF_MB = 25.0
@@ -810,6 +811,238 @@ _PRESPOOL_MAX_PRN_MB = 140.0
 _PRESPOOL_BATCH_PAGES = 2
 _PRESPOOL_LOOKAHEAD_BATCHES = 3
 _CUPS_SPOOL_DIR = '/var/spool/cups'
+
+_DEFAULT_CALIBRATION_CFG = {
+    "prefer_gutenprint": False,
+    "gutenprint_ppd_model": "gutenprint.5.3://escp2-et2700/expert",
+    "default_bw_preset": "bw_draft",
+    "default_color_preset": "color_standard",
+    "calibration": {
+        "StpColorCorrection": "Accurate",
+        "StpDensity": "1000",
+        "StpBlackDensity": "800",
+        "StpGamma": "1000",
+        "StpCyanDensity": "1000",
+        "StpMagentaDensity": "1000",
+        "StpYellowDensity": "1000",
+    },
+    "presets": {
+        "bw_economy": {
+            "driver": "gutenprint",
+            "options": [
+                "MediaType=Plain", "ColorModel=Gray", "StpPrintingDirection=Bidirectional",
+                "StpDitherAlgorithm=VeryFast", "StpQuality=Economy", "Resolution=360x180dpi",
+            ],
+        },
+        "bw_draft": {
+            "driver": "gutenprint",
+            "options": [
+                "MediaType=Plain", "ColorModel=Gray", "StpPrintingDirection=Bidirectional",
+                "StpDitherAlgorithm=Fast", "StpQuality=Draft", "Resolution=360dpi",
+            ],
+        },
+        "bw_standard": {
+            "driver": "gutenprint",
+            "options": [
+                "MediaType=Plain", "ColorModel=Gray", "StpPrintingDirection=Bidirectional",
+                "StpDitherAlgorithm=Ordered", "StpQuality=Standard", "Resolution=360dpi",
+            ],
+        },
+        "color_draft": {
+            "driver": "gutenprint",
+            "options": [
+                "MediaType=Plain", "ColorModel=RGB", "StpPrintingDirection=Bidirectional",
+                "StpDitherAlgorithm=Fast", "StpQuality=Draft", "Resolution=360dpi",
+            ],
+        },
+        "color_standard": {
+            "driver": "gutenprint",
+            "options": [
+                "MediaType=Plain", "ColorModel=RGB", "StpPrintingDirection=Bidirectional",
+                "StpDitherAlgorithm=Ordered", "StpQuality=Standard", "Resolution=360dpi",
+            ],
+        },
+        "photo_glossy": {
+            "driver": "escpr",
+            "options": ["Ink=COLOR", "MediaType=PMPHOTO_HIGH"],
+        },
+    },
+    "downsample": {
+        "enabled": True,
+        "bw_max_ppi": 220,
+        "color_max_ppi": 300,
+        "trigger_min_ppi": 450,
+        "trigger_min_px": 3600,
+    },
+}
+_cached_cal_cfg = None
+_cached_cal_mtime = None
+
+
+def load_calibration_config():
+    """Loads l3210_calibration.json with mtime caching and safe built-in defaults."""
+    global _cached_cal_cfg, _cached_cal_mtime
+    try:
+        if os.path.isfile(_CALIBRATION_PATH):
+            mt = os.path.getmtime(_CALIBRATION_PATH)
+            if _cached_cal_cfg is not None and mt == _cached_cal_mtime:
+                return _cached_cal_cfg
+            with open(_CALIBRATION_PATH, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+            merged = dict(_DEFAULT_CALIBRATION_CFG)
+            merged.update({k: v for k, v in loaded.items() if k not in ('calibration', 'presets', 'downsample')})
+            for sub in ('calibration', 'downsample'):
+                base_sub = dict(_DEFAULT_CALIBRATION_CFG[sub])
+                if isinstance(loaded.get(sub), dict):
+                    base_sub.update(loaded[sub])
+                merged[sub] = base_sub
+            base_presets = dict(_DEFAULT_CALIBRATION_CFG['presets'])
+            if isinstance(loaded.get('presets'), dict):
+                base_presets.update(loaded['presets'])
+            merged['presets'] = base_presets
+            _cached_cal_cfg = merged
+            _cached_cal_mtime = mt
+            return merged
+    except Exception as e:
+        warn(f"Calibration config fallback note: {e}")
+    return dict(_DEFAULT_CALIBRATION_CFG)
+
+
+def get_gutenprint_ppd_path(ppd_model=None):
+    """Generates and caches a Gutenprint PPD in RAM /tmp without modifying CUPS queue config."""
+    model = ppd_model or load_calibration_config().get('gutenprint_ppd_model', 'gutenprint.5.3://escp2-et2700/expert')
+    safe_tag = re.sub(r'[^a-zA-Z0-9_.-]+', '_', model.split('://')[-1].split('/')[0])
+    out_ppd = os.path.join(_PPD_CACHE_DIR, f'gutenprint_{safe_tag}.ppd')
+    if os.path.isfile(out_ppd) and os.path.getsize(out_ppd) > 4096:
+        return out_ppd
+    drv_bin = '/usr/lib/cups/driver/gutenprint.5.3'
+    if not os.path.exists(drv_bin):
+        return None
+    os.makedirs(_PPD_CACHE_DIR, exist_ok=True)
+    for cmd in ([drv_bin, 'cat', model], ['sudo', '-n', drv_bin, 'cat', model]):
+        try:
+            res = subprocess.run(cmd, capture_output=True, timeout=6)
+            if res.returncode == 0 and len(res.stdout) > 4096 and b'*PPD-Adobe' in res.stdout[:256]:
+                with open(out_ppd, 'wb') as f:
+                    f.write(res.stdout)
+                return out_ppd
+        except Exception:
+            continue
+    return None
+
+
+def resolve_preset_pipeline(printer_name, color_mode='bw', preset_override=None, ppd_override=None):
+    """
+    Resolves (ppd_path, driver_kind, driver_bin, preset_name, preset_tokens, has_color_token)
+    for either Gutenprint ESC/P2 presets or ESC/P-R fallback.
+    """
+    cfg = load_calibration_config()
+    is_bw = str(color_mode or 'bw').strip().lower() in ('bw', 'mono', 'monochrome', 'grayscale', 'black & white')
+    env_preset = os.getenv('PRINTKUROX_PRESET', '').strip()
+    chosen_name = preset_override or env_preset or (cfg['default_bw_preset'] if is_bw else cfg['default_color_preset'])
+    preset = cfg.get('presets', {}).get(chosen_name) or {}
+
+    queue_ppd = ppd_override or _get_readable_ppd_path(printer_name)
+    queue_kind, queue_bin = _detect_prespool_driver(queue_ppd)
+
+    prefer_gp = bool(cfg.get('prefer_gutenprint')) or (os.getenv('PRINTKUROX_GUTENPRINT', '').lower() in ('1', 'true', 'yes'))
+    want_driver = preset.get('driver') if (preset_override or env_preset or prefer_gp) else queue_kind
+
+    if want_driver == 'gutenprint':
+        gp_ppd = queue_ppd if queue_kind == 'gutenprint' else get_gutenprint_ppd_path(cfg.get('gutenprint_ppd_model'))
+        gp_bin = os.path.join(_CUPS_FILTER_DIR, 'rastertogutenprint.5.3')
+        if gp_ppd and os.path.exists(gp_bin):
+            tokens = list(preset.get('options') or [])
+            if not tokens:
+                tokens = list(_DEFAULT_CALIBRATION_CFG['presets']['bw_draft' if is_bw else 'color_standard']['options'])
+            cal = cfg.get('calibration') or {}
+            # Put calibration before Resolution/StpQuality only as key=val; Stp* calibration keys don't alter HWResolution
+            for k, v in cal.items():
+                if v not in (None, ''):
+                    tokens.append(f'{k}={v}')
+            return gp_ppd, 'gutenprint', gp_bin, chosen_name, tokens, any(t.startswith('ColorModel=') for t in tokens)
+
+    # Default / photo_glossy ESC/P-R path
+    escpr_tokens = list(preset.get('options') or []) if preset.get('driver') == 'escpr' else []
+    has_col = any(t.startswith(('Ink=', 'ColorModel=')) for t in escpr_tokens)
+    return queue_ppd, queue_kind, queue_bin, (chosen_name if escpr_tokens else 'escpr_default'), escpr_tokens, has_col
+
+
+def _maybe_downsample_oversized_pdf(pdf_path, is_bw=True):
+    """
+    Re-samples genuinely oversized embedded scans (>= trigger_min_ppi or >= trigger_min_px) in RAM
+    before CUPS rasterization; passes normal <=450 PPI PDFs through untouched with zero decode overhead.
+    """
+    cfg = load_calibration_config().get('downsample') or {}
+    if not cfg.get('enabled', True):
+        return pdf_path
+    try:
+        with open(pdf_path, 'rb') as f:
+            if f.read(16).lstrip()[:5] != b'%PDF-':
+                return pdf_path
+        i_res = subprocess.run(['pdfimages', '-list', '-f', '1', '-l', '5', pdf_path], capture_output=True, text=True, timeout=3)
+        if i_res.returncode != 0:
+            return pdf_path
+        min_ppi = float(cfg.get('trigger_min_ppi', 450))
+        min_px = int(cfg.get('trigger_min_px', 3600))
+        needs_shrink = False
+        for line in i_res.stdout.splitlines()[2:]:
+            cols = line.split()
+            if len(cols) >= 14 and cols[2] == 'image':
+                try:
+                    w, h = int(cols[3]), int(cols[4])
+                    xp, yp = float(cols[12]), float(cols[13])
+                    if max(xp, yp) >= min_ppi or max(w, h) >= min_px:
+                        needs_shrink = True
+                        break
+                except ValueError:
+                    continue
+        if not needs_shrink:
+            return pdf_path
+
+        n_pages = _get_pdf_page_count(pdf_path)
+        if n_pages <= 0 or n_pages > 8:
+            return pdf_path
+
+        target_dpi = int(cfg.get('bw_max_ppi', 220) if is_bw else cfg.get('color_max_ppi', 300))
+        os.makedirs(SHM_SPOOL_DIR, exist_ok=True)
+        prefix = os.path.join(SHM_SPOOL_DIR, f"ds_{os.getpid()}_{threading.get_ident()}_{int(time.time()*1000)}")
+        subprocess.run(
+            ['pdftoppm', '-r', str(target_dpi), '-jpeg', '-jpegopt', 'quality=88', pdf_path, prefix],
+            capture_output=True, check=True, timeout=30
+        )
+        import glob
+        from PIL import Image
+        imgs_p = sorted(glob.glob(f"{prefix}-*.jpg"))
+        if not imgs_p:
+            return pdf_path
+        out_pdf = f"{prefix}.pdf"
+        pil_imgs = []
+        try:
+            for ip in imgs_p:
+                im = Image.open(ip)
+                if is_bw:
+                    im = im.convert('L').convert('RGB')
+                elif im.mode != 'RGB':
+                    im = im.convert('RGB')
+                pil_imgs.append(im)
+            pil_imgs[0].save(out_pdf, 'PDF', resolution=float(target_dpi), save_all=True, append_images=pil_imgs[1:])
+            log(f"Downsampled oversized scan ({n_pages} pg) to {target_dpi} PPI: {os.path.getsize(pdf_path)/1024:.0f}KB -> {os.path.getsize(out_pdf)/1024:.0f}KB")
+            return out_pdf
+        finally:
+            for im in pil_imgs:
+                try:
+                    im.close()
+                except Exception:
+                    pass
+            for ip in imgs_p:
+                try:
+                    os.remove(ip)
+                except Exception:
+                    pass
+    except Exception as e:
+        warn(f"Oversized PDF downsample skipped: {e}")
+    return pdf_path
 
 
 def _get_readable_ppd_path(printer_name):
@@ -1099,7 +1332,7 @@ def _deliver_prn_to_printer(printer_name, prn_path, copies=1, copy_label="1/1", 
         _submit_raw_prn_to_cups(printer_name, prn_path, lbl)
 
 
-def _prepare_prespool_context(printer_name, pdf_path):
+def _prepare_prespool_context(printer_name, pdf_path, ppd_override=None):
     """Validates RAM headroom, readable PPD, supported driver, and rasterizer candidate list."""
     pdftopdf_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftopdf')
     gs_bin = os.path.join(_CUPS_FILTER_DIR, 'gstoraster')
@@ -1114,7 +1347,7 @@ def _prepare_prespool_context(printer_name, pdf_path):
     if shm_free_mb < _PRESPOOL_MIN_FREE_MB or pdf_mb > _PRESPOOL_MAX_PDF_MB:
         return None
 
-    ppd_path = _get_readable_ppd_path(printer_name)
+    ppd_path = ppd_override or _get_readable_ppd_path(printer_name)
     driver_kind, driver_bin = _detect_prespool_driver(ppd_path)
     if not driver_kind:
         return None
@@ -1124,21 +1357,21 @@ def _prepare_prespool_context(printer_name, pdf_path):
     return ppd_path, driver_kind, driver_bin, candidates
 
 
-def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
+def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens, ppd_override=None):
     """Single-file RAM pre-spool helper (also kept compatible with verification tests)."""
-    ctx = _prepare_prespool_context(printer_name, pdf_path)
+    ctx = _prepare_prespool_context(printer_name, pdf_path, ppd_override=ppd_override)
     if not ctx:
         return None, None, 0.0
     ppd_path, driver_kind, driver_bin, candidates = ctx
     return _prespool_single_job_to_ram(printer_name, pdf_path, lp_opt_tokens, ppd_path, driver_kind, driver_bin, candidates)
 
 
-def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_ranges, queue_uri="", dry_run=False):
+def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_ranges, queue_uri="", dry_run=False, ppd_override=None):
     """
     Renders batch 1..N across up to 3 CPU workers with bounded lookahead so page 1-2
     starts printing within seconds while subsequent pages render in parallel.
     """
-    ctx = _prepare_prespool_context(printer_name, pdf_path)
+    ctx = _prepare_prespool_context(printer_name, pdf_path, ppd_override=ppd_override)
     if not ctx:
         return False
     ppd_path, driver_kind, driver_bin, candidates = ctx
@@ -1205,18 +1438,22 @@ def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_rang
             return False
 
 
-def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto', total_pages=0):
-    """Prints a PDF using pipelined multi-core RAM pre-spooling when safe, or native CUPS lp fallback."""
-    effective_path = _ensure_safe_a4_pdf_if_raw_image(file_path)
+def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto', total_pages=0, preset_override=None):
+    """Prints a PDF using preset-routed pipelined multi-core RAM pre-spooling or native CUPS lp fallback."""
+    a4_path = _ensure_safe_a4_pdf_if_raw_image(file_path)
+    is_bw = str(color_mode or 'bw').strip().lower() in ('bw', 'mono', 'monochrome', 'grayscale', 'black & white')
+    effective_path = _maybe_downsample_oversized_pdf(a4_path, is_bw=is_bw)
     queue_uri = _get_cached_queue_uris().get(printer_name or '', '')
     opt_tokens = ['PageSize=A4', 'fit-to-page', 'position=center']
     if 'epson' in (printer_name or '').lower() or 'epson' in queue_uri.lower():
         # Bypass colord ICC lookup on Epson driver (eliminates 25-50s CUPS spool stall)
         opt_tokens.append('cm-calibration=true')
-    ppd_drv_kind, _ = _detect_prespool_driver(_get_readable_ppd_path(printer_name))
-    if ppd_drv_kind == 'gutenprint':
-        # Pin crisp 360x360 DPI ESC/P2 instead of default 361x360 (720x360) 4x raster bloat
-        opt_tokens.extend(['MediaType=Plain', 'Resolution=360dpi', 'StpQuality=Draft'])
+
+    ppd_path, ppd_drv_kind, _, preset_name, preset_tokens, has_color_token = resolve_preset_pipeline(
+        printer_name, color_mode=color_mode, preset_override=preset_override
+    )
+    if preset_tokens:
+        opt_tokens.extend(preset_tokens)
 
     pdf_is_landscape, is_mixed_orient = inspect_pdf_orientation_stats(effective_path)
     raw_orient = (orientation or 'auto').strip().lower()
@@ -1230,10 +1467,11 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         if pdf_is_landscape and not is_mixed_orient and raw_orient == 'portrait':
             opt_tokens.extend(['nopdfAutoRotate', 'portrait'])
 
-    color_args = get_printer_color_flags(printer_name, color_mode)
-    for tok in color_args:
-        if tok != '-o':
-            opt_tokens.append(tok)
+    if not has_color_token:
+        color_args = get_printer_color_flags(printer_name, color_mode)
+        for tok in color_args:
+            if tok != '-o':
+                opt_tokens.append(tok)
 
     duplex_active = bool(is_duplex and printer_supports_duplex(printer_name))
     opt_tokens.append('sides=two-sided-long-edge' if duplex_active else 'sides=one-sided')
@@ -1249,13 +1487,15 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
             target_pages = _resolve_target_pages(effective_path, formatted_ranges, total_pages=total_pages)
             if len(target_pages) >= 3:
                 batch_ranges = _group_pages_into_range_strings(target_pages, _PRESPOOL_BATCH_PAGES)
-                if len(batch_ranges) >= 2 and _try_pipelined_batch_print(printer_name, effective_path, opt_tokens, batch_ranges, queue_uri=queue_uri):
+                if len(batch_ranges) >= 2 and _try_pipelined_batch_print(
+                    printer_name, effective_path, opt_tokens, batch_ranges, queue_uri=queue_uri, ppd_override=ppd_path
+                ):
                     return True
 
-        prn_path, filter_tag, pre_sec = _prespool_escpr_to_ram(printer_name, effective_path, opt_tokens)
+        prn_path, filter_tag, pre_sec = _prespool_escpr_to_ram(printer_name, effective_path, opt_tokens, ppd_override=ppd_path)
         if prn_path:
             prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
-            log(f"RAM Pre-Spool ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) -> sending {n_copies} uninterrupted job(s)")
+            log(f"RAM Pre-Spool [{preset_name}:{ppd_drv_kind}] ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) -> sending {n_copies} uninterrupted job(s)")
             try:
                 _deliver_prn_to_printer(printer_name, prn_path, copies=n_copies, queue_uri=queue_uri)
                 return True
@@ -1280,11 +1520,12 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         log(f"CUPS Output: {res.stdout.strip()}")
         return True
     finally:
-        if effective_path != file_path and os.path.exists(effective_path):
-            try:
-                os.remove(effective_path)
-            except Exception:
-                pass
+        for tmp_f in {effective_path, a4_path}:
+            if tmp_f != file_path and os.path.exists(tmp_f):
+                try:
+                    os.remove(tmp_f)
+                except Exception:
+                    pass
 
 
 def poll_paid_jobs():

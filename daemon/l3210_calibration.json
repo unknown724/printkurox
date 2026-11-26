@@ -1,0 +1,86 @@
+{
+  "prefer_gutenprint": false,
+  "gutenprint_ppd_model": "gutenprint.5.3://escp2-et2700/expert",
+  "default_bw_preset": "bw_draft",
+  "default_color_preset": "color_standard",
+  "calibration": {
+    "StpColorCorrection": "Accurate",
+    "StpDensity": "1000",
+    "StpBlackDensity": "800",
+    "StpGamma": "1000",
+    "StpCyanDensity": "1000",
+    "StpMagentaDensity": "1000",
+    "StpYellowDensity": "1000"
+  },
+  "presets": {
+    "bw_economy": {
+      "driver": "gutenprint",
+      "options": [
+        "MediaType=Plain",
+        "ColorModel=Gray",
+        "StpPrintingDirection=Bidirectional",
+        "StpDitherAlgorithm=VeryFast",
+        "StpQuality=Economy",
+        "Resolution=360x180dpi"
+      ]
+    },
+    "bw_draft": {
+      "driver": "gutenprint",
+      "options": [
+        "MediaType=Plain",
+        "ColorModel=Gray",
+        "StpPrintingDirection=Bidirectional",
+        "StpDitherAlgorithm=Fast",
+        "StpQuality=Draft",
+        "Resolution=360dpi"
+      ]
+    },
+    "bw_standard": {
+      "driver": "gutenprint",
+      "options": [
+        "MediaType=Plain",
+        "ColorModel=Gray",
+        "StpPrintingDirection=Bidirectional",
+        "StpDitherAlgorithm=Ordered",
+        "StpQuality=Standard",
+        "Resolution=360dpi"
+      ]
+    },
+    "color_draft": {
+      "driver": "gutenprint",
+      "options": [
+        "MediaType=Plain",
+        "ColorModel=RGB",
+        "StpPrintingDirection=Bidirectional",
+        "StpDitherAlgorithm=Fast",
+        "StpQuality=Draft",
+        "Resolution=360dpi"
+      ]
+    },
+    "color_standard": {
+      "driver": "gutenprint",
+      "options": [
+        "MediaType=Plain",
+        "ColorModel=RGB",
+        "StpPrintingDirection=Bidirectional",
+        "StpDitherAlgorithm=Ordered",
+        "StpQuality=Standard",
+        "Resolution=360dpi"
+      ]
+    },
+    "photo_glossy": {
+      "driver": "escpr",
+      "options": [
+        "Ink=COLOR",
+        "MediaType=PMPHOTO_HIGH"
+      ]
+    }
+  },
+  "downsample": {
+    "enabled": true,
+    "bw_max_ppi": 220,
+    "color_max_ppi": 300,
+    "trigger_min_ppi": 450,
+    "trigger_min_px": 3600
+  }
+}
