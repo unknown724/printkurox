@@ -28,6 +28,7 @@ import { useRouter } from 'next/navigation';
 import { BorderBeam } from '@/components/ui/BorderBeam';
 import { TextOverlayConfig } from '@/components/studio/PhotoLayoutSelector';
 import { getStationConfig } from '@/lib/stations';
+import { parseJsonResponse } from '@/lib/safe-fetch';
 
 declare global {
   interface Window {
@@ -245,8 +246,11 @@ export function CostSummary({
           promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Admin bypass failed');
+      const parsed = await parseJsonResponse<{ error?: string; jobId?: string }>(res, 'Admin bypass failed.');
+      if (!parsed.ok || !parsed.data?.jobId) {
+        throw new Error(parsed.errorMessage || 'Admin bypass failed');
+      }
+      const data = parsed.data;
       router.push(`/status/${data.jobId}`);
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : 'Bypass error');
@@ -286,8 +290,11 @@ export function CostSummary({
           promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Incorrect staff passcode');
+      const parsed = await parseJsonResponse<{ error?: string; jobId?: string }>(res, 'Incorrect staff passcode');
+      if (!parsed.ok || !parsed.data?.jobId) {
+        throw new Error(parsed.errorMessage || 'Incorrect staff passcode');
+      }
+      const data = parsed.data;
       try {
         localStorage.setItem('kurox_admin_verified', 'true');
         sessionStorage.setItem('kurox_admin_verified', 'true');
@@ -332,8 +339,14 @@ export function CostSummary({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to submit counter order');
+      const parsed = await parseJsonResponse<{ error?: string; jobId?: string; pickupCode?: string }>(res, 'Failed to submit counter order');
+      if (!parsed.ok || !parsed.data?.jobId || !parsed.data?.pickupCode) {
+        throw new Error(parsed.errorMessage || 'Failed to submit counter order');
+      }
+      const data = {
+        jobId: parsed.data.jobId,
+        pickupCode: parsed.data.pickupCode,
+      };
 
       const cleanPhone = station.whatsappNumber.replace(/[^0-9]/g, '');
       const modeText = pricing.colorMode === 'bw' ? 'B&W' : 'Color';
@@ -387,11 +400,14 @@ export function CostSummary({
           promoCode: promoCode || (pricing.promoApplied ? CURRENT_VALID_PROMO_CODE : undefined),
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.paymentLinkUrl) {
-        throw new Error(data.error || 'Could not generate Hosted Payment Link.');
+      const parsed = await parseJsonResponse<{ paymentLinkUrl?: string; error?: string }>(
+        res,
+        'Could not generate Hosted Payment Link.'
+      );
+      if (!parsed.ok || !parsed.data?.paymentLinkUrl) {
+        throw new Error(parsed.errorMessage || 'Could not generate Hosted Payment Link.');
       }
-      window.location.assign(data.paymentLinkUrl);
+      window.location.assign(parsed.data.paymentLinkUrl);
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : 'Hosted link checkout failed.');
       setOpeningHostedLink(false);
@@ -429,12 +445,23 @@ export function CostSummary({
         }),
       });
 
-      if (!orderRes.ok) {
-        const errData = await orderRes.json();
-        throw new Error(errData.error || 'Failed to create order.');
+      const parsedOrder = await parseJsonResponse<{
+        jobId?: string;
+        orderId?: string;
+        order_id?: string;
+        amount?: number;
+        currency?: string;
+        keyId?: string;
+        pickupCode?: string;
+        paymentLinkUrl?: string;
+        error?: string;
+      }>(orderRes, 'Failed to create order.');
+
+      if (!parsedOrder.ok || !parsedOrder.data) {
+        throw new Error(parsedOrder.errorMessage || 'Failed to create order.');
       }
 
-      const { jobId, orderId, order_id, amount, currency, keyId, pickupCode, paymentLinkUrl } = await orderRes.json();
+      const { jobId, orderId, order_id, amount, currency, keyId, pickupCode, paymentLinkUrl } = parsedOrder.data;
       const activeOrderId = order_id || orderId;
       if (jobId) setLastCreatedJobId(jobId);
       if (paymentLinkUrl) {
@@ -515,9 +542,12 @@ export function CostSummary({
                 }),
               });
 
-              const verifyData = await verifyRes.json();
-              if (!verifyRes.ok || !verifyData.success) {
-                throw new Error(verifyData.error || 'Payment signature verification failed.');
+              const parsedVerify = await parseJsonResponse<{ success?: boolean; error?: string }>(
+                verifyRes,
+                'Payment signature verification failed.'
+              );
+              if (!parsedVerify.ok || !parsedVerify.data?.success) {
+                throw new Error(parsedVerify.errorMessage || 'Payment signature verification failed.');
               }
 
               router.push(`/status/${jobId}`);

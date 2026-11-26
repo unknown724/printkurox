@@ -76,7 +76,11 @@ export async function POST(req: NextRequest) {
       const amountInPaise = Math.max(100, Math.round(Number(existingJob.total_price) * 100));
       const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
       const customerContact = /^[6-9]\d{9}$/.test(cleanPhone) ? `+91${cleanPhone}` : '+919362980761';
-      const reqOrigin = req.nextUrl.origin || 'https://printkurox.pages.dev';
+      const reqHost = req.headers.get('x-forwarded-host') || req.headers.get('host');
+      const reqOrigin = reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1')
+        ? `https://${reqHost}`
+        : (req.nextUrl.origin || 'https://printkurox.pages.dev');
+      const uniqueRefSuffix = Date.now().toString(36).slice(-7);
       const basicAuth = Buffer.from(`${keyId.trim()}:${keySecret.trim()}`).toString('base64');
       const plRes = await fetch('https://api.razorpay.com/v1/payment_links', {
         method: 'POST',
@@ -88,7 +92,7 @@ export async function POST(req: NextRequest) {
           amount: amountInPaise,
           currency: 'INR',
           accept_partial: false,
-          reference_id: existingJob.id.replace(/-/g, '').slice(0, 32),
+          reference_id: `${existingJob.id.replace(/-/g, '').slice(0, 24)}${uniqueRefSuffix}`,
           description: `PrintKurox ${existingJob.pickup_code} - ${existingJob.total_pages}p x ${existingJob.copies}`,
           customer: {
             name: 'Student',
@@ -262,12 +266,16 @@ export async function POST(req: NextRequest) {
       if (isPaymentLinkMode) {
         const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
         const customerContact = /^[6-9]\d{9}$/.test(cleanPhone) ? `+91${cleanPhone}` : '+919362980761';
-        const reqOrigin = req.nextUrl.origin || 'https://printkurox.pages.dev';
+        const reqHost = req.headers.get('x-forwarded-host') || req.headers.get('host');
+        const reqOrigin = reqHost && !reqHost.includes('localhost') && !reqHost.includes('127.0.0.1')
+          ? `https://${reqHost}`
+          : (req.nextUrl.origin || 'https://printkurox.pages.dev');
+        const uniqueRefSuffix = Date.now().toString(36).slice(-7);
         const plPayload = {
           amount: amountInPaise,
           currency,
           accept_partial: false,
-          reference_id: (createdJobId || receipt || `pk${Date.now()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 32),
+          reference_id: `${(createdJobId || receipt || 'pk').replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}${uniqueRefSuffix}`,
           description: pickupCode
             ? `PrintKurox ${pickupCode} - ${pricing?.totalPages || 1}p x ${pricing?.copies || 1}`
             : 'PrintKurox Order',

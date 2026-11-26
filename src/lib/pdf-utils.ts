@@ -223,7 +223,7 @@ export async function mergeFilesToPdf(
 
   // Collect all embeddable items (converted PDF pages or embedded images)
   type PrintableItem =
-    | { type: 'pdfPage'; page: PDFPage; embeddedPage: PDFEmbeddedPage; width: number; height: number }
+    | { type: 'pdfPage'; embeddedPage: PDFEmbeddedPage; width: number; height: number }
     | { type: 'image'; image: PDFImage; width: number; height: number; name: string };
 
   const printableItems: PrintableItem[] = [];
@@ -242,11 +242,9 @@ export async function mergeFilesToPdf(
     if (isPdfHeader || ext === 'pdf' || item.mimeType === 'application/pdf') {
       const srcPdf = await PDFDocument.load(item.buffer, { ignoreEncryption: true });
       const embeddedPages = await mergedPdf.embedPages(srcPdf.getPages());
-      const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
       for (let idx = 0; idx < embeddedPages.length; idx++) {
         printableItems.push({
           type: 'pdfPage',
-          page: copiedPages[idx],
           embeddedPage: embeddedPages[idx],
           width: embeddedPages[idx].width,
           height: embeddedPages[idx].height,
@@ -283,11 +281,9 @@ export async function mergeFilesToPdf(
         const { pdfBuffer } = await convertDocxToPdf(item.buffer, ext || 'docx');
         const docxPdf = await PDFDocument.load(pdfBuffer);
         const embeddedPages = await mergedPdf.embedPages(docxPdf.getPages());
-        const copiedPages = await mergedPdf.copyPages(docxPdf, docxPdf.getPageIndices());
         for (let idx = 0; idx < embeddedPages.length; idx++) {
           printableItems.push({
             type: 'pdfPage',
-            page: copiedPages[idx],
             embeddedPage: embeddedPages[idx],
             width: embeddedPages[idx].width,
             height: embeddedPages[idx].height,

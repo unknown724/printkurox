@@ -19,6 +19,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { convertDocxToPdfClient } from '@/lib/client-docx-converter';
+import { parseJsonResponse } from '@/lib/safe-fetch';
 
 export interface FileItem {
   id: string;
@@ -412,11 +413,15 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           }),
         });
 
-        if (!presignRes.ok) {
-          throw new Error('Presign endpoint returned error');
+        const parsedPresign = await parseJsonResponse<{
+          uploads?: Array<{ id: string; key: string; name: string; size: number; type: string; uploadUrl: string }>;
+        }>(presignRes, 'Presign endpoint returned an invalid response');
+
+        if (!parsedPresign.ok || !parsedPresign.data) {
+          throw new Error(parsedPresign.errorMessage || 'Presign endpoint returned error');
         }
 
-        const { uploads } = await presignRes.json();
+        const { uploads } = parsedPresign.data;
 
         if (uploads && Array.isArray(uploads) && uploads.length === preparedFiles.length) {
           // Track aggregate progress across all parallel uploads
@@ -463,12 +468,21 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
             }),
           });
 
-          if (!completeRes.ok) {
-            const errData = await completeRes.json().catch(() => ({}));
-            throw new Error(errData.error || 'Failed to finalize uploaded documents.');
+          const parsedComplete = await parseJsonResponse<{
+            fileKey: string;
+            fileName: string;
+            totalPages: number;
+            fileSize: number;
+            fileCount: number;
+            fileItems?: FileItem[];
+            downloadUrl: string;
+          }>(completeRes, 'Failed to finalize uploaded documents.');
+
+          if (!parsedComplete.ok || !parsedComplete.data) {
+            throw new Error(parsedComplete.errorMessage || 'Failed to finalize uploaded documents.');
           }
 
-          const completeData = await completeRes.json();
+          const completeData = parsedComplete.data;
           batchResult = {
             fileKey: completeData.fileKey,
             fileName: completeData.fileName,
@@ -503,12 +517,21 @@ export function FileUpload({ onBatchUploaded, uploadedBatch, onProceed }: FileUp
           setUploadProgress(pct);
         });
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || 'Failed to upload documents.');
+        const parsedLegacy = await parseJsonResponse<{
+          fileKey: string;
+          fileName: string;
+          totalPages: number;
+          fileSize: number;
+          fileCount: number;
+          fileItems?: FileItem[];
+          downloadUrl: string;
+        }>(res, 'Failed to upload documents.');
+
+        if (!parsedLegacy.ok || !parsedLegacy.data) {
+          throw new Error(parsedLegacy.errorMessage || 'Failed to upload documents.');
         }
 
-        const legacyData = await res.json();
+        const legacyData = parsedLegacy.data;
         batchResult = {
           fileKey: legacyData.fileKey,
           fileName: legacyData.fileName,

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BorderBeam } from '@/components/ui/BorderBeam';
+import { parseJsonResponse } from '@/lib/safe-fetch';
 import { getStationConfig } from '@/lib/stations';
 
 interface JobStatusData {
@@ -75,10 +76,14 @@ export default function JobStatusPage({
     const fetchStatus = async () => {
       try {
         const res = await fetch(`/api/status/${jobId}`);
-        if (!res.ok) {
-          throw new Error('Failed to load job status');
+        const parsedStatus = await parseJsonResponse<JobStatusData & Record<string, unknown>>(
+          res,
+          'Failed to load job status'
+        );
+        if (!parsedStatus.ok || !parsedStatus.data) {
+          throw new Error(parsedStatus.errorMessage || 'Failed to load job status');
         }
-        const data: JobStatusData = await res.json();
+        const data: JobStatusData = parsedStatus.data;
         if (!active) return;
         setJob(data);
 
