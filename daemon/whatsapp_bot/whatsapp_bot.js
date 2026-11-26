@@ -2495,6 +2495,104 @@ async function handleGenerateHtmlGameAction({ sock, senderJid, normalizedJid, se
 }
 
 /**
+ * Reads JPEG APP1 EXIF Orientation tag (1, 3, 6, 8) without external deps.
+ */
+function getJpegExifOrientation(buf) {
+  if (!buf || buf.length < 14 || buf[0] !== 0xFF || buf[1] !== 0xD8) return 1;
+  let offset = 2;
+  const end = Math.min(buf.length - 4, 65536);
+  while (offset < end) {
+    if (buf[offset] !== 0xFF) break;
+    const marker = buf[offset + 1];
+    if (marker === 0xDA || marker === 0xD9) break;
+    if (offset + 4 > buf.length) break;
+    const segLen = buf.readUInt16BE(offset + 2);
+    if (segLen < 2) break;
+    if (marker === 0xE1 && offset + 12 <= buf.length && buf.toString('ascii', offset + 4, offset + 10) === 'Exif\0\0') {
+      const tiffStart = offset + 10;
+      const endian = buf.toString('ascii', tiffStart, tiffStart + 2);
+      const isLE = endian === 'II';
+      if (!isLE && endian !== 'MM') return 1;
+      const read16 = (pos) => (isLE ? buf.readUInt16LE(pos) : buf.readUInt16BE(pos));
+      const read32 = (pos) => (isLE ? buf.readUInt32LE(pos) : buf.readUInt32BE(pos));
+      const ifdOffset = read32(tiffStart + 4);
+      const ifdStart = tiffStart + ifdOffset;
+      if (ifdStart + 2 > buf.length) return 1;
+      const entries = read16(ifdStart);
+      for (let i = 0; i < entries; i++) {
+        const entryPos = ifdStart + 2 + i * 12;
+        if (entryPos + 12 > buf.length) break;
+        if (read16(entryPos) === 0x0112) {
+          return read16(entryPos + 8);
+        }
+      }
+      return 1;
+    }
+    offset += 2 + segLen;
+  }
+  return 1;
+}
+
+/**
+ * Embeds a JPEG/PNG image onto a safe A4 Portrait page (24pt margins),
+ * honoring JPEG EXIF rotation and standing landscape photos upright cleanly.
+ */
+async function embedImageOnA4Page(pdfDoc, imgBuffer) {
+  let embeddedImage;
+  const isPng = imgBuffer.length > 24 && imgBuffer[0] === 0x89 && imgBuffer[1] === 0x50;
+  if (isPng) {
+    try { embeddedImage = await pdfDoc.embedPng(imgBuffer); }
+    catch { embeddedImage = await pdfDoc.embedJpg(imgBuffer); }
+  } else {
+    try { embeddedImage = await pdfDoc.embedJpg(imgBuffer); }
+    catch { embeddedImage = await pdfDoc.embedPng(imgBuffer); }
+  }
+  if (!embeddedImage) return false;
+
+  const exifOrient = isPng ? 1 : getJpegExifOrientation(imgBuffer);
+  let rotDeg = 0;
+  if (exifOrient === 3) rotDeg = 180;
+  else if (exifOrient === 6) rotDeg = 270; // 90 deg CW == 270 deg CCW in PDF coords
+  else if (exifOrient === 8) rotDeg = 90;
+
+  let visW = (rotDeg % 180 === 90) ? embeddedImage.height : embeddedImage.width;
+  let visH = (rotDeg % 180 === 90) ? embeddedImage.width : embeddedImage.height;
+
+  // Auto-rotate landscape images 90 deg CCW so they fill upright A4 cleanly
+  if (visW > visH) {
+    rotDeg = (rotDeg + 90) % 360;
+    const tmp = visW;
+    visW = visH;
+    visH = tmp;
+  }
+
+  const a4W = 595.28;
+  const a4H = 841.89;
+  const page = pdfDoc.addPage([a4W, a4H]);
+  const margin = 24;
+  const maxW = a4W - margin * 2;
+  const maxH = a4H - margin * 2;
+  const scale = Math.min(maxW / visW, maxH / visH);
+  const drawW = visW * scale;
+  const drawH = visH * scale;
+  const drawX = (a4W - drawW) / 2;
+  const drawY = (a4H - drawH) / 2;
+
+  const xPos = (rotDeg === 90 || rotDeg === 180) ? (drawX + drawW) : drawX;
+  const yPos = (rotDeg === 180 || rotDeg === 270) ? (drawY + drawH) : drawY;
+
+  const drawOpts = {
+    x: xPos,
+    y: yPos,
+    width: embeddedImage.width * scale,
+    height: embeddedImage.height * scale,
+  };
+  if (rotDeg !== 0) drawOpts.rotate = degrees(rotDeg);
+  page.drawImage(embeddedImage, drawOpts);
+  return true;
+}
+
+/**
  * Finalize Queued Files: Merge if multi-file, upload to Cloudflare R2, and dispatch Step 1 (Color Selection)
  */
 async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 'Student' }) {
@@ -2521,50 +2619,9 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
     if (isImg) {
       try {
         const singlePdf = await PDFDocument.create();
-        let embeddedImage;
-        const isPng = f.buffer.length > 24 && f.buffer[0] === 0x89 && f.buffer[1] === 0x50;
-        if (isPng) {
-          try { embeddedImage = await singlePdf.embedPng(f.buffer); }
-          catch (e) { embeddedImage = await singlePdf.embedJpg(f.buffer); }
-        } else {
-          try { embeddedImage = await singlePdf.embedJpg(f.buffer); }
-          catch (e) { embeddedImage = await singlePdf.embedPng(f.buffer); }
-        }
+        const ok = await embedImageOnA4Page(singlePdf, f.buffer);
 
-        if (embeddedImage) {
-          const a4W = 595.28;
-          const a4H = 841.89;
-          const page = singlePdf.addPage([a4W, a4H]);
-          const margin = 24;
-          const maxW = a4W - (margin * 2);
-          const maxH = a4H - (margin * 2);
-
-          if (embeddedImage.width > embeddedImage.height) {
-            // Auto-rotate sideways document 90° CCW so it is upright on Portrait A4
-            const targetW = embeddedImage.height;
-            const targetH = embeddedImage.width;
-            const scale = Math.min(maxW / targetW, maxH / targetH);
-            const drawW = targetW * scale;
-            const drawH = targetH * scale;
-            const drawX = (a4W - drawW) / 2;
-            const drawY = (a4H - drawH) / 2;
-            page.drawImage(embeddedImage, {
-              x: drawX + drawW,
-              y: drawY,
-              width: embeddedImage.width * scale,
-              height: embeddedImage.height * scale,
-              rotate: degrees(90),
-            });
-          } else {
-            const dims = embeddedImage.scaleToFit(maxW, maxH);
-            page.drawImage(embeddedImage, {
-              x: (a4W - dims.width) / 2,
-              y: (a4H - dims.height) / 2,
-              width: dims.width,
-              height: dims.height,
-            });
-          }
-
+        if (ok) {
           const pdfBytes = await singlePdf.save();
           finalBuffer = Buffer.from(pdfBytes);
           finalFileName = (f.fileName || 'photo').replace(/\.[^.]+$/, '') + '.pdf';
@@ -2624,50 +2681,7 @@ async function continueWithQueuedFiles({ sock, senderJid, session, senderName = 
           }
         } else if (isImg) {
           try {
-            let embeddedImage;
-            const isPng = f.buffer.length > 24 && f.buffer[0] === 0x89 && f.buffer[1] === 0x50;
-            if (isPng) {
-              try { embeddedImage = await mergedPdf.embedPng(f.buffer); }
-              catch (e) { embeddedImage = await mergedPdf.embedJpg(f.buffer); }
-            } else {
-              try { embeddedImage = await mergedPdf.embedJpg(f.buffer); }
-              catch (e) { embeddedImage = await mergedPdf.embedPng(f.buffer); }
-            }
-
-            if (embeddedImage) {
-              const a4W = 595.28;
-              const a4H = 841.89;
-              const page = mergedPdf.addPage([a4W, a4H]);
-              const margin = 24;
-              const maxW = a4W - (margin * 2);
-              const maxH = a4H - (margin * 2);
-
-              if (embeddedImage.width > embeddedImage.height) {
-                // Auto-rotate sideways document 90° CCW so it is upright on Portrait A4
-                const targetW = embeddedImage.height;
-                const targetH = embeddedImage.width;
-                const scale = Math.min(maxW / targetW, maxH / targetH);
-                const drawW = targetW * scale;
-                const drawH = targetH * scale;
-                const drawX = (a4W - drawW) / 2;
-                const drawY = (a4H - drawH) / 2;
-                page.drawImage(embeddedImage, {
-                  x: drawX + drawW,
-                  y: drawY,
-                  width: embeddedImage.width * scale,
-                  height: embeddedImage.height * scale,
-                  rotate: degrees(90),
-                });
-              } else {
-                const dims = embeddedImage.scaleToFit(maxW, maxH);
-                page.drawImage(embeddedImage, {
-                  x: (a4W - dims.width) / 2,
-                  y: (a4H - dims.height) / 2,
-                  width: dims.width,
-                  height: dims.height,
-                });
-              }
-            }
+            await embedImageOnA4Page(mergedPdf, f.buffer);
           } catch (imgErr) {
             console.warn(`[WA-Bot] Could not embed image item ${i + 1}:`, imgErr.message);
           }

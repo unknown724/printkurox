@@ -406,26 +406,28 @@ def printer_supports_duplex(printer_name):
     return AUTO_DUPLEX or _cached_duplex_support.get(cache_key, False)
 
 
-def inspect_pdf_is_landscape(file_path):
-    """Inspects first PDF page geometry (width > height accounting for /Rotate) cleanly."""
+def inspect_pdf_orientation_stats(file_path):
+    """Returns (first_is_landscape, is_mixed_orientation) accounting for /Rotate."""
     if not str(file_path).lower().endswith('.pdf'):
         try:
             with open(file_path, 'rb') as f:
                 if f.read(4) != b'%PDF':
-                    return False
+                    return False, False
         except Exception:
-            return False
+            return False, False
     try:
         import pypdf
         reader = pypdf.PdfReader(file_path)
         if len(reader.pages) > 0:
-            p0 = reader.pages[0]
-            w = float(p0.mediabox.width)
-            h = float(p0.mediabox.height)
-            rot = int(p0.get('/Rotate', 0) or 0)
-            if rot in (90, 270):
-                w, h = h, w
-            return w > h
+            flags = []
+            for p in reader.pages[:20]:
+                w = float(p.mediabox.width)
+                h = float(p.mediabox.height)
+                rot = int(p.get('/Rotate', 0) or 0) % 360
+                if rot in (90, 270):
+                    w, h = h, w
+                flags.append(w > h)
+            return flags[0], (len(set(flags)) > 1)
     except Exception:
         pass
 
@@ -441,10 +443,41 @@ def inspect_pdf_is_landscape(file_path):
             if rot_m and int(rot_m.group(1)) in (90, 270):
                 w, h = h, w
             if w > 0 and h > 0:
-                return w > h
+                return (w > h), False
     except Exception:
         pass
-    return False
+    return False, False
+
+
+def _ensure_safe_a4_pdf_if_raw_image(file_path):
+    """Converts a raw non-PDF image into an EXIF-oriented A4 PDF with safe 18pt margins so CUPS never crops edges."""
+    try:
+        with open(file_path, 'rb') as f:
+            if f.read(1024).lstrip().startswith(b'%PDF-'):
+                return file_path
+    except Exception:
+        return file_path
+
+    try:
+        from PIL import Image, ImageOps
+        img = Image.open(file_path)
+        img = ImageOps.exif_transpose(img)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        # Place on A4 150 DPI canvas (1240 x 1754 px) with 4% safe hardware margins (~3mm+ clearance)
+        canvas_w, canvas_h = 1240, 1754
+        if img.width > img.height:
+            img = img.rotate(90, expand=True)
+        pad = 50
+        img.thumbnail((canvas_w - pad * 2, canvas_h - pad * 2), Image.Resampling.LANCZOS)
+        sheet = Image.new('RGB', (canvas_w, canvas_h), (255, 255, 255))
+        sheet.paste(img, ((canvas_w - img.width) // 2, (canvas_h - img.height) // 2))
+        out_pdf = f"{file_path}.a4.pdf"
+        sheet.save(out_pdf, 'PDF', resolution=150.0)
+        return out_pdf
+    except Exception as img_err:
+        warn(f"Raw image A4 wrap skipped for {os.path.basename(file_path)}: {img_err}")
+        return file_path
 
 
 def get_linux_system_telemetry():
@@ -626,31 +659,29 @@ def storage_cleanup_worker():
 
 
 def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto'):
-    """Prints a PDF file using native Linux CUPS lp command with true PPD color & orientation handling."""
+    """Prints a PDF file using native Linux CUPS lp command with true PPD color, A4 centering, and orientation handling."""
+    effective_path = _ensure_safe_a4_pdf_if_raw_image(file_path)
     cmd = ['lp']
     if printer_name:
         cmd.extend(['-d', printer_name])
     if copies and int(copies) > 1:
         cmd.extend(['-n', str(copies)])
-    cmd.extend(['-o', 'fit-to-page'])
+    cmd.extend(['-o', 'PageSize=A4', '-o', 'fit-to-page', '-o', 'position=center'])
     queue_uri = ss.get_cups_queue_uris().get(printer_name or '', '')
     if 'epson' in (printer_name or '').lower() or 'epson' in queue_uri.lower():
         # Bypass colord ICC lookup on Epson ESC/P-R driver (eliminates 25-50s CUPS spool stall)
         cmd.extend(['-o', 'cm-calibration=true'])
 
-    pdf_is_landscape = inspect_pdf_is_landscape(file_path)
+    pdf_is_landscape, is_mixed_orient = inspect_pdf_orientation_stats(effective_path)
     raw_orient = (orientation or 'auto').strip().lower()
     target_orient = raw_orient if raw_orient in ('landscape', 'portrait') else ('landscape' if pdf_is_landscape else 'portrait')
 
-    # Prevent CUPS pdftopdf double-rotation:
-    # - When website/pdf-utils already baked an A4 Landscape PDF (w > h), do NOT also pass -o landscape.
-    # - Only pass -o landscape if a portrait PDF (h >= w) needs to be rotated to landscape.
-    # - If Portrait was explicitly requested for a wide PDF, disable CUPS auto-rotate so it stays upright.
+    # Prevent CUPS pdftopdf double-rotation while avoiding clipping mixed-orientation PDFs:
     if target_orient == 'landscape':
-        if not pdf_is_landscape:
+        if not pdf_is_landscape and not is_mixed_orient:
             cmd.extend(['-o', 'landscape'])
     else:
-        if pdf_is_landscape:
+        if pdf_is_landscape and not is_mixed_orient and raw_orient == 'portrait':
             cmd.extend(['-o', 'nopdfAutoRotate', '-o', 'portrait'])
 
     cmd.extend(get_printer_color_flags(printer_name, color_mode))
@@ -665,11 +696,18 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         if cleaned:
             cmd.extend(['-o', f'page-ranges={cleaned}'])
 
-    cmd.append(file_path)
+    cmd.append(effective_path)
     log(f"Executing CUPS print: {' '.join(cmd)}")
-    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    log(f"CUPS Output: {res.stdout.strip()}")
-    return True
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        log(f"CUPS Output: {res.stdout.strip()}")
+        return True
+    finally:
+        if effective_path != file_path and os.path.exists(effective_path):
+            try:
+                os.remove(effective_path)
+            except Exception:
+                pass
 
 
 def poll_paid_jobs():
