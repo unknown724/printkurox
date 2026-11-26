@@ -57,8 +57,8 @@ def generate_calibration_pdf(out_pdf_path: str, cal_cfg: dict) -> str:
     # 1. Text Sharpness & Dye-Black Feathering Check
     draw.text((x0, y), "1. Text Crispness & Dye-Black Bleed Test (Plain Paper)", fill=(0, 0, 0), font=_font(36))
     y += 55
-    for pt_lbl, sz in [("18pt", 50), ("12pt", 34), ("9pt", 26), ("7pt", 20)]:
-        sample = f"[{pt_lbl}] The quick brown fox jumps over 0123456789 (Dye Black Feathering / Edge Crispness)"
+    for pt_lbl, sz in [("18pt", 38), ("12pt", 30), ("9pt", 24), ("7pt", 18)]:
+        sample = f"[{pt_lbl}] The quick brown fox jumps over 0123456789 (Dye Black Edge Crispness)"
         draw.text((x0, y), sample, fill=(0, 0, 0), font=_font(sz))
         y += int(sz * 1.45)
     y += 30

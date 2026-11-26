@@ -8,8 +8,8 @@
     "StpDensity": "1000",
     "StpBlackDensity": "800",
     "StpGamma": "1000",
-    "StpCyanDensity": "1000",
-    "StpMagentaDensity": "1000",
+    "StpCyanDensity": "1350",
+    "StpMagentaDensity": "1150",
     "StpYellowDensity": "1000"
   },
   "presets": {
@@ -65,7 +65,7 @@
         "StpPrintingDirection=Bidirectional",
         "StpDitherAlgorithm=Ordered",
         "StpQuality=Standard",
-        "Resolution=360dpi"
+        "Resolution=720x360dpi"
       ]
     },
     "photo_glossy": {
