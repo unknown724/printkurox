@@ -624,7 +624,7 @@ const lidMappingCache = new Map();
  */
 async function sendInteractiveButtons({ sock, jid, title, body, footer = 'PrintKurox AutoPrint', buttons = [] }) {
   if (!jid || !body) return null;
-  const liveSock = (typeof activeBotSock !== 'undefined' && activeBotSock && activeBotSock.ws?.readyState === 1) ? activeBotSock : sock;
+  const liveSock = (typeof activeBotSock !== 'undefined' && activeBotSock && isSockOpen(activeBotSock)) ? activeBotSock : sock;
   sock = liveSock;
 
   const targetJid = jid;
@@ -3292,8 +3292,34 @@ function resolveOpenSocketWaiters(sock) {
   }
 }
 
+function isSockOpen(s) {
+  return Boolean(s?.ws && (s.ws.isOpen === true || s.ws.socket?.readyState === 1 || s.ws.readyState === 1));
+}
+
+function getSockReadyState(s) {
+  if (!s?.ws) return 3;
+  if (typeof s.ws.socket?.readyState === 'number') return s.ws.socket.readyState;
+  if (typeof s.ws.readyState === 'number') return s.ws.readyState;
+  return s.ws.isOpen ? 1 : 3;
+}
+
+function pingSockWs(s) {
+  const raw = s?.ws?.socket || s?.ws;
+  if (raw && typeof raw.ping === 'function') {
+    raw.ping();
+    return true;
+  }
+  return false;
+}
+
+function terminateSockWs(s) {
+  try { s?.ws?.socket?.terminate?.(); } catch (e) {}
+  try { s?.ws?.terminate?.(); } catch (e) {}
+  try { s?.ws?.close?.(); } catch (e) {}
+}
+
 function waitForOpenSocket(timeoutMs = 15000) {
-  if (activeBotSock?.ws?.readyState === 1) {
+  if (isSockOpen(activeBotSock)) {
     return Promise.resolve(activeBotSock);
   }
   return new Promise((resolve) => {
@@ -3359,7 +3385,7 @@ async function startBot() {
   // Cleanly tear down any prior socket so two sockets never fight over session_auth keys
   if (activeBotSock) {
     try { activeBotSock.ev?.removeAllListeners?.(); } catch (e) {}
-    try { activeBotSock.ws?.terminate?.(); } catch (e) {}
+    terminateSockWs(activeBotSock);
     try { activeBotSock.end?.(new Error('Replaced by fresh socket')); } catch (e) {}
     activeBotSock = null;
   }
@@ -3419,7 +3445,7 @@ async function startBot() {
   async function withSocketRetry(methodName, rawFn, targetSockArgs) {
     let curSock = sock;
     for (let attempt = 1; attempt <= 2; attempt++) {
-      if (curSock?.ws?.readyState !== 1) {
+      if (!isSockOpen(curSock)) {
         if (!reconnectTimer && !isStartingBot) scheduleReconnect(500, `${methodName}_ws_closed`);
         const fresh = await waitForOpenSocket(15000);
         if (fresh) curSock = fresh;
@@ -3432,8 +3458,8 @@ async function startBot() {
       } catch (err) {
         if (attempt < 2 && isTransientSocketError(err)) {
           console.warn(`[WA-Bot] Transient ${methodName} failure (${err.code || err.output?.statusCode || err.message}); waiting for fresh socket to retry...`);
-          if (curSock?.ws && curSock.ws.readyState === 1) {
-            try { curSock.ws.terminate(); } catch (e) {}
+          if (isSockOpen(curSock)) {
+            terminateSockWs(curSock);
           }
           if (!reconnectTimer && !isStartingBot) scheduleReconnect(500, `${methodName}_retry`);
           const fresh = await waitForOpenSocket(15000);
@@ -3530,7 +3556,8 @@ async function startBot() {
         const ws = sock.ws;
         if (!ws) return;
 
-        if (ws.readyState === 1) {
+        const wsState = getSockReadyState(sock);
+        if (isSockOpen(sock)) {
           const nowMs = Date.now();
           const quietSec = (nowMs - lastTrafficTime) / 1000;
 
@@ -3541,7 +3568,7 @@ async function startBot() {
             if (currentLivenessTimer) { clearInterval(currentLivenessTimer); currentLivenessTimer = null; }
             if (currentHeartbeatTimer) { clearInterval(currentHeartbeatTimer); currentHeartbeatTimer = null; }
             updateHeartbeat(false);
-            try { ws.terminate(); } catch (e) {}
+            terminateSockWs(sock);
             try { sock.end(new Error('Pong liveness timeout')); } catch (e) {}
             scheduleReconnect(1000, 'pong timeout');
             return;
@@ -3550,19 +3577,19 @@ async function startBot() {
           if (quietSec > 18 && !awaitingPongAt) {
             awaitingPongAt = nowMs;
             try {
-              ws.ping();
+              if (!pingSockWs(sock)) awaitingPongAt = 0;
             } catch (e) {
               awaitingPongAt = nowMs - 15000;
             }
           }
-        } else if (ws.readyState === 2 || ws.readyState === 3) {
-          const closedWsMsg = `[WA-Bot Watchdog] WebSocket is dead (state: ${ws.readyState}). Triggering single clean restart...`;
+        } else if (wsState === 2 || wsState === 3) {
+          const closedWsMsg = `[WA-Bot Watchdog] WebSocket is dead (state: ${wsState}). Triggering single clean restart...`;
           console.warn(closedWsMsg);
           appendBotLog(closedWsMsg);
           if (currentLivenessTimer) { clearInterval(currentLivenessTimer); currentLivenessTimer = null; }
           if (currentHeartbeatTimer) { clearInterval(currentHeartbeatTimer); currentHeartbeatTimer = null; }
           updateHeartbeat(false);
-          scheduleReconnect(1500, `ws state=${ws.readyState}`);
+          scheduleReconnect(1500, `ws state=${wsState}`);
         }
       }, 15000);
 
@@ -6106,7 +6133,7 @@ Department: Computer Science and Engineering`;
 function gracefulShutdown(signal) {
   console.log(`[WA-Bot] Received ${signal}, shutting down cleanly...`);
   try { activeBotSock?.ev?.removeAllListeners?.(); } catch (e) {}
-  try { activeBotSock?.ws?.terminate?.(); } catch (e) {}
+  terminateSockWs(activeBotSock);
   try { activeBotSock?.end?.(undefined); } catch (e) {}
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (currentLivenessTimer) clearInterval(currentLivenessTimer);
