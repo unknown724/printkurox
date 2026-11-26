@@ -1,5 +1,5 @@
 {
-  "prefer_gutenprint": false,
+  "prefer_gutenprint": true,
   "gutenprint_ppd_model": "gutenprint.5.3://escp2-et2700/expert",
   "default_bw_preset": "bw_draft",
   "default_color_preset": "color_standard",
