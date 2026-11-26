@@ -815,12 +815,14 @@ _last_printer_telemetry_sig = None
 _last_printer_telemetry_at = 0.0
 _heartbeat_cycle = 0
 _active_alert_flags = {"temp": False, "power": False, "disk": False, "ram": False}
+_power_bad_streak = 0
+_power_ok_streak = 0
 _last_seen_printers = None
 
 
 def evaluate_and_send_pi_health_alerts(pi_telem, printers):
     """Monitors Pi thermals, undervoltage, storage, RAM/swap, and USB printer connect/disconnect."""
-    global _last_seen_printers
+    global _last_seen_printers, _power_bad_streak, _power_ok_streak
 
     # 1. CPU Temperature
     temp_c = pi_telem.get("cpu_temp_c")
@@ -835,13 +837,27 @@ def evaluate_and_send_pi_health_alerts(pi_telem, printers):
             _active_alert_flags["temp"] = False
             send_wa_admin_alert("pi_temp_recovery", "recovery", "Pi Temperature Normal", f"CPU cooled down to *{temp_c}°C*.", cooldown_sec=0)
 
-    # 2. Power / Active Undervoltage
+    # 2. Power / Active Undervoltage (with hysteresis to prevent dip/normal ping-pong spam)
     if pi_telem.get("undervoltage_now") or pi_telem.get("throttled_now"):
-        _active_alert_flags["power"] = True
-        send_wa_admin_alert("pi_undervoltage", "warn", "Pi Undervoltage / CPU Throttling", "Raspberry Pi voltage dropped below 4.63V during load.\nCheck 5V power adapter/cable to keep full 1.4 GHz speed.", cooldown_sec=1800)
-    elif _active_alert_flags["power"]:
-        _active_alert_flags["power"] = False
-        send_wa_admin_alert("pi_undervoltage_recovery", "recovery", "Pi Power Restored", "5V supply voltage is healthy and throttling cleared.", cooldown_sec=0)
+        _power_bad_streak += 1
+        _power_ok_streak = 0
+        if _power_bad_streak >= 2:
+            _active_alert_flags["power"] = True
+            send_wa_admin_alert(
+                "pi_undervoltage",
+                "warn",
+                "Pi Undervoltage / CPU Throttling",
+                "Raspberry Pi voltage dropped below 4.63V during load (CPU throttled to 600 MHz).\nUse a solid 5V 2.5A+ adapter & short thick Micro-USB cable.",
+                cooldown_sec=7200,
+            )
+    else:
+        _power_bad_streak = 0
+        if _active_alert_flags["power"]:
+            _power_ok_streak += 1
+            if _power_ok_streak >= 6:
+                _active_alert_flags["power"] = False
+                _power_ok_streak = 0
+                send_wa_admin_alert("pi_undervoltage_recovery", "recovery", "Pi Power Restored", "5V supply voltage has stayed healthy and throttling cleared.", cooldown_sec=3600)
 
     # 3. Storage Space
     free_gb = pi_telem.get("disk_free_gb")
