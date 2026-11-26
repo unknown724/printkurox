@@ -404,14 +404,14 @@ def mark_station_offline_d1(station_id: str) -> None:
 
 
 def send_local_admin_alert(alert_key: str, severity: str, title: str, body: str, cooldown_ms: int = 1000) -> bool:
-    """Sends a WhatsApp alert via local whatsapp_bot internal server (127.0.0.1:7251)."""
+    """Sends a WhatsApp alert via local whatsapp_bot internal server (127.0.0.1:7261)."""
     env = load_env_into_dict()
     headers = {'Content-Type': 'application/json'}
     if env.get('STATION_TOKEN'):
         headers['X-Station-Token'] = env['STATION_TOKEN']
     try:
         r = requests.post(
-            'http://127.0.0.1:7251/internal/admin-alert',
+            'http://127.0.0.1:7261/internal/admin-alert',
             headers=headers,
             json={
                 'alertKey': alert_key,

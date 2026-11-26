@@ -837,27 +837,27 @@ def evaluate_and_send_pi_health_alerts(pi_telem, printers):
             _active_alert_flags["temp"] = False
             send_wa_admin_alert("pi_temp_recovery", "recovery", "Pi Temperature Normal", f"CPU cooled down to *{temp_c}°C*.", cooldown_sec=0)
 
-    # 2. Power / Active Undervoltage (with hysteresis to prevent dip/normal ping-pong spam)
-    if pi_telem.get("undervoltage_now") or pi_telem.get("throttled_now"):
-        _power_bad_streak += 1
-        _power_ok_streak = 0
-        if _power_bad_streak >= 2:
-            _active_alert_flags["power"] = True
-            send_wa_admin_alert(
-                "pi_undervoltage",
-                "warn",
-                "Pi Undervoltage / CPU Throttling",
-                "Raspberry Pi voltage dropped below 4.63V during load (CPU throttled to 600 MHz).\nUse a solid 5V 2.5A+ adapter & short thick Micro-USB cable.",
-                cooldown_sec=7200,
-            )
-    else:
-        _power_bad_streak = 0
-        if _active_alert_flags["power"]:
-            _power_ok_streak += 1
-            if _power_ok_streak >= 6:
-                _active_alert_flags["power"] = False
-                _power_ok_streak = 0
-                send_wa_admin_alert("pi_undervoltage_recovery", "recovery", "Pi Power Restored", "5V supply voltage has stayed healthy and throttling cleared.", cooldown_sec=3600)
+    # 2. Power / Active Undervoltage (strict hysteresis: at most 1 alert per 6h, no ping-pong recovery spam)
+    if os.getenv("PI_VOLTAGE_ALERTS", "true").lower() == "true":
+        if pi_telem.get("undervoltage_now") or pi_telem.get("throttled_now"):
+            _power_bad_streak += 1
+            _power_ok_streak = 0
+            if _power_bad_streak >= 3 and not _active_alert_flags["power"]:
+                _active_alert_flags["power"] = True
+                send_wa_admin_alert(
+                    "pi_undervoltage",
+                    "warn",
+                    "Pi Undervoltage / CPU Throttling",
+                    "Raspberry Pi voltage dropped below 4.63V during load (CPU throttled to 600 MHz).\nUse a solid 5V 2.5A+ adapter & short thick Micro-USB cable (muted for 6h).",
+                    cooldown_sec=21600,
+                )
+        else:
+            _power_bad_streak = 0
+            if _active_alert_flags["power"]:
+                _power_ok_streak += 1
+                if _power_ok_streak >= 20:
+                    _active_alert_flags["power"] = False
+                    _power_ok_streak = 0
 
     # 3. Storage Space
     free_gb = pi_telem.get("disk_free_gb")
