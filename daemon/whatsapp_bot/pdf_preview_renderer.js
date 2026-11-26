@@ -114,7 +114,23 @@ async function generatePreviewImage({ inputBuffer, inputPath, fileName = 'docume
   }
 
   const randomId = crypto.randomUUID().slice(0, 8);
-  const ext = path.extname(fileName) || (inputBuffer && inputBuffer.slice(0, 4).toString() === '%PDF' ? '.pdf' : '.jpg');
+  let ext = path.extname(fileName);
+  if (inputBuffer && inputBuffer.length >= 4) {
+    const headLatin = inputBuffer.slice(0, 1024).toString('latin1');
+    if (headLatin.includes('%PDF-')) {
+      ext = '.pdf';
+    } else if (inputBuffer[0] === 0xFF && inputBuffer[1] === 0xD8 && inputBuffer[2] === 0xFF) {
+      ext = '.jpg';
+    } else if (inputBuffer[0] === 0x89 && inputBuffer[1] === 0x50 && inputBuffer[2] === 0x4E && inputBuffer[3] === 0x47) {
+      ext = '.png';
+    } else if (inputBuffer.length >= 12 && headLatin.startsWith('RIFF') && headLatin.slice(8, 12) === 'WEBP') {
+      ext = '.webp';
+    } else if (!ext) {
+      ext = '.jpg';
+    }
+  } else if (!ext) {
+    ext = '.pdf';
+  }
   const tempInputPath = inputPath || path.join(tempDir, `prev_in_${randomId}${ext}`);
   const tempOutputPath = path.join(tempDir, `prev_out_${randomId}.jpg`);
   const needCleanupInput = !inputPath;
@@ -138,7 +154,7 @@ async function generatePreviewImage({ inputBuffer, inputPath, fileName = 'docume
     }
 
     const result = await new Promise((resolve, reject) => {
-      execFile(pythonExe, args, { timeout: 15000 }, (error, stdout, stderr) => {
+      execFile(pythonExe, args, { timeout: 45000 }, (error, stdout, stderr) => {
         if (error) {
           console.warn('[Preview-Renderer] Python exec error:', error.message, stderr);
           return reject(error);

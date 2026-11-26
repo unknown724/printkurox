@@ -19,7 +19,18 @@ def render_preview(input_path, output_path, color_mode="bw", page_indices=None, 
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
     ext = os.path.splitext(input_path)[1].lower()
-    is_img = ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.heic', '.tiff']
+    with open(input_path, 'rb') as f:
+        header = f.read(1024)
+
+    if b'%PDF-' in header:
+        is_img = False
+    elif (
+        header.startswith((b'\xff\xd8\xff', b'\x89PNG\r\n\x1a\n', b'GIF8', b'BM'))
+        or (len(header) >= 12 and header[:4] == b'RIFF' and header[8:12] == b'WEBP')
+    ):
+        is_img = True
+    else:
+        is_img = ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.heic', '.tiff']
     is_bw = (str(color_mode).lower() in ['bw', 'b&w', 'black', 'mono', 'grayscale'])
 
     if is_img:
@@ -76,9 +87,12 @@ def render_preview(input_path, output_path, color_mode="bw", page_indices=None, 
 
         target_indices = target_indices[:max_pages]
 
+        max_edge_px = max(900, min(1400, int(dpi * 8.5)))
         for idx in target_indices:
             page = doc[idx]
-            pix = page.get_pixmap(dpi=dpi)
+            longest_pt = max(1.0, float(page.rect.width), float(page.rect.height))
+            zoom = min(dpi / 72.0, float(max_edge_px) / longest_pt)
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
             img_bytes = pix.tobytes("png")
             page_img = Image.open(io.BytesIO(img_bytes))
             page_img.load()
@@ -115,16 +129,17 @@ def render_preview(input_path, output_path, color_mode="bw", page_indices=None, 
         target_indices = target_indices[:max_pages]
 
         tmp_dir = tempfile.mkdtemp(prefix="pk_prev_")
+        max_edge_px = max(900, min(1400, int(dpi * 8.5)))
         try:
             for idx in target_indices:
                 page_num = idx + 1
                 prefix = os.path.join(tmp_dir, f"p{page_num}")
-                cmd = ["pdftoppm", "-png", "-r", str(dpi), "-f", str(page_num), "-l", str(page_num)]
+                cmd = ["pdftoppm", "-jpeg", "-scale-to", str(max_edge_px), "-f", str(page_num), "-l", str(page_num)]
                 if is_bw:
                     cmd.append("-gray")
                 cmd.extend([input_path, prefix])
                 subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                matches = sorted(glob.glob(f"{prefix}*.png"))
+                matches = sorted(glob.glob(f"{prefix}*.jpg"))
                 if not matches:
                     raise RuntimeError(f"pdftoppm produced no output for page {page_num}")
                 with Image.open(matches[0]) as raw_img:
