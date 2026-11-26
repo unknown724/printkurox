@@ -289,7 +289,7 @@ def _lsusb_mentions_vendor(uri_low: str) -> bool:
     return False
 
 
-def is_cups_queue_physically_present(queue_name: str, queue_uris: dict, physical_printers: list) -> bool:
+def is_cups_queue_physically_present(queue_name: str, queue_uris: dict, physical_printers: list = None) -> bool:
     """Checks whether a configured CUPS queue points to a currently plugged-in physical device."""
     uri = (queue_uris or {}).get(queue_name, '')
     if is_cups_loopback_alias(queue_name, uri):
@@ -298,6 +298,8 @@ def is_cups_queue_physically_present(queue_name: str, queue_uris: dict, physical
         return True
     low = uri.lower()
     if low.startswith('usb://') or low.startswith('hp:/usb/'):
+        if physical_printers is None:
+            return _lsusb_mentions_vendor(low)
         phys_uris = [p['uri'] for p in physical_printers]
         if uri in phys_uris:
             return True

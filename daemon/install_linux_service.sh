@@ -29,8 +29,7 @@ apt-get install -y cups cups-client python3 python3-pip python3-requests printer
 if [ -f "$INSTALL_DIR/printkurox-printer-hotplug.sh" ]; then
   install -m 755 "$INSTALL_DIR/printkurox-printer-hotplug.sh" /usr/local/bin/printkurox-printer-hotplug.sh
   cat <<'EOF' > /etc/udev/rules.d/99-printkurox-printers.rules
-ACTION=="add", SUBSYSTEM=="usbmisc", KERNEL=="lp*", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/printkurox-printer-hotplug.sh"
-ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="07", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/printkurox-printer-hotplug.sh"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="07", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/printkurox-printer-hotplug.sh"
 ACTION=="add|change", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="on"
 EOF
   udevadm control --reload-rules || true
@@ -121,7 +120,7 @@ Wants=network-online.target
 Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$BOT_DIR
-Environment=NODE_OPTIONS=--max-old-space-size=384
+Environment=NODE_OPTIONS=--max-old-space-size=256
 MemoryHigh=450M
 MemoryMax=580M
 TimeoutStopSec=5

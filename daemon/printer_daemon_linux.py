@@ -353,12 +353,19 @@ def resolve_target_printer(force_refresh=False):
 
     available = get_available_cups_printers()
     queue_uris = ss.get_cups_queue_uris()
-    physical = ss.list_physical_usb_printers()
 
+    # Fast non-destructive check via lsusb first (avoids running lpinfo -v which detaches usblp0 for ~3s)
     connected_queues = [
         p for p in available
-        if ss.is_cups_queue_physically_present(p, queue_uris, physical)
+        if ss.is_cups_queue_physically_present(p, queue_uris, None)
     ]
+    physical = []
+    if not connected_queues:
+        physical = ss.list_physical_usb_printers()
+        connected_queues = [
+            p for p in available
+            if ss.is_cups_queue_physically_present(p, queue_uris, physical)
+        ]
 
     selected = None
     if CONFIGURED_PRINTER and connected_queues:
@@ -1337,9 +1344,16 @@ def heartbeat_worker():
 
 
 def archive_printed_file_async(src_path, dst_path):
-    """Moves printed spool file from RAM/temp storage to USB archive asynchronously."""
+    """Moves printed spool file to USB archive only after active USB print jobs finish (prevents dwc_otg contention)."""
     def _worker():
         try:
+            waited = 0
+            while waited < 120:
+                if get_cups_queue_count() == 0:
+                    break
+                time.sleep(2)
+                waited += 2
+            time.sleep(2)
             if os.path.exists(src_path):
                 shutil.move(src_path, dst_path)
         except Exception as e:
