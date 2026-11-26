@@ -261,11 +261,41 @@ def _norm_alnum(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', (s or '').lower())
 
 
+def is_cups_loopback_alias(queue_name: str, uri: str) -> bool:
+    """True for CUPS self-advertised loopback/Avahi aliases like EPSON_L3210_Series_printkurox_pi."""
+    q_low = (queue_name or '').lower()
+    u_low = (uri or '').lower()
+    if '_printkurox_pi' in q_low:
+        return True
+    if ('localhost:631/printers/' in u_low or '127.0.0.1:631/printers/' in u_low):
+        return True
+    return False
+
+
+def _lsusb_mentions_vendor(uri_low: str) -> bool:
+    """Fallback hardware check via lsusb when lpinfo -v is momentarily busy during an active USB print."""
+    try:
+        res = _run(['lsusb'], timeout=3)
+        if res.returncode != 0 or not res.stdout:
+            return False
+        ls_low = res.stdout.lower()
+        if 'epson' in uri_low and 'l3210' in uri_low:
+            return (EPSON_USB_ID in ls_low) or ('l3210' in ls_low) or ('seiko epson' in ls_low)
+        for vendor in ('epson', 'canon', 'brother', 'hewlett-packard', 'hp ', 'xerox', 'samsung', 'ricoh'):
+            if vendor.strip() in uri_low and vendor.strip() in ls_low:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def is_cups_queue_physically_present(queue_name: str, queue_uris: dict, physical_printers: list) -> bool:
-    """Checks whether a configured CUPS queue points to a currently plugged-in device."""
+    """Checks whether a configured CUPS queue points to a currently plugged-in physical device."""
     uri = (queue_uris or {}).get(queue_name, '')
+    if is_cups_loopback_alias(queue_name, uri):
+        return False
     if not uri:
-        return True  # Unknown URI: allow rather than block
+        return True
     low = uri.lower()
     if low.startswith('usb://') or low.startswith('hp:/usb/'):
         phys_uris = [p['uri'] for p in physical_printers]
@@ -275,10 +305,7 @@ def is_cups_queue_physically_present(queue_name: str, queue_uris: dict, physical
         for pu in phys_uris:
             if uri_base and uri_base == _norm_alnum(urllib.parse.unquote(pu.split('?')[0])):
                 return True
-        return False
-    if 'localhost' in low or 'ipp-usb' in low:
-        # ipp-usb only publishes localhost queues while the USB printer is attached
-        return True
+        return _lsusb_mentions_vendor(low)
     return True
 
 

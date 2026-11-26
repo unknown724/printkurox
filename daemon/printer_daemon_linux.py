@@ -278,10 +278,17 @@ def ensure_station_paired():
 
 
 def get_available_cups_printers():
-    """Queries CUPS for all available connected printers."""
+    """Queries CUPS for configured local printers, filtering out self-looped localhost:631 aliases."""
     try:
         res = subprocess.run(['lpstat', '-e'], capture_output=True, text=True, timeout=5)
-        return [p.strip() for p in res.stdout.strip().split('\n') if p.strip()]
+        queue_uris = ss.get_cups_queue_uris()
+        printers = []
+        for raw in res.stdout.strip().split('\n'):
+            p = raw.strip()
+            if not p or ss.is_cups_loopback_alias(p, queue_uris.get(p, '')):
+                continue
+            printers.append(p)
+        return printers
     except Exception as e:
         warn(f"Failed to query lpstat -e: {e}")
         return []
@@ -369,8 +376,22 @@ def resolve_target_printer(force_refresh=False):
     return selected
 
 
+def _pick_ppd_choice(values_str, preferred_lower):
+    """Picks exact case-sensitive PPD choice token matching priority list."""
+    tokens = [t.lstrip('*').strip() for t in (values_str or '').split() if t.strip()]
+    lower_map = {t.lower(): t for t in tokens}
+    for cand in preferred_lower:
+        if cand in lower_map:
+            return lower_map[cand]
+    for tok in tokens:
+        tl = tok.lower()
+        if any(cand in tl for cand in preferred_lower):
+            return tok
+    return None
+
+
 def get_printer_color_flags(printer_name, color_mode):
-    """Detects whether the CUPS PPD uses Ink=MONO/COLOR (e.g. Epson ESC/P-R) or ColorModel=Grayscale/Color."""
+    """Detects exact PPD color keys & values (Ink=MONO/COLOR, ColorModel=Gray/RGB, Grayscale/Color, etc.)."""
     cache_key = printer_name or "__default__"
     if cache_key not in _cached_color_flags:
         bw_flags = ['-o', 'ColorModel=Grayscale']
@@ -383,9 +404,18 @@ def get_printer_color_flags(printer_name, color_mode):
                     capture_output=True, text=True, timeout=3
                 )
                 if res.returncode == 0 and res.stdout:
-                    if re.search(r'^Ink(?:/|\s*:)', res.stdout, re.MULTILINE):
-                        bw_flags = ['-o', 'Ink=MONO']
-                        color_flags = ['-o', 'Ink=COLOR']
+                    m_ink = re.search(r'^Ink(?:/[^:]*)?:\s*(.+)$', res.stdout, re.MULTILINE)
+                    m_cm = re.search(r'^ColorModel(?:/[^:]*)?:\s*(.+)$', res.stdout, re.MULTILINE)
+                    if m_ink:
+                        bw_tok = _pick_ppd_choice(m_ink.group(1), ('mono', 'gray', 'grayscale', 'black')) or 'MONO'
+                        col_tok = _pick_ppd_choice(m_ink.group(1), ('color', 'rgb', 'cmyk')) or 'COLOR'
+                        bw_flags = ['-o', f'Ink={bw_tok}']
+                        color_flags = ['-o', f'Ink={col_tok}']
+                    elif m_cm:
+                        bw_tok = _pick_ppd_choice(m_cm.group(1), ('gray', 'grayscale', 'monochrome', 'mono', 'kgray', 'black')) or 'Grayscale'
+                        col_tok = _pick_ppd_choice(m_cm.group(1), ('rgb', 'color', 'srgb', 'cmyk')) or 'Color'
+                        bw_flags = ['-o', f'ColorModel={bw_tok}']
+                        color_flags = ['-o', f'ColorModel={col_tok}']
                     if re.search(r'^Duplex/.*DuplexNoTumble', res.stdout, re.MULTILINE):
                         has_duplex = True
             except Exception as e:
