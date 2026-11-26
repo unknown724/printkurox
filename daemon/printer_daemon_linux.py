@@ -33,7 +33,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'station_config.json')
 DEVICE_IDENTITY_PATH = os.path.join(BASE_DIR, 'device_identity.json')
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
-SHM_SPOOL_DIR = '/dev/shm/printkurox_spool'
+SHM_SPOOL_DIR = '/tmp/printkurox_spool'
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 
 import showcase_state as ss
@@ -43,10 +43,10 @@ os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 
 def _resolve_active_spool_dir():
-    """Prefer RAM tmpfs (/dev/shm) for active spool files to avoid USB flash bus contention."""
+    """Prefer RAM tmpfs (/tmp) for active spool files (immune to systemd-logind RemoveIPC)."""
     try:
-        if os.path.isdir('/dev/shm'):
-            free_mb = shutil.disk_usage('/dev/shm').free / (1024 * 1024)
+        if os.path.isdir('/tmp'):
+            free_mb = shutil.disk_usage('/tmp').free / (1024 * 1024)
             if free_mb >= 100.0:
                 os.makedirs(SHM_SPOOL_DIR, exist_ok=True)
                 return SHM_SPOOL_DIR
@@ -786,7 +786,7 @@ def _format_cups_page_ranges(page_range, total_pages=0):
     return ",".join(ranges)
 
 
-_PPD_CACHE_DIR = '/dev/shm/printkurox_ppd'
+_PPD_CACHE_DIR = '/tmp/printkurox_ppd'
 _CUPS_FILTER_DIR = '/usr/lib/cups/filter'
 _PRESPOOL_MIN_FREE_MB = 150.0
 _PRESPOOL_MAX_PDF_MB = 25.0
@@ -794,7 +794,7 @@ _PRESPOOL_MAX_PRN_MB = 140.0
 
 
 def _get_readable_ppd_path(printer_name):
-    """Returns a readable local PPD path for printer_name (caches under /dev/shm so non-root filters match printer resolution)."""
+    """Returns a readable local PPD path for printer_name (caches under RAM /tmp so non-root filters match printer resolution)."""
     if not printer_name:
         return None
     sys_ppd = f'/etc/cups/ppd/{printer_name}.ppd'
@@ -910,7 +910,7 @@ def _run_escpr_filter_chain(printer_name, pdf_path, opts_str, ppd_path, raster_b
 
 def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
     """
-    Pre-renders an Epson ESC/P-R print job completely into /dev/shm BEFORE sending raw USB bytes.
+    Pre-renders an Epson ESC/P-R print job completely into RAM /tmp BEFORE sending raw USB bytes.
     Returns (prn_path, mode_label, elapsed_s) or (None, None, 0.0) to trigger seamless lp fallback.
     """
     escpr_bin = os.path.join(_CUPS_FILTER_DIR, 'epson-escpr-wrapper')
@@ -919,10 +919,10 @@ def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
     pop_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftoraster')
     if not (os.path.exists(escpr_bin) and os.path.exists(pdftopdf_bin) and os.path.exists(gs_bin)):
         return None, None, 0.0
-    if not os.path.isdir('/dev/shm'):
+    if not os.path.isdir('/tmp'):
         return None, None, 0.0
     try:
-        shm_free_mb = shutil.disk_usage('/dev/shm').free / (1024 * 1024)
+        shm_free_mb = shutil.disk_usage('/tmp').free / (1024 * 1024)
         pdf_mb = os.path.getsize(pdf_path) / (1024 * 1024)
     except Exception:
         return None, None, 0.0
