@@ -407,14 +407,16 @@ def printer_supports_duplex(printer_name):
 
 
 def inspect_pdf_orientation_stats(file_path):
-    """Returns (first_is_landscape, is_mixed_orientation) accounting for /Rotate."""
+    """Returns (first_is_landscape, is_mixed_orientation) accounting for /Rotate across up to 20 pages."""
     if not str(file_path).lower().endswith('.pdf'):
         try:
             with open(file_path, 'rb') as f:
-                if f.read(4) != b'%PDF':
+                if f.read(16).lstrip()[:5] != b'%PDF-':
                     return False, False
         except Exception:
             return False, False
+
+    # Prefer pypdf if installed, else Poppler `pdfinfo -f 1 -l 20` (fast & exact regardless of PDF byte layout)
     try:
         import pypdf
         reader = pypdf.PdfReader(file_path)
@@ -431,7 +433,33 @@ def inspect_pdf_orientation_stats(file_path):
     except Exception:
         pass
 
-    # Pure-Python header fallback if pypdf is unavailable on Pi
+    try:
+        info = subprocess.run(
+            ['pdfinfo', '-f', '1', '-l', '20', file_path],
+            capture_output=True, text=True, timeout=4
+        )
+        if info.returncode == 0 and info.stdout:
+            dims = {}
+            rots = {}
+            for line in info.stdout.splitlines():
+                ms = re.match(r'^Page\s+(\d+)\s+size:\s*([0-9.]+)\s*x\s*([0-9.]+)', line.strip())
+                if ms:
+                    dims[int(ms.group(1))] = (float(ms.group(2)), float(ms.group(3)))
+                mr = re.match(r'^Page\s+(\d+)\s+rot:\s*(-?\d+)', line.strip())
+                if mr:
+                    rots[int(mr.group(1))] = int(mr.group(2)) % 360
+            if dims:
+                flags = []
+                for pnum in sorted(dims):
+                    w, h = dims[pnum]
+                    if rots.get(pnum, 0) in (90, 270):
+                        w, h = h, w
+                    flags.append(w > h)
+                return flags[0], (len(set(flags)) > 1)
+    except Exception:
+        pass
+
+    # Pure-Python header fallback if neither pypdf nor pdfinfo is available
     try:
         with open(file_path, 'rb') as f:
             blob = f.read(65536)
