@@ -38,6 +38,10 @@ SHM_SPOOL_DIR = '/tmp/printkurox_spool'
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 
 import showcase_state as ss
+try:
+    import direct_usb_printer as dup
+except Exception:
+    dup = None
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
@@ -1055,6 +1059,36 @@ def _submit_raw_prn_to_cups(printer_name, prn_path, copy_label="1/1"):
     log(f"CUPS Output: {res.stdout.strip()}")
 
 
+def _deliver_prn_to_printer(printer_name, prn_path, copies=1, copy_label="1/1", queue_uri=""):
+    """
+    Sends a verified .prn stream straight over USB via libusb-1.0 (zero CUPS middlemen)
+    when queue_uri is usb://, with safe pre-transfer fallback to CUPS lp -o raw.
+    """
+    n_copies = max(1, int(copies or 1))
+    is_usb = bool(queue_uri and queue_uri.lower().startswith('usb://'))
+    if is_usb and dup is not None:
+        # Ensure any older CUPS job releases USB interface before DirectUSB claims it
+        waited = 0
+        while waited < 30 and get_cups_queue_count() > 0:
+            time.sleep(0.5)
+            waited += 0.5
+        try:
+            dup.send_prn_direct_usb(prn_path, queue_uri=queue_uri, copies=n_copies, log_fn=log)
+            return
+        except Exception as usb_err:
+            err_msg = str(usb_err)
+            partial_sent = (' at ' in err_msg) and (' at 0/' not in err_msg)
+            if partial_sent:
+                raise
+            warn(f"DirectUSB unavailable before transfer ({usb_err}); falling back to CUPS raw")
+
+    prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
+    _wait_for_cups_spool_headroom(prn_mb)
+    for c_idx in range(1, n_copies + 1):
+        lbl = copy_label if n_copies == 1 else f"{c_idx}/{n_copies}"
+        _submit_raw_prn_to_cups(printer_name, prn_path, lbl)
+
+
 def _prepare_prespool_context(printer_name, pdf_path):
     """Validates RAM headroom, readable PPD, supported driver, and rasterizer candidate list."""
     pdftopdf_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftopdf')
@@ -1089,7 +1123,7 @@ def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
     return _prespool_single_job_to_ram(printer_name, pdf_path, lp_opt_tokens, ppd_path, driver_kind, driver_bin, candidates)
 
 
-def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_ranges, dry_run=False):
+def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_ranges, queue_uri="", dry_run=False):
     """
     Renders batch 1..N across up to 3 CPU workers with bounded lookahead so page 1-2
     starts printing within seconds while subsequent pages render in parallel.
@@ -1136,8 +1170,7 @@ def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_rang
                 try:
                     log(f"Batch {b_num}/{len(batch_ranges)} (pages {rng}) ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) | total elapsed {time.monotonic() - t_job:.2f}s")
                     if not dry_run:
-                        _wait_for_cups_spool_headroom(prn_mb)
-                        _submit_raw_prn_to_cups(printer_name, prn_path, f"batch {b_num}/{len(batch_ranges)} pgs {rng}")
+                        _deliver_prn_to_printer(printer_name, prn_path, copies=1, copy_label=f"batch {b_num}/{len(batch_ranges)} pgs {rng}", queue_uri=queue_uri)
                         submitted_any = True
                 finally:
                     if os.path.exists(prn_path):
@@ -1195,16 +1228,15 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
             target_pages = _resolve_target_pages(effective_path, formatted_ranges, total_pages=total_pages)
             if len(target_pages) >= 3:
                 batch_ranges = _group_pages_into_range_strings(target_pages, _PRESPOOL_BATCH_PAGES)
-                if len(batch_ranges) >= 2 and _try_pipelined_batch_print(printer_name, effective_path, opt_tokens, batch_ranges):
+                if len(batch_ranges) >= 2 and _try_pipelined_batch_print(printer_name, effective_path, opt_tokens, batch_ranges, queue_uri=queue_uri):
                     return True
 
         prn_path, filter_tag, pre_sec = _prespool_escpr_to_ram(printer_name, effective_path, opt_tokens)
         if prn_path:
             prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
-            log(f"RAM Pre-Spool ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) -> sending {n_copies} uninterrupted raw USB job(s)")
+            log(f"RAM Pre-Spool ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) -> sending {n_copies} uninterrupted job(s)")
             try:
-                for c_idx in range(1, n_copies + 1):
-                    _submit_raw_prn_to_cups(printer_name, prn_path, f"{c_idx}/{n_copies}")
+                _deliver_prn_to_printer(printer_name, prn_path, copies=n_copies, queue_uri=queue_uri)
                 return True
             finally:
                 if os.path.exists(prn_path):
