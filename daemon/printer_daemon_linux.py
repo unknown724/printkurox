@@ -26,6 +26,7 @@ import threading
 import re
 import urllib.parse
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Base Paths
@@ -791,6 +792,9 @@ _CUPS_FILTER_DIR = '/usr/lib/cups/filter'
 _PRESPOOL_MIN_FREE_MB = 150.0
 _PRESPOOL_MAX_PDF_MB = 25.0
 _PRESPOOL_MAX_PRN_MB = 140.0
+_PRESPOOL_BATCH_PAGES = 2
+_PRESPOOL_LOOKAHEAD_BATCHES = 3
+_CUPS_SPOOL_DIR = '/var/spool/cups'
 
 
 def _get_readable_ppd_path(printer_name):
@@ -828,16 +832,24 @@ def _get_readable_ppd_path(printer_name):
     return None
 
 
-def _is_epson_escpr_queue(ppd_path):
-    """True when the PPD uses Epson ESC/P-R (epson-escpr-wrapper)."""
+def _detect_prespool_driver(ppd_path):
+    """Returns ('escpr'|'gutenprint', filter_binary_path) if PPD supports RAM pre-spooling, else (None, None)."""
     if not ppd_path or not os.path.isfile(ppd_path):
-        return False
+        return None, None
     try:
         with open(ppd_path, 'rb') as f:
-            head = f.read(16384)
-        return b'epson-escpr-wrapper' in head
+            head = f.read(32768)
+        if b'epson-escpr-wrapper' in head:
+            b = os.path.join(_CUPS_FILTER_DIR, 'epson-escpr-wrapper')
+            if os.path.exists(b):
+                return 'escpr', b
+        if b'rastertogutenprint.5.3' in head:
+            b = os.path.join(_CUPS_FILTER_DIR, 'rastertogutenprint.5.3')
+            if os.path.exists(b):
+                return 'gutenprint', b
     except Exception:
-        return False
+        pass
+    return None, None
 
 
 def _should_use_pdftoraster(pdf_path):
@@ -848,7 +860,6 @@ def _should_use_pdftoraster(pdf_path):
         f_res = subprocess.run(['pdffonts', pdf_path], capture_output=True, text=True, timeout=3)
         if f_res.returncode != 0:
             return False
-        # pdffonts prints 2 header lines + separator; >2 lines means embedded/referenced fonts exist
         font_lines = [ln for ln in f_res.stdout.splitlines() if ln.strip()]
         if len(font_lines) > 2:
             return False
@@ -858,7 +869,6 @@ def _should_use_pdftoraster(pdf_path):
             return False
         for line in i_res.stdout.splitlines()[2:]:
             cols = line.split()
-            # col[3]=width, col[4]=height, col[12]=x-ppi, col[13]=y-ppi
             if len(cols) >= 14 and cols[2] == 'image':
                 try:
                     w = int(cols[3])
@@ -872,10 +882,9 @@ def _should_use_pdftoraster(pdf_path):
     return False
 
 
-def _run_escpr_filter_chain(printer_name, pdf_path, opts_str, ppd_path, raster_bin, out_prn_path):
-    """Runs pdftopdf -> <raster_bin> -> epson-escpr-wrapper fully buffered to out_prn_path."""
+def _run_filter_chain_to_prn(printer_name, pdf_path, opts_str, ppd_path, raster_bin, driver_kind, driver_bin, out_prn_path):
+    """Runs pdftopdf -> <raster_bin> -> <driver_bin> fully buffered into out_prn_path."""
     pdftopdf_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftopdf')
-    escpr_bin = os.path.join(_CUPS_FILTER_DIR, 'epson-escpr-wrapper')
     env = os.environ.copy()
     env['PPD'] = ppd_path
     env['PRINTER'] = printer_name
@@ -890,10 +899,15 @@ def _run_escpr_filter_chain(printer_name, pdf_path, opts_str, ppd_path, raster_b
     )
     p1.stdout.close()
 
+    driver_argv = (
+        [printer_name, '0', 'pi', 'printkurox', '1', opts_str]
+        if driver_kind == 'escpr'
+        else [driver_bin, '0', 'pi', 'printkurox', '1', opts_str]
+    )
     with open(out_prn_path, 'wb') as out_f:
         p3 = subprocess.Popen(
-            [printer_name, '0', 'pi', 'printkurox', '1', opts_str],
-            executable=escpr_bin,
+            driver_argv,
+            executable=driver_bin,
             stdin=p2.stdout, stdout=out_f, stderr=subprocess.PIPE, env=env
         )
         p2.stdout.close()
@@ -908,44 +922,78 @@ def _run_escpr_filter_chain(printer_name, pdf_path, opts_str, ppd_path, raster_b
         raise RuntimeError(f"filter rc=({rc1},{rc2},{p3.returncode}): {err_txt}")
 
 
-def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
-    """
-    Pre-renders an Epson ESC/P-R print job completely into RAM /tmp BEFORE sending raw USB bytes.
-    Returns (prn_path, mode_label, elapsed_s) or (None, None, 0.0) to trigger seamless lp fallback.
-    """
-    escpr_bin = os.path.join(_CUPS_FILTER_DIR, 'epson-escpr-wrapper')
-    pdftopdf_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftopdf')
-    gs_bin = os.path.join(_CUPS_FILTER_DIR, 'gstoraster')
-    pop_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftoraster')
-    if not (os.path.exists(escpr_bin) and os.path.exists(pdftopdf_bin) and os.path.exists(gs_bin)):
-        return None, None, 0.0
-    if not os.path.isdir('/tmp'):
-        return None, None, 0.0
+def _get_pdf_page_count(pdf_path, hint_pages=0):
+    """Reads exact page count via pdfinfo/pypdf (falls back to hint_pages)."""
     try:
-        shm_free_mb = shutil.disk_usage('/tmp').free / (1024 * 1024)
-        pdf_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+        res = subprocess.run(['pdfinfo', pdf_path], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0:
+            m = re.search(r'^Pages:\s*(\d+)', res.stdout, re.MULTILINE)
+            if m:
+                return int(m.group(1))
     except Exception:
-        return None, None, 0.0
-    if shm_free_mb < _PRESPOOL_MIN_FREE_MB or pdf_mb > _PRESPOOL_MAX_PDF_MB:
-        return None, None, 0.0
+        pass
+    try:
+        import pypdf
+        return len(pypdf.PdfReader(pdf_path).pages)
+    except Exception:
+        pass
+    return max(0, int(hint_pages or 0))
 
-    ppd_path = _get_readable_ppd_path(printer_name)
-    if not _is_epson_escpr_queue(ppd_path):
-        return None, None, 0.0
 
+def _resolve_target_pages(pdf_path, formatted_ranges, total_pages=0):
+    """Returns ordered 1-based page list to print, or [] if page count cannot be determined."""
+    n_pages = _get_pdf_page_count(pdf_path, hint_pages=total_pages)
+    if n_pages <= 0:
+        return []
+    if not formatted_ranges:
+        return list(range(1, n_pages + 1))
+    pages = set()
+    for part in str(formatted_ranges).split(','):
+        if '-' in part:
+            a_s, b_s = part.split('-', 1)
+            for p in range(max(1, int(a_s)), min(n_pages, int(b_s)) + 1):
+                pages.add(p)
+        elif part.isdigit():
+            p = int(part)
+            if 1 <= p <= n_pages:
+                pages.add(p)
+    return sorted(pages)
+
+
+def _group_pages_into_range_strings(pages, batch_size=_PRESPOOL_BATCH_PAGES):
+    """Groups sorted page numbers into CUPS page-ranges strings of at most batch_size pages each."""
+    groups = []
+    for i in range(0, len(pages), batch_size):
+        chunk = pages[i:i + batch_size]
+        sub = []
+        s = e = chunk[0]
+        for p in chunk[1:]:
+            if p == e + 1:
+                e = p
+            else:
+                sub.append(str(s) if s == e else f"{s}-{e}")
+                s = e = p
+        sub.append(str(s) if s == e else f"{s}-{e}")
+        groups.append(",".join(sub))
+    return groups
+
+
+def _prespool_single_job_to_ram(printer_name, pdf_path, lp_opt_tokens, ppd_path, driver_kind, driver_bin, candidates, range_str=None, max_prn_mb=_PRESPOOL_MAX_PRN_MB):
+    """Renders pdf_path (or range_str slice) to a RAM .prn file under /tmp/printkurox_spool."""
     os.makedirs(SHM_SPOOL_DIR, exist_ok=True)
-    prn_path = os.path.join(SHM_SPOOL_DIR, f"escpr_{os.getpid()}_{int(time.time() * 1000)}.prn")
-    opts_str = ' '.join(lp_opt_tokens)
-
-    use_pop = _should_use_pdftoraster(pdf_path)
-    candidates = ([pop_bin, gs_bin] if use_pop else [gs_bin])
+    tokens = [t for t in lp_opt_tokens if not t.startswith('page-ranges=')]
+    if range_str:
+        tokens.append(f'page-ranges={range_str}')
+    opts_str = ' '.join(tokens)
+    suffix = (range_str or 'all').replace(',', '_').replace('-', '_')
+    prn_path = os.path.join(SHM_SPOOL_DIR, f"escpr_{os.getpid()}_{threading.get_ident()}_{int(time.time() * 1000)}_{suffix}.prn")
 
     for raster_bin in candidates:
         t0 = time.monotonic()
         try:
-            _run_escpr_filter_chain(printer_name, pdf_path, opts_str, ppd_path, raster_bin, prn_path)
+            _run_filter_chain_to_prn(printer_name, pdf_path, opts_str, ppd_path, raster_bin, driver_kind, driver_bin, prn_path)
             prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
-            if 0.001 < prn_mb <= _PRESPOOL_MAX_PRN_MB:
+            if 0.001 < prn_mb <= max_prn_mb:
                 return prn_path, os.path.basename(raster_bin), (time.monotonic() - t0)
             warn(f"RAM pre-spool size out of bounds ({prn_mb:.2f}MB); using standard lp fallback")
         except Exception as e:
@@ -958,8 +1006,135 @@ def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
     return None, None, 0.0
 
 
+def _wait_for_cups_spool_headroom(needed_mb, max_wait_sec=120):
+    """Backpressure guard so multi-batch streaming never overflows the 160M /var/spool/cups tmpfs."""
+    deadline = time.monotonic() + max_wait_sec
+    while time.monotonic() < deadline:
+        q_count = get_cups_queue_count()
+        spool_free_mb = 999.0
+        try:
+            if os.path.isdir(_CUPS_SPOOL_DIR):
+                spool_free_mb = shutil.disk_usage(_CUPS_SPOOL_DIR).free / (1024 * 1024)
+        except Exception:
+            pass
+        if q_count <= 2 and spool_free_mb >= (needed_mb + 20.0):
+            return
+        time.sleep(0.5)
+
+
+def _submit_raw_prn_to_cups(printer_name, prn_path, copy_label="1/1"):
+    """Submits one pre-rendered .prn file to CUPS with -o raw."""
+    raw_cmd = ['lp']
+    if printer_name:
+        raw_cmd.extend(['-d', printer_name])
+    raw_cmd.extend(['-o', 'raw', prn_path])
+    log(f"Executing CUPS raw print ({copy_label}): {' '.join(raw_cmd)}")
+    res = subprocess.run(raw_cmd, capture_output=True, text=True, check=True)
+    log(f"CUPS Output: {res.stdout.strip()}")
+
+
+def _prepare_prespool_context(printer_name, pdf_path):
+    """Validates RAM headroom, readable PPD, supported driver, and rasterizer candidate list."""
+    pdftopdf_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftopdf')
+    gs_bin = os.path.join(_CUPS_FILTER_DIR, 'gstoraster')
+    pop_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftoraster')
+    if not (os.path.exists(pdftopdf_bin) and os.path.exists(gs_bin) and os.path.isdir('/tmp')):
+        return None
+    try:
+        shm_free_mb = shutil.disk_usage('/tmp').free / (1024 * 1024)
+        pdf_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+    except Exception:
+        return None
+    if shm_free_mb < _PRESPOOL_MIN_FREE_MB or pdf_mb > _PRESPOOL_MAX_PDF_MB:
+        return None
+
+    ppd_path = _get_readable_ppd_path(printer_name)
+    driver_kind, driver_bin = _detect_prespool_driver(ppd_path)
+    if not driver_kind:
+        return None
+
+    use_pop = _should_use_pdftoraster(pdf_path)
+    candidates = ([pop_bin, gs_bin] if use_pop else [gs_bin])
+    return ppd_path, driver_kind, driver_bin, candidates
+
+
+def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
+    """Single-file RAM pre-spool helper (also kept compatible with verification tests)."""
+    ctx = _prepare_prespool_context(printer_name, pdf_path)
+    if not ctx:
+        return None, None, 0.0
+    ppd_path, driver_kind, driver_bin, candidates = ctx
+    return _prespool_single_job_to_ram(printer_name, pdf_path, lp_opt_tokens, ppd_path, driver_kind, driver_bin, candidates)
+
+
+def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_ranges, dry_run=False):
+    """
+    Renders batch 1..N across up to 3 CPU workers with bounded lookahead so page 1-2
+    starts printing within seconds while subsequent pages render in parallel.
+    """
+    ctx = _prepare_prespool_context(printer_name, pdf_path)
+    if not ctx:
+        return False
+    ppd_path, driver_kind, driver_bin, candidates = ctx
+
+    in_flight = []
+    submitted_any = False
+    t_job = time.monotonic()
+    with ThreadPoolExecutor(max_workers=min(3, len(batch_ranges))) as pool:
+        try:
+            next_idx = 0
+            while next_idx < len(batch_ranges) and len(in_flight) < _PRESPOOL_LOOKAHEAD_BATCHES:
+                rng = batch_ranges[next_idx]
+                fut = pool.submit(
+                    _prespool_single_job_to_ram,
+                    printer_name, pdf_path, lp_opt_tokens, ppd_path, driver_kind, driver_bin, candidates, rng, 90.0
+                )
+                in_flight.append((next_idx + 1, rng, fut))
+                next_idx += 1
+
+            while in_flight:
+                b_num, rng, fut = in_flight.pop(0)
+                prn_path, filter_tag, pre_sec = fut.result()
+                if not prn_path:
+                    if not submitted_any:
+                        return False
+                    raise RuntimeError(f"Batch {b_num} ({rng}) pre-spool failed mid-stream")
+
+                # Keep lookahead queue filled on idle CPU cores before submitting this batch
+                while next_idx < len(batch_ranges) and len(in_flight) < _PRESPOOL_LOOKAHEAD_BATCHES:
+                    nrng = batch_ranges[next_idx]
+                    nfut = pool.submit(
+                        _prespool_single_job_to_ram,
+                        printer_name, pdf_path, lp_opt_tokens, ppd_path, driver_kind, driver_bin, candidates, nrng, 90.0
+                    )
+                    in_flight.append((next_idx + 1, nrng, nfut))
+                    next_idx += 1
+
+                prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
+                try:
+                    log(f"Batch {b_num}/{len(batch_ranges)} (pages {rng}) ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) | total elapsed {time.monotonic() - t_job:.2f}s")
+                    if not dry_run:
+                        _wait_for_cups_spool_headroom(prn_mb)
+                        _submit_raw_prn_to_cups(printer_name, prn_path, f"batch {b_num}/{len(batch_ranges)} pgs {rng}")
+                        submitted_any = True
+                finally:
+                    if os.path.exists(prn_path):
+                        try:
+                            os.remove(prn_path)
+                        except Exception:
+                            pass
+            return True
+        except Exception as batch_err:
+            for _, _, pf in in_flight:
+                pf.cancel()
+            if submitted_any:
+                raise
+            warn(f"Pipelined batch pre-spool fallback note: {batch_err}")
+            return False
+
+
 def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto', total_pages=0):
-    """Prints a PDF using RAM-buffered ESC/P-R pre-spooling when safe, or native CUPS lp fallback."""
+    """Prints a PDF using pipelined multi-core RAM pre-spooling when safe, or native CUPS lp fallback."""
     effective_path = _ensure_safe_a4_pdf_if_raw_image(file_path)
     queue_uri = ss.get_cups_queue_uris().get(printer_name or '', '')
     opt_tokens = ['PageSize=A4', 'fit-to-page', 'position=center']
@@ -984,51 +1159,48 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         if tok != '-o':
             opt_tokens.append(tok)
 
-    if is_duplex and printer_supports_duplex(printer_name):
-        opt_tokens.append('sides=two-sided-long-edge')
-    else:
-        opt_tokens.append('sides=one-sided')
+    duplex_active = bool(is_duplex and printer_supports_duplex(printer_name))
+    opt_tokens.append('sides=two-sided-long-edge' if duplex_active else 'sides=one-sided')
 
     formatted_ranges = _format_cups_page_ranges(page_range, total_pages=total_pages)
     if formatted_ranges:
         opt_tokens.append(f'page-ranges={formatted_ranges}')
 
-    prn_path, filter_tag, pre_sec = _prespool_escpr_to_ram(printer_name, effective_path, opt_tokens)
-
     n_copies = max(1, int(copies or 1))
+    try:
+        # Multi-core 2-page batch pipeline for >=3 single-copy non-duplex pages (fast first-page start)
+        if n_copies == 1 and not duplex_active:
+            target_pages = _resolve_target_pages(effective_path, formatted_ranges, total_pages=total_pages)
+            if len(target_pages) >= 3:
+                batch_ranges = _group_pages_into_range_strings(target_pages, _PRESPOOL_BATCH_PAGES)
+                if len(batch_ranges) >= 2 and _try_pipelined_batch_print(printer_name, effective_path, opt_tokens, batch_ranges):
+                    return True
 
-    if prn_path:
-        prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
-        log(f"RAM Pre-Spool ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB ESC/P-R) -> sending {n_copies} uninterrupted raw USB job(s)")
-        try:
-            for c_idx in range(1, n_copies + 1):
-                raw_cmd = ['lp']
-                if printer_name:
-                    raw_cmd.extend(['-d', printer_name])
-                raw_cmd.extend(['-o', 'raw', prn_path])
-                log(f"Executing CUPS raw print ({c_idx}/{n_copies}): {' '.join(raw_cmd)}")
-                res = subprocess.run(raw_cmd, capture_output=True, text=True, check=True)
-                log(f"CUPS Output: {res.stdout.strip()}")
-            return True
-        finally:
-            for tmp_f in (prn_path, effective_path if effective_path != file_path else None):
-                if tmp_f and os.path.exists(tmp_f):
+        prn_path, filter_tag, pre_sec = _prespool_escpr_to_ram(printer_name, effective_path, opt_tokens)
+        if prn_path:
+            prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
+            log(f"RAM Pre-Spool ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) -> sending {n_copies} uninterrupted raw USB job(s)")
+            try:
+                for c_idx in range(1, n_copies + 1):
+                    _submit_raw_prn_to_cups(printer_name, prn_path, f"{c_idx}/{n_copies}")
+                return True
+            finally:
+                if os.path.exists(prn_path):
                     try:
-                        os.remove(tmp_f)
+                        os.remove(prn_path)
                     except Exception:
                         pass
 
-    cmd = ['lp']
-    if printer_name:
-        cmd.extend(['-d', printer_name])
-    if n_copies > 1:
-        cmd.extend(['-n', str(n_copies)])
-    for tok in opt_tokens:
-        cmd.extend(['-o', tok])
-    cmd.append(effective_path)
+        cmd = ['lp']
+        if printer_name:
+            cmd.extend(['-d', printer_name])
+        if n_copies > 1:
+            cmd.extend(['-n', str(n_copies)])
+        for tok in opt_tokens:
+            cmd.extend(['-o', tok])
+        cmd.append(effective_path)
 
-    log(f"Executing CUPS print: {' '.join(cmd)}")
-    try:
+        log(f"Executing CUPS print: {' '.join(cmd)}")
         res = subprocess.run(cmd, capture_output=True, text=True, check=True)
         log(f"CUPS Output: {res.stdout.strip()}")
         return True
