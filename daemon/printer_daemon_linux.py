@@ -716,7 +716,51 @@ def storage_cleanup_worker():
         cleanup_usb_storage()
 
 
-def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto'):
+def _format_cups_page_ranges(page_range, total_pages=0):
+    """Formats CUPS page-ranges cleanly and omits it when all pages 1..N are selected."""
+    if not page_range or str(page_range).strip().lower() in ('', 'all'):
+        return None
+    raw = re.sub(r'\s+', '', str(page_range))
+    if not raw:
+        return None
+
+    pages = set()
+    try:
+        for part in raw.split(','):
+            if not part:
+                continue
+            if '-' in part:
+                a_s, b_s = part.split('-', 1)
+                a, b = int(a_s), int(b_s)
+                lo, hi = min(a, b), max(a, b)
+                for n in range(max(1, lo), hi + 1):
+                    pages.add(n)
+            else:
+                n = int(part)
+                if n >= 1:
+                    pages.add(n)
+    except Exception:
+        return raw
+
+    if not pages:
+        return None
+    sorted_p = sorted(pages)
+    if total_pages and total_pages >= 1 and sorted_p == list(range(1, total_pages + 1)):
+        return None
+
+    ranges = []
+    start = prev = sorted_p[0]
+    for n in sorted_p[1:]:
+        if n == prev + 1:
+            prev = n
+        else:
+            ranges.append(f"{start}" if start == prev else f"{start}-{prev}")
+            start = prev = n
+    ranges.append(f"{start}" if start == prev else f"{start}-{prev}")
+    return ",".join(ranges)
+
+
+def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto', total_pages=0):
     """Prints a PDF file using native Linux CUPS lp command with true PPD color, A4 centering, and orientation handling."""
     effective_path = _ensure_safe_a4_pdf_if_raw_image(file_path)
     cmd = ['lp']
@@ -749,10 +793,9 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
     else:
         cmd.extend(['-o', 'sides=one-sided'])
 
-    if page_range and str(page_range).lower() != 'all':
-        cleaned = re.sub(r'\s+', '', str(page_range))
-        if cleaned:
-            cmd.extend(['-o', f'page-ranges={cleaned}'])
+    formatted_ranges = _format_cups_page_ranges(page_range, total_pages=total_pages)
+    if formatted_ranges:
+        cmd.extend(['-o', f'page-ranges={formatted_ranges}'])
 
     cmd.append(effective_path)
     log(f"Executing CUPS print: {' '.join(cmd)}")
@@ -1159,6 +1202,7 @@ def main():
                             is_duplex=is_duplex,
                             page_range=page_range,
                             orientation=orientation,
+                            total_pages=total_pages,
                         )
                         pages_printed_total = total_pages * copies
                         per_copy_sheets = (duplex_sheets + single_sheets) if (duplex_sheets + single_sheets) > 0 else (
