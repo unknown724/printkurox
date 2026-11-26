@@ -153,6 +153,22 @@ try {
   console.warn('[WA-Bot] station_config.json read notice:', cfgErr.message);
 }
 
+try {
+  const showcasePath = path.join(__dirname, '..', 'showcase_override.json');
+  if (fs.existsSync(showcasePath)) {
+    const ov = JSON.parse(fs.readFileSync(showcasePath, 'utf8'));
+    if (ov && ov.active && ov.station_id) {
+      defaultStation.id = ov.station_id;
+      defaultStation.name = ov.station_name || ov.station_id;
+      defaultStation.room = ov.wifi_ssid ? `Showcase (${ov.wifi_ssid})` : 'Showcase Booth';
+      defaultStation.allowCounterPayment = false;
+      console.log(`[WA-Bot] Showcase Override active: ${defaultStation.name} (${defaultStation.id})`);
+    }
+  }
+} catch (ovErr) {
+  console.warn('[WA-Bot] showcase_override.json read notice:', ovErr.message);
+}
+
 const STATION_NAME = defaultStation.name;
 const STATION_ID = defaultStation.id;
 const STATION_ROOM = defaultStation.room;

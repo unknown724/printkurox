@@ -36,6 +36,8 @@ TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
 ACTIVE_SPOOL_DIR = TEMP_DIR
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 
+import showcase_state as ss
+
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
@@ -61,20 +63,16 @@ log = logging.info
 warn = logging.warning
 error = logging.error
 
-# Load Station Configuration
-station_data = {}
-if os.path.exists(CONFIG_PATH):
-    try:
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-            station_data = json.load(f)
-            log(f"Loaded station config: {station_data.get('station_name')} [{station_data.get('station_id')}]")
-    except Exception as e:
-        error(f"Failed to read station_config.json: {e}")
+# Load Effective Station Configuration (base station_config.json + optional showcase_override.json)
+station_data = ss.load_effective_station()
+IS_SHOWCASE_MODE = bool(station_data.get('is_showcase'))
+log(f"Loaded station config: {station_data.get('station_name')} [{station_data.get('station_id')}]"
+    + (" (SHOWCASE OVERRIDE)" if IS_SHOWCASE_MODE else ""))
 
-STATION_ID = os.getenv('STATION_ID', station_data.get('station_id', 'block_b'))
-STATION_TOKEN = os.getenv('STATION_TOKEN', station_data.get('station_token', ''))
+STATION_ID = station_data.get('station_id') if IS_SHOWCASE_MODE else os.getenv('STATION_ID', station_data.get('station_id', 'block_b'))
+STATION_TOKEN = (station_data.get('station_token') or os.getenv('STATION_TOKEN', '')) if IS_SHOWCASE_MODE else os.getenv('STATION_TOKEN', station_data.get('station_token', ''))
 SERVER_URL = os.getenv('SERVER_URL', station_data.get('server_url', 'https://printkurox.pages.dev')).rstrip('/')
-CONFIGURED_PRINTER = os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))
+CONFIGURED_PRINTER = (station_data.get('printer_name') or '') if IS_SHOWCASE_MODE else os.getenv('PRINTER_NAME', station_data.get('printer_name', ''))
 AUTO_DUPLEX = os.getenv('AUTO_DUPLEX', str(station_data.get('auto_duplex', 'false'))).lower() == 'true'
 POLL_INTERVAL_SECONDS = float(os.getenv('POLL_INTERVAL_SECONDS', str(station_data.get('poll_interval_seconds', 1.5))))
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv('HEARTBEAT_INTERVAL_SECONDS', '30'))
@@ -325,29 +323,46 @@ def ensure_cups_printer_enabled(printer_name):
 
 
 def resolve_target_printer(force_refresh=False):
-    """Resolves printer: matches configured name, or auto-picks first CUPS USB printer (cached for speed)."""
+    """Resolves physically attached CUPS printer (auto-provisions new USB printers if needed)."""
     global _cached_printer_name
     if _cached_printer_name and not force_refresh:
         return _cached_printer_name
 
     available = get_available_cups_printers()
-    if not available:
-        warn("No CUPS printers found! Check USB connection to printer.")
-        _cached_printer_name = None
-        return None
+    queue_uris = ss.get_cups_queue_uris()
+    physical = ss.list_physical_usb_printers()
+
+    connected_queues = [
+        p for p in available
+        if ss.is_cups_queue_physically_present(p, queue_uris, physical)
+    ]
 
     selected = None
-    if CONFIGURED_PRINTER:
+    if CONFIGURED_PRINTER and connected_queues:
         clean_target = re.sub(r'[^a-zA-Z0-9]', '', CONFIGURED_PRINTER.lower())
-        for p in available:
+        for p in connected_queues:
             clean_p = re.sub(r'[^a-zA-Z0-9]', '', p.lower())
             if clean_target in clean_p or clean_p in clean_target:
                 selected = p
                 break
 
+    if not selected and connected_queues:
+        selected = connected_queues[0]
+        log(f"Auto-selected physically connected CUPS printer: {selected}")
+
+    # If a USB printer is physically attached without a CUPS queue yet, auto-bind it now
+    if not selected and physical:
+        target_usb = physical[0]
+        desired_name = CONFIGURED_PRINTER or target_usb['label']
+        ok, new_q, msg = ss.provision_usb_printer(desired_name, target_usb['uri'], target_usb['label'])
+        log(f"[USB Auto-Bind] {msg}")
+        if ok and new_q:
+            selected = new_q
+
     if not selected:
-        selected = available[0]
-        log(f"Auto-selected CUPS printer: {selected}")
+        warn("No physically connected CUPS/USB printer found! Check USB cable.")
+        _cached_printer_name = None
+        return None
 
     _cached_printer_name = selected
     ensure_cups_printer_enabled(selected)
@@ -617,7 +632,11 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
         cmd.extend(['-d', printer_name])
     if copies and int(copies) > 1:
         cmd.extend(['-n', str(copies)])
-    cmd.extend(['-o', 'fit-to-page', '-o', 'cm-calibration=true'])
+    cmd.extend(['-o', 'fit-to-page'])
+    queue_uri = ss.get_cups_queue_uris().get(printer_name or '', '')
+    if 'epson' in (printer_name or '').lower() or 'epson' in queue_uri.lower():
+        # Bypass colord ICC lookup on Epson ESC/P-R driver (eliminates 25-50s CUPS spool stall)
+        cmd.extend(['-o', 'cm-calibration=true'])
 
     pdf_is_landscape = inspect_pdf_is_landscape(file_path)
     raw_orient = (orientation or 'auto').strip().lower()

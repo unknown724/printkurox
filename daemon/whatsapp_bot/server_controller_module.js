@@ -328,6 +328,26 @@ async function handleServerAdminCommand({
     return true;
   }
 
+  // 4b. Open offline PrintKurox-Setup AP hotspot on demand (#apmode)
+  if ((lower === '#apmode' || lower === '#setupwifi') && process.platform !== 'win32') {
+    await sock.sendMessage(senderJid, {
+      text:
+        '📡 *Opening Offline Setup Hotspot...*\n' +
+        '• Connect phone Wi-Fi to: *PrintKurox-Setup*\n' +
+        '• Password: `123456789`\n' +
+        '• Setup Portal: `http://10.42.0.1`',
+    });
+    exec('curl -s -X POST http://127.0.0.1:7255/apmode', () => {});
+    return true;
+  }
+
+  // 4c. Force return from showcase mode to Hostel Block B (#resethostel)
+  if (lower === '#resethostel' && process.platform !== 'win32') {
+    await sock.sendMessage(senderJid, { text: '🏠 Switching back to Hostel Block B (`block_b` + `EPSON_L3210_Series`)...' });
+    exec('curl -s -X POST http://127.0.0.1:7255/reset-hostel', () => {});
+    return true;
+  }
+
   // 5. Cancel Shutdown
   if (lower === '#cancelshutdown') {
     executeCancelShutdown();
