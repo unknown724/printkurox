@@ -49,6 +49,9 @@ print(re.sub(r"[^A-Za-z0-9]+", "_", raw).strip("_")[:48] or "PrintKurox_USB_Prin
   cupsenable "$QNAME" >/dev/null 2>&1 || true
   lpadmin -p "$QNAME" -o PageSize=A4 >/dev/null 2>&1 || true
   lpadmin -p "$QNAME" -o Ink=MONO >/dev/null 2>&1 || true
+  if echo "$URI" | grep -qi "epson"; then
+    lpadmin -p "$QNAME" -o usb-unidir-default=true -o usb-no-reattach-default=true >/dev/null 2>&1 || true
+  fi
 done
 
 # Wake print daemon so it clears cached printer state & picks up any waiting jobs

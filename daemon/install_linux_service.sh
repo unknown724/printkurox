@@ -31,6 +31,7 @@ if [ -f "$INSTALL_DIR/printkurox-printer-hotplug.sh" ]; then
   cat <<'EOF' > /etc/udev/rules.d/99-printkurox-printers.rules
 ACTION=="add", SUBSYSTEM=="usbmisc", KERNEL=="lp*", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/printkurox-printer-hotplug.sh"
 ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="07", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/printkurox-printer-hotplug.sh"
+ACTION=="add|change", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="on"
 EOF
   udevadm control --reload-rules || true
 fi

@@ -372,6 +372,8 @@ def provision_usb_printer(custom_name: str, usb_uri: str, label_hint: str = '') 
     for model in models_to_try:
         res = _run(sudo + ['lpadmin', '-p', queue_name, '-E', '-v', usb_uri, '-m', model], timeout=12)
         if res.returncode == 0:
+            if 'epson' in usb_uri.lower():
+                _run(sudo + ['lpadmin', '-p', queue_name, '-o', 'usb-unidir-default=true', '-o', 'usb-no-reattach-default=true'], timeout=4)
             _run(sudo + ['cupsaccept', queue_name], timeout=4)
             _run(sudo + ['cupsenable', queue_name], timeout=4)
             return True, queue_name, f'Provisioned {queue_name} with driver {model}'

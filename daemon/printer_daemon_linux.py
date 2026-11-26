@@ -33,13 +33,29 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'station_config.json')
 DEVICE_IDENTITY_PATH = os.path.join(BASE_DIR, 'device_identity.json')
 TEMP_DIR = os.path.join(BASE_DIR, 'temp_prints')
-ACTIVE_SPOOL_DIR = TEMP_DIR
+SHM_SPOOL_DIR = '/dev/shm/printkurox_spool'
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'printed_archive')
 
 import showcase_state as ss
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
+
+
+def _resolve_active_spool_dir():
+    """Prefer RAM tmpfs (/dev/shm) for active spool files to avoid USB flash bus contention."""
+    try:
+        if os.path.isdir('/dev/shm'):
+            free_mb = shutil.disk_usage('/dev/shm').free / (1024 * 1024)
+            if free_mb >= 100.0:
+                os.makedirs(SHM_SPOOL_DIR, exist_ok=True)
+                return SHM_SPOOL_DIR
+    except Exception:
+        pass
+    return TEMP_DIR
+
+
+ACTIVE_SPOOL_DIR = _resolve_active_spool_dir()
 
 # Lightweight .env loader (ensures systemd / standalone runs pick up .env keys)
 _env_path = os.path.join(BASE_DIR, '.env')
@@ -664,13 +680,16 @@ def cleanup_usb_storage():
     now = time.time()
     deleted_files = 0
     try:
-        # 1. Clean temp_prints > 2 hours
+        # 1. Clean temp_prints & RAM spool > 2 hours
         cutoff_temp = now - (2 * 3600)
-        for fn in os.listdir(TEMP_DIR):
-            fp = os.path.join(TEMP_DIR, fn)
-            if os.path.isfile(fp) and os.path.getmtime(fp) < cutoff_temp:
-                os.remove(fp)
-                deleted_files += 1
+        for spool_dir in {TEMP_DIR, SHM_SPOOL_DIR}:
+            if not os.path.isdir(spool_dir):
+                continue
+            for fn in os.listdir(spool_dir):
+                fp = os.path.join(spool_dir, fn)
+                if os.path.isfile(fp) and os.path.getmtime(fp) < cutoff_temp:
+                    os.remove(fp)
+                    deleted_files += 1
 
         # 2. Clean printed_archive > RETENTION_DAYS
         cutoff_arch = now - (RETENTION_DAYS * 86400)
@@ -760,19 +779,186 @@ def _format_cups_page_ranges(page_range, total_pages=0):
     return ",".join(ranges)
 
 
+_PPD_CACHE_DIR = '/dev/shm/printkurox_ppd'
+_CUPS_FILTER_DIR = '/usr/lib/cups/filter'
+_PRESPOOL_MIN_FREE_MB = 150.0
+_PRESPOOL_MAX_PDF_MB = 25.0
+_PRESPOOL_MAX_PRN_MB = 140.0
+
+
+def _get_readable_ppd_path(printer_name):
+    """Returns a readable local PPD path for printer_name (caches under /dev/shm so non-root filters match printer resolution)."""
+    if not printer_name:
+        return None
+    sys_ppd = f'/etc/cups/ppd/{printer_name}.ppd'
+    if os.path.isfile(sys_ppd) and os.access(sys_ppd, os.R_OK):
+        return sys_ppd
+
+    cached = os.path.join(_PPD_CACHE_DIR, f'{printer_name}.ppd')
+    if os.path.isfile(cached) and os.path.getsize(cached) > 512:
+        return cached
+
+    os.makedirs(_PPD_CACHE_DIR, exist_ok=True)
+    # 1. CUPS HTTP endpoint serves queue PPD without sudo
+    try:
+        r = requests.get(f'http://127.0.0.1:631/printers/{urllib.parse.quote(printer_name)}.ppd', timeout=2.0)
+        if r.status_code == 200 and len(r.content) > 512 and b'*PPD-Adobe' in r.content[:256]:
+            with open(cached, 'wb') as f:
+                f.write(r.content)
+            return cached
+    except Exception:
+        pass
+
+    # 2. Passwordless sudo read fallback (Pi default)
+    try:
+        res = subprocess.run(['sudo', '-n', 'cat', sys_ppd], capture_output=True, timeout=3)
+        if res.returncode == 0 and len(res.stdout) > 512:
+            with open(cached, 'wb') as f:
+                f.write(res.stdout)
+            return cached
+    except Exception:
+        pass
+    return None
+
+
+def _is_epson_escpr_queue(ppd_path):
+    """True when the PPD uses Epson ESC/P-R (epson-escpr-wrapper)."""
+    if not ppd_path or not os.path.isfile(ppd_path):
+        return False
+    try:
+        with open(ppd_path, 'rb') as f:
+            head = f.read(16384)
+        return b'epson-escpr-wrapper' in head
+    except Exception:
+        return False
+
+
+def _should_use_pdftoraster(pdf_path):
+    """Uses Poppler pdftoraster (~1.8x faster) for fontless high-PPI image scans; gstoraster for text/mixed PDFs."""
+    if not os.path.exists(os.path.join(_CUPS_FILTER_DIR, 'pdftoraster')):
+        return False
+    try:
+        f_res = subprocess.run(['pdffonts', pdf_path], capture_output=True, text=True, timeout=3)
+        if f_res.returncode != 0:
+            return False
+        # pdffonts prints 2 header lines + separator; >2 lines means embedded/referenced fonts exist
+        font_lines = [ln for ln in f_res.stdout.splitlines() if ln.strip()]
+        if len(font_lines) > 2:
+            return False
+
+        i_res = subprocess.run(['pdfimages', '-list', '-f', '1', '-l', '5', pdf_path], capture_output=True, text=True, timeout=3)
+        if i_res.returncode != 0:
+            return False
+        for line in i_res.stdout.splitlines()[2:]:
+            cols = line.split()
+            # col[3]=width, col[4]=height, col[12]=x-ppi, col[13]=y-ppi
+            if len(cols) >= 14 and cols[2] == 'image':
+                try:
+                    w = int(cols[3])
+                    x_ppi = float(cols[12])
+                    if x_ppi >= 200.0 or w >= 1800:
+                        return True
+                except ValueError:
+                    continue
+    except Exception:
+        pass
+    return False
+
+
+def _run_escpr_filter_chain(printer_name, pdf_path, opts_str, ppd_path, raster_bin, out_prn_path):
+    """Runs pdftopdf -> <raster_bin> -> epson-escpr-wrapper fully buffered to out_prn_path."""
+    pdftopdf_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftopdf')
+    escpr_bin = os.path.join(_CUPS_FILTER_DIR, 'epson-escpr-wrapper')
+    env = os.environ.copy()
+    env['PPD'] = ppd_path
+    env['PRINTER'] = printer_name
+
+    p1 = subprocess.Popen(
+        [pdftopdf_bin, '0', 'pi', 'printkurox', '1', opts_str, pdf_path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+    )
+    p2 = subprocess.Popen(
+        [raster_bin, '0', 'pi', 'printkurox', '1', opts_str],
+        stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+    )
+    p1.stdout.close()
+
+    with open(out_prn_path, 'wb') as out_f:
+        p3 = subprocess.Popen(
+            [printer_name, '0', 'pi', 'printkurox', '1', opts_str],
+            executable=escpr_bin,
+            stdin=p2.stdout, stdout=out_f, stderr=subprocess.PIPE, env=env
+        )
+        p2.stdout.close()
+        _, e3 = p3.communicate(timeout=180)
+
+    e2 = p2.stderr.read() if p2.stderr else b''
+    e1 = p1.stderr.read() if p1.stderr else b''
+    rc2 = p2.wait(timeout=5)
+    rc1 = p1.wait(timeout=5)
+    if rc1 != 0 or rc2 != 0 or p3.returncode != 0:
+        err_txt = (e3 or e2 or e1).decode('utf-8', 'replace').strip()[:240]
+        raise RuntimeError(f"filter rc=({rc1},{rc2},{p3.returncode}): {err_txt}")
+
+
+def _prespool_escpr_to_ram(printer_name, pdf_path, lp_opt_tokens):
+    """
+    Pre-renders an Epson ESC/P-R print job completely into /dev/shm BEFORE sending raw USB bytes.
+    Returns (prn_path, mode_label, elapsed_s) or (None, None, 0.0) to trigger seamless lp fallback.
+    """
+    escpr_bin = os.path.join(_CUPS_FILTER_DIR, 'epson-escpr-wrapper')
+    pdftopdf_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftopdf')
+    gs_bin = os.path.join(_CUPS_FILTER_DIR, 'gstoraster')
+    pop_bin = os.path.join(_CUPS_FILTER_DIR, 'pdftoraster')
+    if not (os.path.exists(escpr_bin) and os.path.exists(pdftopdf_bin) and os.path.exists(gs_bin)):
+        return None, None, 0.0
+    if not os.path.isdir('/dev/shm'):
+        return None, None, 0.0
+    try:
+        shm_free_mb = shutil.disk_usage('/dev/shm').free / (1024 * 1024)
+        pdf_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+    except Exception:
+        return None, None, 0.0
+    if shm_free_mb < _PRESPOOL_MIN_FREE_MB or pdf_mb > _PRESPOOL_MAX_PDF_MB:
+        return None, None, 0.0
+
+    ppd_path = _get_readable_ppd_path(printer_name)
+    if not _is_epson_escpr_queue(ppd_path):
+        return None, None, 0.0
+
+    os.makedirs(SHM_SPOOL_DIR, exist_ok=True)
+    prn_path = os.path.join(SHM_SPOOL_DIR, f"escpr_{os.getpid()}_{int(time.time() * 1000)}.prn")
+    opts_str = ' '.join(lp_opt_tokens)
+
+    use_pop = _should_use_pdftoraster(pdf_path)
+    candidates = ([pop_bin, gs_bin] if use_pop else [gs_bin])
+
+    for raster_bin in candidates:
+        t0 = time.monotonic()
+        try:
+            _run_escpr_filter_chain(printer_name, pdf_path, opts_str, ppd_path, raster_bin, prn_path)
+            prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
+            if 0.001 < prn_mb <= _PRESPOOL_MAX_PRN_MB:
+                return prn_path, os.path.basename(raster_bin), (time.monotonic() - t0)
+            warn(f"RAM pre-spool size out of bounds ({prn_mb:.2f}MB); using standard lp fallback")
+        except Exception as e:
+            warn(f"RAM pre-spool ({os.path.basename(raster_bin)}) fallback note: {e}")
+        if os.path.exists(prn_path):
+            try:
+                os.remove(prn_path)
+            except Exception:
+                pass
+    return None, None, 0.0
+
+
 def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto', total_pages=0):
-    """Prints a PDF file using native Linux CUPS lp command with true PPD color, A4 centering, and orientation handling."""
+    """Prints a PDF using RAM-buffered ESC/P-R pre-spooling when safe, or native CUPS lp fallback."""
     effective_path = _ensure_safe_a4_pdf_if_raw_image(file_path)
-    cmd = ['lp']
-    if printer_name:
-        cmd.extend(['-d', printer_name])
-    if copies and int(copies) > 1:
-        cmd.extend(['-n', str(copies)])
-    cmd.extend(['-o', 'PageSize=A4', '-o', 'fit-to-page', '-o', 'position=center'])
     queue_uri = ss.get_cups_queue_uris().get(printer_name or '', '')
+    opt_tokens = ['PageSize=A4', 'fit-to-page', 'position=center']
     if 'epson' in (printer_name or '').lower() or 'epson' in queue_uri.lower():
         # Bypass colord ICC lookup on Epson ESC/P-R driver (eliminates 25-50s CUPS spool stall)
-        cmd.extend(['-o', 'cm-calibration=true'])
+        opt_tokens.append('cm-calibration=true')
 
     pdf_is_landscape, is_mixed_orient = inspect_pdf_orientation_stats(effective_path)
     raw_orient = (orientation or 'auto').strip().lower()
@@ -781,23 +967,59 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
     # Prevent CUPS pdftopdf double-rotation while avoiding clipping mixed-orientation PDFs:
     if target_orient == 'landscape':
         if not pdf_is_landscape and not is_mixed_orient:
-            cmd.extend(['-o', 'landscape'])
+            opt_tokens.append('landscape')
     else:
         if pdf_is_landscape and not is_mixed_orient and raw_orient == 'portrait':
-            cmd.extend(['-o', 'nopdfAutoRotate', '-o', 'portrait'])
+            opt_tokens.extend(['nopdfAutoRotate', 'portrait'])
 
-    cmd.extend(get_printer_color_flags(printer_name, color_mode))
+    color_args = get_printer_color_flags(printer_name, color_mode)
+    for tok in color_args:
+        if tok != '-o':
+            opt_tokens.append(tok)
 
     if is_duplex and printer_supports_duplex(printer_name):
-        cmd.extend(['-o', 'sides=two-sided-long-edge'])
+        opt_tokens.append('sides=two-sided-long-edge')
     else:
-        cmd.extend(['-o', 'sides=one-sided'])
+        opt_tokens.append('sides=one-sided')
 
     formatted_ranges = _format_cups_page_ranges(page_range, total_pages=total_pages)
     if formatted_ranges:
-        cmd.extend(['-o', f'page-ranges={formatted_ranges}'])
+        opt_tokens.append(f'page-ranges={formatted_ranges}')
 
+    prn_path, filter_tag, pre_sec = _prespool_escpr_to_ram(printer_name, effective_path, opt_tokens)
+
+    n_copies = max(1, int(copies or 1))
+
+    if prn_path:
+        prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
+        log(f"RAM Pre-Spool ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB ESC/P-R) -> sending {n_copies} uninterrupted raw USB job(s)")
+        try:
+            for c_idx in range(1, n_copies + 1):
+                raw_cmd = ['lp']
+                if printer_name:
+                    raw_cmd.extend(['-d', printer_name])
+                raw_cmd.extend(['-o', 'raw', prn_path])
+                log(f"Executing CUPS raw print ({c_idx}/{n_copies}): {' '.join(raw_cmd)}")
+                res = subprocess.run(raw_cmd, capture_output=True, text=True, check=True)
+                log(f"CUPS Output: {res.stdout.strip()}")
+            return True
+        finally:
+            for tmp_f in (prn_path, effective_path if effective_path != file_path else None):
+                if tmp_f and os.path.exists(tmp_f):
+                    try:
+                        os.remove(tmp_f)
+                    except Exception:
+                        pass
+
+    cmd = ['lp']
+    if printer_name:
+        cmd.extend(['-d', printer_name])
+    if n_copies > 1:
+        cmd.extend(['-n', str(n_copies)])
+    for tok in opt_tokens:
+        cmd.extend(['-o', tok])
     cmd.append(effective_path)
+
     log(f"Executing CUPS print: {' '.join(cmd)}")
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, check=True)
