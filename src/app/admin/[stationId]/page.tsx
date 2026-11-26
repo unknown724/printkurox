@@ -1486,7 +1486,7 @@ export default function StationAdminPage() {
               <div className="bg-white p-4 rounded-2xl border-4 border-dashed border-blue-500/40 shadow-sm flex flex-col items-center">
                 <img
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=450x450&margin=10&data=${encodeURIComponent(
-                    typeof window !== 'undefined' ? `${window.location.origin}/?station=${stationId}` : `https://printkurox.vercel.app/?station=${stationId}`
+                    typeof window !== 'undefined' ? `${window.location.origin}/?station=${stationId}` : `https://printkurox.pages.dev/?station=${stationId}`
                   )}`}
                   alt="Station QR Code"
                   className="w-60 h-60 sm:w-72 sm:h-72 object-contain rounded-lg"

@@ -212,7 +212,7 @@ export default function RomenStationPortal() {
     if (typeof window !== 'undefined') {
       return `${window.location.origin}/?station=romen`;
     }
-    return 'https://printkurox.vercel.app/?station=romen';
+    return 'https://printkurox.pages.dev/?station=romen';
   };
 
   const copyCounterLink = () => {

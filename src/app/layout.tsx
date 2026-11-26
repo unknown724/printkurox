@@ -3,6 +3,7 @@ import Script from "next/script";
 import { FooterLegal } from "@/components/FooterLegal";
 import { KioskHeader } from "@/components/KioskHeader";
 import { AutoUpdateNotifier } from "@/components/AutoUpdateNotifier";
+import { VercelRedirectBanner } from "@/components/VercelRedirectBanner";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -62,6 +63,9 @@ export default function RootLayout({
             }}
           />
         </div>
+
+        {/* Auto-redirect deprecated Vercel visits to Cloudflare */}
+        <VercelRedirectBanner />
 
         {/* Auto Update Notifier for instant updates without hard refresh */}
         <AutoUpdateNotifier />

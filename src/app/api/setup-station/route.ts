@@ -283,7 +283,7 @@ export async function POST(req: NextRequest) {
       station_id: stationId,
       station_name: name.trim(),
       station_token: stationToken,
-      server_url: process.env.NEXT_PUBLIC_APP_URL || 'https://printkurox.vercel.app',
+      server_url: process.env.NEXT_PUBLIC_APP_URL || 'https://printkurox.pages.dev',
       room_info: address?.trim() || 'PrintKurox Kiosk Station',
       contact: cleanWhatsapp.slice(-10) || '9362980761',
       whatsapp_bot_number: cleanWhatsapp ? `+91${cleanWhatsapp.slice(-10)}` : '+919362980761',
@@ -292,7 +292,7 @@ export async function POST(req: NextRequest) {
       poll_interval_seconds: 12,
     };
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://printkurox.vercel.app';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://printkurox.pages.dev';
     const customerUrl = `${baseUrl}?station=${encodeURIComponent(stationId)}`;
     const adminUrl = `${baseUrl}/admin/${encodeURIComponent(stationId)}`;
 

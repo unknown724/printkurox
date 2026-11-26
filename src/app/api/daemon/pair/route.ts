@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
         paired: false,
         status: device.status,
         serialKey: device.serial_key,
-        message: 'Awaiting operator activation on https://printkurox.vercel.app/setup',
+        message: 'Awaiting operator activation on https://printkurox.pages.dev/setup',
       });
     }
 
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
       station_id: station.id,
       station_name: station.name,
       station_token: station.token,
-      cloud_url: process.env.NEXT_PUBLIC_APP_URL || 'https://printkurox.vercel.app',
+      cloud_url: process.env.NEXT_PUBLIC_APP_URL || 'https://printkurox.pages.dev',
       message: `Successfully paired to station "${station.name}" (${station.id})!`,
     });
   } catch (err: unknown) {
