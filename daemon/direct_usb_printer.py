@@ -258,17 +258,53 @@ def _find_printer_handle(lib, ctx, queue_uri: str = ""):
         lib.libusb_free_device_list(dev_list, 1)
 
 
-def _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=5, max_reads=4):
+def _parse_bdc_status(raw_bytes: bytes) -> dict:
+    """Parses Epson @BDC ST2 status packets returned on Bulk IN (0x83)."""
+    idx = raw_bytes.rfind(b"@BDC ST2\r\n")
+    if idx < 0 or idx + 12 > len(raw_bytes):
+        return {}
+    body = raw_bytes[idx + 12:]
+    info = {}
+    i = 0
+    while i + 2 <= len(body):
+        tag = body[i]
+        ln = body[i + 1]
+        if i + 2 + ln > len(body):
+            break
+        val = body[i + 2:i + 2 + ln]
+        if tag == 0x01 and ln >= 1:
+            code = val[0]
+            state_map = {0x00: "error", 0x01: "self_test", 0x02: "busy", 0x03: "waiting", 0x04: "idle", 0x07: "cleaning"}
+            info["status_code"] = code
+            info["state"] = state_map.get(code, f"0x{code:02x}")
+        elif tag == 0x02 and ln >= 1:
+            info["error_code"] = val[0]
+        elif tag == 0x04 and ln >= 1:
+            info["warning_code"] = val[0]
+        i += 2 + ln
+        if tag == 0x19:
+            break
+    return info
+
+
+def _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=5, max_reads=4, status_out=None):
     """Non-blocking drain of printer Bulk IN buffer so @EJL/BDC replies never stall the printer."""
     if ep_in is None:
         return 0
     drained = 0
     actual = ctypes.c_int(0)
+    last_pkt = b""
     for _ in range(max_reads):
         rc = lib.libusb_bulk_transfer(handle, ep_in, rx_buf, len(rx_buf), ctypes.byref(actual), timeout_ms)
         if rc == 0 and actual.value > 0:
-            drained += actual.value
-            if actual.value < len(rx_buf):
+            n = int(actual.value)
+            drained += n
+            last_pkt = rx_buf.raw[:n]
+            if status_out is not None:
+                parsed = _parse_bdc_status(last_pkt)
+                if parsed:
+                    status_out.update(parsed)
+            if n < len(rx_buf):
                 break
         else:
             break
@@ -293,8 +329,9 @@ def probe_usb_printer(queue_uri: str = "") -> dict:
         id_buf = ctypes.create_string_buffer(512)
         n = lib.libusb_control_transfer(handle, 0xA1, 0, 0, iface_num, id_buf, 512, 1500)
         dev_id = id_buf.raw[2:n].decode("ascii", "ignore") if n > 2 else ""
-        rx_buf = ctypes.create_string_buffer(64)
-        drained = _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=20, max_reads=8)
+        rx_buf = ctypes.create_string_buffer(256)
+        bdc = {}
+        drained = _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=25, max_reads=8, status_out=bdc)
         return {
             "vid": f"{vid:04x}",
             "pid": f"{pid:04x}",
@@ -304,6 +341,7 @@ def probe_usb_printer(queue_uri: str = "") -> dict:
             "ep_in": f"0x{ep_in:02x}" if ep_in is not None else None,
             "device_id": dev_id,
             "drained_in_bytes": drained,
+            "bdc_status": bdc,
         }
     finally:
         if handle is not None:
@@ -320,14 +358,16 @@ def send_prn_direct_usb(
     prn_path: str,
     queue_uri: str = "",
     copies: int = 1,
-    chunk_bytes: int = 16384,
+    chunk_bytes: int = 8192,
     write_timeout_ms: int = 8000,
     max_stall_sec: float = 120.0,
+    wait_idle_sec: float = 45.0,
     log_fn=None,
 ):
     """
     Streams a complete ESC/P-R or ESC/P2 file directly to the USB printer over libusb-1.0.
-    Guarantees 100% byte-counted delivery with Bulk-IN draining and safe partial-write retries.
+    Guarantees 100% byte-counted delivery with Bulk-IN draining, timeout diagnostics,
+    and post-transfer @BDC ST2 idle wait so USB is never closed mid-page.
     """
     with open(prn_path, "rb") as f:
         payload = f.read()
@@ -344,7 +384,7 @@ def send_prn_direct_usb(
     handle = None
     iface_num = None
     n_copies = max(1, int(copies or 1))
-    rx_buf = ctypes.create_string_buffer(64)
+    rx_buf = ctypes.create_string_buffer(256)
     t_start = time.monotonic()
 
     try:
@@ -354,13 +394,17 @@ def send_prn_direct_usb(
         if rc_c != 0:
             raise RuntimeError(f"libusb_claim_interface({iface_num}) failed: {rc_c}")
 
-        # Drain any stale @EJL/BDC reply bytes before streaming print bands
-        pre_drained = _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=10, max_reads=8)
+        # Drain stale @EJL/BDC reply bytes & inspect printer pre-flight status before streaming
+        bdc = {}
+        pre_drained = _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=15, max_reads=8, status_out=bdc)
         if log_fn:
-            log_fn(f"[DirectUSB] Claimed {label} ({vid:04x}:{pid:04x} if={iface_num} ep_out=0x{ep_out:02x}, drained {pre_drained}B)")
+            st_desc = bdc.get("state", "unknown")
+            log_fn(f"[DirectUSB] Claimed {label} ({vid:04x}:{pid:04x} if={iface_num} ep_out=0x{ep_out:02x}, drained {pre_drained}B, state={st_desc})")
 
         total_bytes_all = 0
         total_drained = pre_drained
+        timeout_retries = 0
+        pipe_clears = 0
         mv = memoryview(payload)
 
         for copy_idx in range(1, n_copies + 1):
@@ -384,22 +428,24 @@ def send_prn_direct_usb(
                 if rc_w == LIBUSB_SUCCESS:
                     drain_counter += 1
                     if ep_in is not None and (drain_counter % 8 == 0):
-                        total_drained += _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=2, max_reads=2)
+                        total_drained += _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=2, max_reads=2, status_out=bdc)
                 elif rc_w in (LIBUSB_ERROR_TIMEOUT, LIBUSB_ERROR_INTERRUPTED):
+                    timeout_retries += 1
                     if ep_in is not None:
-                        total_drained += _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=10, max_reads=4)
+                        total_drained += _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=10, max_reads=4, status_out=bdc)
                     if (time.monotonic() - last_progress_time) > max_stall_sec:
                         raise RuntimeError(
-                            f"DirectUSB stalled at {offset}/{total_len} bytes ({offset * 100.0 / total_len:.1f}%) for >{max_stall_sec:.0f}s"
+                            f"DirectUSB stalled at {offset}/{total_len} bytes ({offset * 100.0 / total_len:.1f}%) for >{max_stall_sec:.0f}s [bdc={bdc}]"
                         )
                     time.sleep(0.01)
                 elif rc_w == LIBUSB_ERROR_PIPE:
+                    pipe_clears += 1
                     lib.libusb_clear_halt(handle, ep_out)
                     if (time.monotonic() - last_progress_time) > max_stall_sec:
-                        raise RuntimeError(f"DirectUSB pipe halt stuck at {offset}/{total_len} bytes")
+                        raise RuntimeError(f"DirectUSB pipe halt stuck at {offset}/{total_len} bytes [bdc={bdc}]")
                     time.sleep(0.05)
                 else:
-                    raise RuntimeError(f"DirectUSB write error rc={rc_w} at {offset}/{total_len} bytes")
+                    raise RuntimeError(f"DirectUSB write error rc={rc_w} at {offset}/{total_len} bytes [bdc={bdc}]")
 
                 pct = int((offset * 100) / total_len)
                 if log_fn and pct >= next_log_pct and next_log_pct < 100:
@@ -408,13 +454,31 @@ def send_prn_direct_usb(
                     next_log_pct += 25
 
             total_bytes_all += offset
-            total_drained += _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=20, max_reads=8)
+            total_drained += _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=25, max_reads=8, status_out=bdc)
 
-        elapsed = max(0.01, time.monotonic() - t_start)
+        tx_elapsed = max(0.01, time.monotonic() - t_start)
+        # Keep USB open & Bulk IN drained while printer finishes ejecting buffered tail bands
+        if ep_in is not None and wait_idle_sec > 0:
+            idle_deadline = time.monotonic() + wait_idle_sec
+            # Give printer up to 1.2s to emit a fresh @BDC ST2 busy packet after final write
+            probe_until = min(idle_deadline, time.monotonic() + 1.2)
+            while time.monotonic() < probe_until:
+                d_n = _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=100, max_reads=4, status_out=bdc)
+                total_drained += d_n
+                if bdc.get("status_code") in (0x00, 0x02, 0x03):
+                    break
+                time.sleep(0.1)
+            while time.monotonic() < idle_deadline and bdc.get("status_code") in (0x02, 0x03):
+                total_drained += _drain_bulk_in(lib, handle, ep_in, rx_buf, timeout_ms=100, max_reads=4, status_out=bdc)
+                time.sleep(0.15)
+
+        total_elapsed = max(0.01, time.monotonic() - t_start)
         if log_fn:
+            fin_state = bdc.get("state", "unknown")
+            err_note = f" err={bdc['error_code']}" if "error_code" in bdc else ""
             log_fn(
-                f"[DirectUSB] Verified 100% ({total_bytes_all} B across {n_copies} copy/copies in {elapsed:.2f}s @ "
-                f"{total_bytes_all / 1024.0 / elapsed:.0f} KB/s, rx_drained={total_drained} B)"
+                f"[DirectUSB] Verified 100% ({total_bytes_all} B across {n_copies} copy/copies in {tx_elapsed:.2f}s TX / {total_elapsed:.2f}s total @ "
+                f"{total_bytes_all / 1024.0 / tx_elapsed:.0f} KB/s, rx_drained={total_drained} B, retries={timeout_retries}, state={fin_state}{err_note})"
             )
         return total_bytes_all
     finally:

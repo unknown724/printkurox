@@ -335,6 +335,8 @@ def invalidate_printer_cache():
     global _cached_printer_name, _cached_queue_uris
     _cached_printer_name = None
     _cached_queue_uris = None
+    _cached_color_flags.clear()
+    _cached_duplex_support.clear()
 
 
 def _get_cached_queue_uris(force=False):
@@ -819,7 +821,7 @@ def _get_readable_ppd_path(printer_name):
         return sys_ppd
 
     cached = os.path.join(_PPD_CACHE_DIR, f'{printer_name}.ppd')
-    if os.path.isfile(cached) and os.path.getsize(cached) > 512:
+    if os.path.isfile(cached) and os.path.getsize(cached) > 512 and (time.time() - os.path.getmtime(cached)) < 300:
         return cached
 
     os.makedirs(_PPD_CACHE_DIR, exist_ok=True)
@@ -996,11 +998,13 @@ def _verify_prespool_stream_complete(prn_path, driver_kind):
     sz = os.path.getsize(prn_path)
     if sz <= 1024:
         return False
+    with open(prn_path, 'rb') as f:
+        f.seek(max(0, sz - 256))
+        tail = f.read(256)
     if driver_kind == 'escpr':
-        with open(prn_path, 'rb') as f:
-            f.seek(max(0, sz - 256))
-            tail = f.read(256)
         return (b'endp' in tail) and (b'endj' in tail)
+    if driver_kind == 'gutenprint':
+        return (b'JE' in tail) or (b'\x0c' in tail)
     return True
 
 
@@ -1059,7 +1063,7 @@ def _submit_raw_prn_to_cups(printer_name, prn_path, copy_label="1/1"):
     log(f"CUPS Output: {res.stdout.strip()}")
 
 
-def _deliver_prn_to_printer(printer_name, prn_path, copies=1, copy_label="1/1", queue_uri=""):
+def _deliver_prn_to_printer(printer_name, prn_path, copies=1, copy_label="1/1", queue_uri="", wait_idle=True):
     """
     Sends a verified .prn stream straight over USB via libusb-1.0 (zero CUPS middlemen)
     when queue_uri is usb://, with safe pre-transfer fallback to CUPS lp -o raw.
@@ -1073,7 +1077,13 @@ def _deliver_prn_to_printer(printer_name, prn_path, copies=1, copy_label="1/1", 
             time.sleep(0.5)
             waited += 0.5
         try:
-            dup.send_prn_direct_usb(prn_path, queue_uri=queue_uri, copies=n_copies, log_fn=log)
+            dup.send_prn_direct_usb(
+                prn_path,
+                queue_uri=queue_uri,
+                copies=n_copies,
+                wait_idle_sec=(45.0 if wait_idle else 0.0),
+                log_fn=log,
+            )
             return
         except Exception as usb_err:
             err_msg = str(usb_err)
@@ -1170,7 +1180,14 @@ def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_rang
                 try:
                     log(f"Batch {b_num}/{len(batch_ranges)} (pages {rng}) ready via {filter_tag} in {pre_sec:.2f}s ({prn_mb:.2f} MB) | total elapsed {time.monotonic() - t_job:.2f}s")
                     if not dry_run:
-                        _deliver_prn_to_printer(printer_name, prn_path, copies=1, copy_label=f"batch {b_num}/{len(batch_ranges)} pgs {rng}", queue_uri=queue_uri)
+                        _deliver_prn_to_printer(
+                            printer_name,
+                            prn_path,
+                            copies=1,
+                            copy_label=f"batch {b_num}/{len(batch_ranges)} pgs {rng}",
+                            queue_uri=queue_uri,
+                            wait_idle=(b_num == len(batch_ranges)),
+                        )
                         submitted_any = True
                 finally:
                     if os.path.exists(prn_path):
@@ -1194,8 +1211,12 @@ def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex
     queue_uri = _get_cached_queue_uris().get(printer_name or '', '')
     opt_tokens = ['PageSize=A4', 'fit-to-page', 'position=center']
     if 'epson' in (printer_name or '').lower() or 'epson' in queue_uri.lower():
-        # Bypass colord ICC lookup on Epson ESC/P-R driver (eliminates 25-50s CUPS spool stall)
+        # Bypass colord ICC lookup on Epson driver (eliminates 25-50s CUPS spool stall)
         opt_tokens.append('cm-calibration=true')
+    ppd_drv_kind, _ = _detect_prespool_driver(_get_readable_ppd_path(printer_name))
+    if ppd_drv_kind == 'gutenprint':
+        # Pin crisp 360x360 DPI ESC/P2 instead of default 361x360 (720x360) 4x raster bloat
+        opt_tokens.extend(['MediaType=Plain', 'Resolution=360dpi', 'StpQuality=Draft'])
 
     pdf_is_landscape, is_mixed_orient = inspect_pdf_orientation_stats(effective_path)
     raw_orient = (orientation or 'auto').strip().lower()
