@@ -322,13 +322,22 @@ def get_cups_queue_count():
 
 
 _cached_printer_name = None
+_cached_queue_uris = None
 _cached_color_flags = {}
 _cached_duplex_support = {}
 
 
 def invalidate_printer_cache():
-    global _cached_printer_name
+    global _cached_printer_name, _cached_queue_uris
     _cached_printer_name = None
+    _cached_queue_uris = None
+
+
+def _get_cached_queue_uris(force=False):
+    global _cached_queue_uris
+    if _cached_queue_uris is None or force:
+        _cached_queue_uris = ss.get_cups_queue_uris()
+    return _cached_queue_uris
 
 
 def ensure_cups_printer_enabled(printer_name):
@@ -353,7 +362,7 @@ def resolve_target_printer(force_refresh=False):
         return _cached_printer_name
 
     available = get_available_cups_printers()
-    queue_uris = ss.get_cups_queue_uris()
+    queue_uris = _get_cached_queue_uris(force=True)
 
     # Fast non-destructive check via lsusb first (avoids running lpinfo -v which detaches usblp0 for ~3s)
     connected_queues = [
@@ -978,6 +987,19 @@ def _group_pages_into_range_strings(pages, batch_size=_PRESPOOL_BATCH_PAGES):
     return groups
 
 
+def _verify_prespool_stream_complete(prn_path, driver_kind):
+    """Confirms the rendered printer stream ends cleanly (guards against silent filter truncation)."""
+    sz = os.path.getsize(prn_path)
+    if sz <= 1024:
+        return False
+    if driver_kind == 'escpr':
+        with open(prn_path, 'rb') as f:
+            f.seek(max(0, sz - 256))
+            tail = f.read(256)
+        return (b'endp' in tail) and (b'endj' in tail)
+    return True
+
+
 def _prespool_single_job_to_ram(printer_name, pdf_path, lp_opt_tokens, ppd_path, driver_kind, driver_bin, candidates, range_str=None, max_prn_mb=_PRESPOOL_MAX_PRN_MB):
     """Renders pdf_path (or range_str slice) to a RAM .prn file under /tmp/printkurox_spool."""
     os.makedirs(SHM_SPOOL_DIR, exist_ok=True)
@@ -993,9 +1015,9 @@ def _prespool_single_job_to_ram(printer_name, pdf_path, lp_opt_tokens, ppd_path,
         try:
             _run_filter_chain_to_prn(printer_name, pdf_path, opts_str, ppd_path, raster_bin, driver_kind, driver_bin, prn_path)
             prn_mb = os.path.getsize(prn_path) / (1024 * 1024)
-            if 0.001 < prn_mb <= max_prn_mb:
+            if 0.001 < prn_mb <= max_prn_mb and _verify_prespool_stream_complete(prn_path, driver_kind):
                 return prn_path, os.path.basename(raster_bin), (time.monotonic() - t0)
-            warn(f"RAM pre-spool size out of bounds ({prn_mb:.2f}MB); using standard lp fallback")
+            warn(f"RAM pre-spool incomplete or out of bounds ({prn_mb:.2f}MB); using standard lp fallback")
         except Exception as e:
             warn(f"RAM pre-spool ({os.path.basename(raster_bin)}) fallback note: {e}")
         if os.path.exists(prn_path):
@@ -1136,7 +1158,7 @@ def _try_pipelined_batch_print(printer_name, pdf_path, lp_opt_tokens, batch_rang
 def print_pdf_cups(printer_name, file_path, copies=1, color_mode='bw', is_duplex=False, page_range=None, orientation='auto', total_pages=0):
     """Prints a PDF using pipelined multi-core RAM pre-spooling when safe, or native CUPS lp fallback."""
     effective_path = _ensure_safe_a4_pdf_if_raw_image(file_path)
-    queue_uri = ss.get_cups_queue_uris().get(printer_name or '', '')
+    queue_uri = _get_cached_queue_uris().get(printer_name or '', '')
     opt_tokens = ['PageSize=A4', 'fit-to-page', 'position=center']
     if 'epson' in (printer_name or '').lower() or 'epson' in queue_uri.lower():
         # Bypass colord ICC lookup on Epson ESC/P-R driver (eliminates 25-50s CUPS spool stall)

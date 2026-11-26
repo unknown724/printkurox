@@ -24,6 +24,10 @@ apt-get update -y
 
 echo "[2/4] Installing CUPS, Python3, and Universal Printer Drivers..."
 apt-get install -y cups cups-client python3 python3-pip python3-requests printer-driver-escpr printer-driver-gutenprint printer-driver-brlaser hplip cups-filters || apt-get install -y cups cups-client python3 python3-pip python3-requests printer-driver-escpr hplip
+# Prevent ipp-usb and kernel usblp from colliding with libusb printer transfers
+apt-get purge -y ipp-usb >/dev/null 2>&1 || true
+echo "blacklist usblp" > /etc/modprobe.d/blacklist-usblp.conf
+rmmod usblp >/dev/null 2>&1 || true
 
 # Install Universal USB Printer Hotplug Auto-Provisioner
 if [ -f "$INSTALL_DIR/printkurox-printer-hotplug.sh" ]; then
